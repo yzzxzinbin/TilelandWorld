@@ -23,7 +23,7 @@
 using namespace TilelandWorld;
 
 // 定义测试文件名
-const std::string testMapFilePath = "map_serializer_test.bin";
+const std::string testMapFilePath = "map_serializer_test.tlwf"; // Tileland World File
 
 // --- Copied from TileMainTest.cpp ---
 // Helper to generate ANSI 24-bit color escape codes

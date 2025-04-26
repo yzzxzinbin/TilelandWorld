@@ -5,6 +5,7 @@
 #include "Chunk.h"
 #include "Coordinates.h"
 #include "Tile.h"
+#include "MapGenInfrastructure/TerrainGenerator.h" // 包含生成器基类
 #include <unordered_map>
 #include <memory> // For std::unique_ptr
 
@@ -18,7 +19,8 @@ namespace TilelandWorld {
         friend class MapSerializer;
 
     public:
-        Map(); // 构造函数
+        // 修改构造函数以接受生成器，或提供默认生成器
+        explicit Map(std::unique_ptr<TerrainGenerator> generator = nullptr);
 
         // --- 坐标转换 ---
         static ChunkCoord mapToChunkCoords(int wx, int wy, int wz);
@@ -43,6 +45,8 @@ namespace TilelandWorld {
     private:
         // 存储已加载的区块，使用区块坐标作为键，是MAP层的核心
         std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> loadedChunks;
+        // 地形生成器
+        std::unique_ptr<TerrainGenerator> terrainGenerator;
         // (未来可能添加：区块加载器、生成器、卸载逻辑等)
     };
 

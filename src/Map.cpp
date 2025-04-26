@@ -1,12 +1,20 @@
 #include "Map.h"
 #include "Constants.h"
+#include "MapGenInfrastructure/FlatTerrainGenerator.h" // 包含默认生成器实现
 #include <stdexcept> // For exceptions
+#include <utility> // For std::move
+#include <iostream> // For error reporting (temporary)
 
 namespace TilelandWorld {
 
-    Map::Map() {
-        // Map 构造函数，目前为空。
-        // 未来可能初始化区块加载器等。
+    // 修改构造函数实现
+    Map::Map(std::unique_ptr<TerrainGenerator> generator) {
+        if (generator) {
+            terrainGenerator = std::move(generator);
+        } else {
+            // 如果没有提供生成器，创建一个默认的（例如 FlatTerrainGenerator）
+            terrainGenerator = std::make_unique<FlatTerrainGenerator>(0); // 地面高度为 0
+        }
     }
 
     // --- 坐标转换实现 ---
@@ -32,9 +40,19 @@ namespace TilelandWorld {
             return it->second.get(); // 区块已加载，返回指针
         } else {
             // 区块未加载，创建新区块
-            // TODO: 未来这里应该是加载或生成逻辑
             auto newChunk = std::make_unique<Chunk>(cx, cy, cz);
-            Chunk* chunkPtr = newChunk.get(); // 获取原始指针以便返回
+            Chunk* chunkPtr = newChunk.get(); // 获取原始指针
+
+            // *** 使用地形生成器填充新区块 ***
+            if (terrainGenerator) {
+                terrainGenerator->generateChunk(*newChunk);
+            } else {
+                // 如果没有生成器（理论上构造函数会保证有），可以记录错误或填充默认值
+                std::cerr << "Warning: No terrain generator available for chunk ("
+                          << cx << "," << cy << "," << cz << ")" << std::endl;
+                // newChunk 默认构造时已填充 VOIDBLOCK，所以这里可以不处理
+            }
+
             loadedChunks.emplace(coord, std::move(newChunk)); // 插入新区块
             return chunkPtr;
         }
