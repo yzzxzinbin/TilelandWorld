@@ -1,4 +1,5 @@
 #include "Tile.h"
+#include "Constants.h" // <--- 包含 Constants.h 以获取 MAX_LIGHT_LEVEL
 #include <cmath>
 #include <algorithm>
 #include <string> // For std::string literal ""

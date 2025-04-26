@@ -3,6 +3,7 @@
 #define TILELANDWORLD_TILE_H
 
 #include "TerrainTypes.h" // 引入地形类型定义
+#include "Constants.h"    // 引入常量定义 (例如 MAX_LIGHT_LEVEL)
 #include <cstdint>       // For uint8_t
 #include <string>        // For std::string
 
@@ -44,8 +45,7 @@ namespace TilelandWorld {
             movementCost = props.defaultMovementCost;
         }
 
-        // 获取用于显示的字符
-        const std::string& getDisplayChar() const; // 实现移至 cpp
+        const std::string& getDisplayChar() const; // 获取用于显示的字符
 
         // 获取考虑光照影响后的前景色和背景色
         RGBColor getForegroundColor() const; // 返回计算后的颜色，实现移至 cpp

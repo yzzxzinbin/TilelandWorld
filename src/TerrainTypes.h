@@ -8,9 +8,6 @@
 
 namespace TilelandWorld {
 
-    // 全局常量
-    constexpr uint8_t MAX_LIGHT_LEVEL = 255; // 最大/自然光照等级 (0-255)
-
     // 地形类型枚举
     enum class TerrainType {
         UNKNOWN, // 未知或默认
@@ -22,7 +19,7 @@ namespace TilelandWorld {
         // 可以根据需要添加更多地形类型...
     };
 
-    // 简单的 RGB 颜色结构体 (24位色)
+    // RGB 颜色结构体 (24位色)
     struct RGBColor {
         uint8_t r = 0;
         uint8_t g = 0;
@@ -36,22 +33,16 @@ namespace TilelandWorld {
         RGBColor foregroundColor;
         RGBColor backgroundColor;
         // --- 通行性属性 ---
-        // allowEnterSameLevel: 实体是否能进入与其 *相同层级* 的此类型地形？
-        // 例如：不能走进同层的墙(false)，但可以走进同层的草地(true)。
-        bool allowEnterSameLevel;
-        // allowStandOnTop: 实体是否能站在比其 *低一层* 的此类型地形 *上方*？
-        // 例如：可以站在墙顶(true)，但不能站在草地/地板/水面/虚空上(false)。
-        bool allowStandOnTop;
+        bool allowEnterSameLevel;// allowEnterSameLevel: 实体是否能进入与其 *相同层级* 的此类型地形？
+        bool allowStandOnTop; // allowStandOnTop: 实体是否能站在比其 *低一层* 的此类型地形 *上方*？
         // --- 其他属性 ---
-        int defaultMovementCost; // 默认移动消耗 (通常指同层移动)
+        int defaultMovementCost; // 默认移动消耗
     };
 
-    // 获取地形属性的函数 (或者可以使用静态map)
-    // 这里使用函数示例，更灵活，易于扩展
+    // 获取地形属性的函数 这里使用函数示例，更灵活，易于扩展
     inline const TerrainProperties& getTerrainProperties(TerrainType type) {
         // 使用静态局部变量确保只初始化一次
         // TerrainProperties: {displayChar, fgColor, bgColor, allowEnterSameLevel, allowStandOnTop, defaultMovementCost}
-        // 使用 UTF-8 字符 和 RGB 颜色
         static const std::unordered_map<TerrainType, TerrainProperties> terrainData = {
             {TerrainType::UNKNOWN, {"?",   {255, 0, 255}, {0, 0, 0},       false, false, 99}}, // 品红前景，黑背景
             {TerrainType::VOIDBLOCK,    {" ",   {0, 0, 0},     {0, 0, 0},       true,  false, 99}}, // 黑前景，黑背景 (纯黑)

@@ -1,4 +1,5 @@
 #include "Tile.h"
+#include "Constants.h" // <--- 包含 Constants.h 以获取 MAX_LIGHT_LEVEL
 #include <iostream>
 #include <string>
 #include <vector>
@@ -143,5 +144,28 @@ int main() {
     }
     std::cout << "-------------------------\n";
 
+    // Example of printing a 2D light level gradient grid (Water)
+    std::cout << "--- 2D Light Level Gradient Example (Water, 0-255) ---\n";
+    // Reusing gridSize and maxCoordSum from above
+
+    for (int y = 0; y < gridSize; ++y) {
+        for (int x = 0; x < gridSize; ++x) {
+            // Calculate light level based on position (diagonal gradient)
+            float gradientPos = static_cast<float>(x + y);
+            uint8_t currentLightLevel = static_cast<uint8_t>(
+                std::min(static_cast<float>(MAX_LIGHT_LEVEL), // Clamp to max
+                         (gradientPos / maxCoordSum) * MAX_LIGHT_LEVEL)
+            );
+
+            Tile gradientTile(TerrainType::WATER); // Use WATER
+            gradientTile.lightLevel = currentLightLevel;
+            gradientTile.isExplored = true; // Ensure it's visible
+            std::cout << formatTileForTerminal(gradientTile);
+        }
+        std::cout << "\n"; // Newline after each row
+    }
+    std::cout << "-------------------------\n";
+
+    std::cin.get(); 
     return 0;
 }
