@@ -1,5 +1,6 @@
 #include "Tile.h"
 #include "Constants.h" // <--- 包含 Constants.h 以获取 MAX_LIGHT_LEVEL
+#include "TerrainTypes.h" // 需要包含 TerrainTypes 以使用 getTerrainProperties
 #include <iostream>
 #include <string>
 #include <vector>
@@ -11,12 +12,21 @@
 #endif
 
 // Helper to generate ANSI 24-bit color escape codes
-// 注意：此函数现在直接使用 Tile 返回的原始信息。
-// 实际渲染时，需要在此函数外部或渲染循环中检查 tile.isExplored。
 std::string formatTileForTerminal(const TilelandWorld::Tile& tile) {
+    // 获取地形属性
+    const auto& props = TilelandWorld::getTerrainProperties(tile.terrain);
+
+    // 检查地形是否可见
+    if (!props.isVisible) {
+        // 如果不可见 (如 VOIDBLOCK)，输出一个空格并重置颜色
+        return " \x1b[0m";
+    }
+
+    // --- 可见地形 ---
+    // 直接调用 Tile 的方法获取光照调整后的颜色
     TilelandWorld::RGBColor fg = tile.getForegroundColor();
     TilelandWorld::RGBColor bg = tile.getBackgroundColor();
-    std::string displayChar = tile.getDisplayChar();
+    std::string displayChar = props.displayChar; // 使用属性中的字符
 
     // ANSI escape codes for 24-bit color
     std::string fgCode = "\x1b[38;2;" + std::to_string(fg.r) + ";" + std::to_string(fg.g) + ";" + std::to_string(fg.b) + "m";

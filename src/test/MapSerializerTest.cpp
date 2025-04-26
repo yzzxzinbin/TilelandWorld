@@ -5,6 +5,7 @@
 #include "../BinaryFileInfrastructure/Checksum.h"
 #include "../Constants.h"
 #include "../Tile.h"
+#include "../TerrainTypes.h" // 需要包含 TerrainTypes 以使用 getTerrainProperties
 #include <iostream>
 #include <vector>
 #include <string>
@@ -28,27 +29,40 @@ const std::string testMapFilePath = "map_serializer_test.tlwf"; // Tileland Worl
 // --- Copied from TileMainTest.cpp ---
 // Helper to generate ANSI 24-bit color escape codes
 std::string formatTileForTerminal(const TilelandWorld::Tile& tile) {
-    // Check if the tile is explored. If not, display a default "unexplored" representation.
-    if (!tile.isExplored) {
-        // Example: Dark gray background, slightly lighter gray foreground for '?'
-        return "\x1b[48;2;50;50;50m\x1b[38;2;100;100;100m?\x1b[0m";
+    // 获取地形属性
+    const auto& props = getTerrainProperties(tile.terrain);
+
+    // 检查地形是否可见
+    if (!props.isVisible) {
+        // 如果不可见 (如 VOIDBLOCK)，输出两个空格并重置颜色
+        return "  \x1b[0m";
     }
 
+    // 检查 Tile 是否已探索 (对于可见地形)
+    if (!tile.isExplored) {
+        // Example: Dark gray background, slightly lighter gray foreground for '?'
+        return "\x1b[48;2;50;50;50m\x1b[38;2;100;100;100m??\x1b[0m"; // Use two '?' for aspect ratio
+    }
+
+    // --- 可见且已探索的地形 ---
+    // 直接调用 Tile 的方法获取光照调整后的颜色
     TilelandWorld::RGBColor fg = tile.getForegroundColor();
     TilelandWorld::RGBColor bg = tile.getBackgroundColor();
-    std::string displayChar = tile.getDisplayChar();
+    std::string displayChar = props.displayChar; // 使用属性中的字符
 
     // ANSI escape codes for 24-bit color
     std::string fgCode = "\x1b[38;2;" + std::to_string(fg.r) + ";" + std::to_string(fg.g) + ";" + std::to_string(fg.b) + "m";
     std::string bgCode = "\x1b[48;2;" + std::to_string(bg.r) + ";" + std::to_string(bg.g) + ";" + std::to_string(bg.b) + "m";
     std::string resetCode = "\x1b[0m"; // Reset all attributes
 
-    return bgCode + fgCode + displayChar + resetCode;
+    // Print two characters for aspect ratio
+    return bgCode + fgCode + displayChar + displayChar + resetCode;
 }
 // --- End Copied Section ---
 
 // Function to print a specific Z-layer of the map to the terminal with coordinates and chunk separators
-void printMapLayerToTerminal(const Map& map, int zLayer, int startX, int startY, int width, int height) {
+// 修改：接收非 const Map 引用以允许触发生成
+void printMapLayerToTerminal(Map& map, int zLayer, int startX, int startY, int width, int height) {
     std::cout << "\n--- Map Layer Z=" << zLayer
               << " (Area: X=" << startX << " to " << startX + width - 1
               << ", Y=" << startY << " to " << startY + height - 1 << ") ---" << std::endl;

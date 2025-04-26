@@ -35,6 +35,8 @@ namespace TilelandWorld {
         // --- 通行性属性 ---
         bool allowEnterSameLevel;// allowEnterSameLevel: 实体是否能进入与其 *相同层级* 的此类型地形？
         bool allowStandOnTop; // allowStandOnTop: 实体是否能站在比其 *低一层* 的此类型地形 *上方*？
+        // --- 可见性 ---
+        bool isVisible;         // 该地形本身是否可见/应被直接渲染？
         // --- 其他属性 ---
         int defaultMovementCost; // 默认移动消耗
     };
@@ -42,14 +44,14 @@ namespace TilelandWorld {
     // 获取地形属性的函数 这里使用函数示例，更灵活，易于扩展
     inline const TerrainProperties& getTerrainProperties(TerrainType type) {
         // 使用静态局部变量确保只初始化一次
-        // TerrainProperties: {displayChar, fgColor, bgColor, allowEnterSameLevel, allowStandOnTop, defaultMovementCost}
+        // TerrainProperties: {displayChar, fgColor, bgColor, allowEnterSameLevel, allowStandOnTop, isVisible, defaultMovementCost}
         static const std::unordered_map<TerrainType, TerrainProperties> terrainData = {
-            {TerrainType::UNKNOWN, {"?",   {255, 0, 255}, {0, 0, 0},       false, false, 99}}, // 品红前景，黑背景
-            {TerrainType::VOIDBLOCK,    {" ",   {0, 0, 0},     {0, 0, 0},       true,  false, 99}}, // 黑前景，黑背景 (纯黑)
-            {TerrainType::GRASS,   {"░",   {0, 180, 0},   {0, 100, 0},     true,  false, 1}},  // 亮绿前景，暗绿背景
-            {TerrainType::WATER,   {"≈",   {0, 100, 255}, {0, 50, 150},    false, false, 5}},  // 亮蓝前景，暗蓝背景
-            {TerrainType::WALL,    {"█",   {150, 150, 150},{100, 100, 100}, false, true,  99}}, // 灰色前景，深灰背景
-            {TerrainType::FLOOR,   {"·",   {200, 200, 200},{50, 50, 50},    true,  false, 1}}   // 浅灰前景，非常暗的灰背景
+            {TerrainType::UNKNOWN, {"?",   {255, 0, 255}, {0, 0, 0},       false, false, true,  99}}, // 品红前景，黑背景, 可见
+            {TerrainType::VOIDBLOCK,    {" ",   {0, 0, 0},     {0, 0, 0},       true,  false, false, 99}}, // 黑前景，黑背景 (纯黑), 不可见
+            {TerrainType::GRASS,   {"░",   {0, 180, 0},   {0, 100, 0},     true,  false, true,  1}},  // 亮绿前景，暗绿背景, 可见
+            {TerrainType::WATER,   {"≈",   {0, 100, 255}, {0, 50, 150},    false, false, true,  5}},  // 亮蓝前景，暗蓝背景, 可见
+            {TerrainType::WALL,    {"█",   {150, 150, 150},{100, 100, 100}, false, true,  true,  99}}, // 灰色前景，深灰背景, 可见
+            {TerrainType::FLOOR,   {"·",   {200, 200, 200},{50, 50, 50},    true,  false, true,  1}}   // 浅灰前景，非常暗的灰背景, 可见
             // 添加其他地形的属性...
         };
 

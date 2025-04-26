@@ -1,6 +1,7 @@
 #include "../Map.h"
 #include "../Tile.h"
 #include "../Constants.h"
+#include "../TerrainTypes.h" // 需要包含 TerrainTypes 以使用 getTerrainProperties
 #include "../MapGenInfrastructure/FlatTerrainGenerator.h" // 虽然 Map 默认创建，但包含可能有助于理解
 #include <iostream>
 #include <string>
@@ -19,21 +20,31 @@ using namespace TilelandWorld;
 // --- Copied from MapSerializerTest.cpp ---
 // Helper to generate ANSI 24-bit color escape codes
 std::string formatTileForTerminal(const TilelandWorld::Tile& tile) {
-    // Check if the tile is explored. If not, display a default "unexplored" representation.
-    // NOTE: FlatTerrainGenerator currently doesn't set isExplored, so we might see '?'
-    // We should probably set isExplored = true in the generator or after generation for testing.
-    // Let's assume for now the generator *should* set isExplored for visibility in tests.
-    // Or, we can modify this test to manually explore tiles after generation.
-    // For simplicity, let's modify the generator to mark as explored for now.
+    // 获取地形属性
+    const auto& props = getTerrainProperties(tile.terrain);
 
+    // 检查地形是否可见
+    if (!props.isVisible) {
+        // 如果不可见 (如 VOIDBLOCK)，输出两个空格并重置颜色
+        return "  \x1b[0m";
+    }
+
+    // 检查 Tile 是否已探索 (对于可见地形)
     if (!tile.isExplored) {
         // Example: Dark gray background, slightly lighter gray foreground for '?'
         return "\x1b[48;2;50;50;50m\x1b[38;2;100;100;100m??\x1b[0m"; // Use two '?' for aspect ratio
     }
 
-    TilelandWorld::RGBColor fg = tile.getForegroundColor();
-    TilelandWorld::RGBColor bg = tile.getBackgroundColor();
-    std::string displayChar = tile.getDisplayChar();
+    // --- 可见且已探索的地形 ---
+    TilelandWorld::RGBColor fgBase = props.foregroundColor;
+    TilelandWorld::RGBColor bgBase = props.backgroundColor;
+    std::string displayChar = props.displayChar;
+
+    // 根据光照调整颜色 (需要 Tile.cpp 中的 scaleColorByLight 逻辑，这里简化或假设 Tile 提供了方法)
+    // 为了简单起见，我们直接调用 Tile 的方法，因为它已经处理了光照
+    TilelandWorld::RGBColor fg = tile.getForegroundColor(); // Tile 内部处理光照
+    TilelandWorld::RGBColor bg = tile.getBackgroundColor(); // Tile 内部处理光照
+
 
     // ANSI escape codes for 24-bit color
     std::string fgCode = "\x1b[38;2;" + std::to_string(fg.r) + ";" + std::to_string(fg.g) + ";" + std::to_string(fg.b) + "m";
