@@ -14,20 +14,125 @@
 #include <limits>  // For std::numeric_limits
 #include <cstring> // Include for memcpy
 
+// Platform-specific includes and setup for virtual terminal processing
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 // 使用 TilelandWorld 命名空间
 using namespace TilelandWorld;
 
 // 定义测试文件名
 const std::string testMapFilePath = "map_serializer_test.bin";
 
+// --- Copied from TileMainTest.cpp ---
+// Helper to generate ANSI 24-bit color escape codes
+std::string formatTileForTerminal(const TilelandWorld::Tile& tile) {
+    // Check if the tile is explored. If not, display a default "unexplored" representation.
+    if (!tile.isExplored) {
+        // Example: Dark gray background, slightly lighter gray foreground for '?'
+        return "\x1b[48;2;50;50;50m\x1b[38;2;100;100;100m?\x1b[0m";
+    }
+
+    TilelandWorld::RGBColor fg = tile.getForegroundColor();
+    TilelandWorld::RGBColor bg = tile.getBackgroundColor();
+    std::string displayChar = tile.getDisplayChar();
+
+    // ANSI escape codes for 24-bit color
+    std::string fgCode = "\x1b[38;2;" + std::to_string(fg.r) + ";" + std::to_string(fg.g) + ";" + std::to_string(fg.b) + "m";
+    std::string bgCode = "\x1b[48;2;" + std::to_string(bg.r) + ";" + std::to_string(bg.g) + ";" + std::to_string(bg.b) + "m";
+    std::string resetCode = "\x1b[0m"; // Reset all attributes
+
+    return bgCode + fgCode + displayChar + resetCode;
+}
+// --- End Copied Section ---
+
+// Function to print a specific Z-layer of the map to the terminal with coordinates and chunk separators
+void printMapLayerToTerminal(const Map& map, int zLayer, int startX, int startY, int width, int height) {
+    std::cout << "\n--- Map Layer Z=" << zLayer
+              << " (Area: X=" << startX << " to " << startX + width - 1
+              << ", Y=" << startY << " to " << startY + height - 1 << ") ---" << std::endl;
+
+    // Print Column Headers (X coordinates)
+    std::cout << "    "; // Indent for row headers
+    for (int x = startX; x < startX + width; ++x) {
+        // Add separator before chunk boundaries (except the very first column)
+        if (x != startX && x % CHUNK_WIDTH == 0) {
+            std::cout << " "; // Chunk separator
+        }
+        // Print X coordinate, adjusting width for spacing
+        std::cout << std::setw(2) << (x % 100); // Show last two digits of X coord
+    }
+    std::cout << std::endl;
+
+    // Print Top Border Line
+    std::cout << "    ";
+    for (int x = startX; x < startX + width; ++x) {
+        if (x != startX && x % CHUNK_WIDTH == 0) {
+            std::cout << "+"; // Separator intersection
+        }
+        std::cout << "--"; // Two dashes per tile
+    }
+    std::cout << std::endl;
+
+
+    for (int y = startY; y < startY + height; ++y) {
+         // Add separator row before chunk boundaries (except the very first row)
+        if (y != startY && y % CHUNK_HEIGHT == 0) {
+            std::cout << "    "; // Indent
+            for (int x = startX; x < startX + width; ++x) {
+                 if (x != startX && x % CHUNK_WIDTH == 0) {
+                     std::cout << "+"; // Intersection
+                 }
+                 std::cout << "--";
+            }
+            std::cout << std::endl;
+        }
+
+        // Print Row Header (Y coordinate)
+        std::cout << std::setw(3) << y << "|"; // Print Y coord and separator
+
+        for (int x = startX; x < startX + width; ++x) {
+            // Add separator before chunk boundaries (except the very first column)
+             if (x != startX && x % CHUNK_WIDTH == 0) {
+                 std::cout << "|"; // Vertical chunk separator
+             }
+            try {
+                const Tile& tile = map.getTile(x, y, zLayer);
+                // Print two characters per tile for better aspect ratio
+                std::cout << formatTileForTerminal(tile) << formatTileForTerminal(tile);
+            } catch (const std::exception& e) {
+                std::cerr << "EE"; // Print 'EE' for error accessing tile
+            }
+        }
+        std::cout << "\n"; // Newline after each row
+    }
+    std::cout << "---------------------------------------" << std::endl; // Footer
+}
+
 // 运行地图序列化测试
 bool runMapSerializerTests() {
     std::cout << "--- Running Map Serializer Tests ---" << std::endl;
     bool allTestsPassed = true;
 
+#ifdef _WIN32
+    // Enable virtual terminal processing on Windows for ANSI escape codes
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD dwMode = 0;
+    if (hOut != INVALID_HANDLE_VALUE && GetConsoleMode(hOut, &dwMode)) {
+        dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        SetConsoleMode(hOut, dwMode);
+    }
+    // Set console code page to UTF-8 (optional but recommended)
+    SetConsoleOutputCP(65001);
+    SetConsoleCP(65001);
+#endif // _WIN32
+
     const int mapSizeX = 32;
     const int mapSizeY = 32;
     const int mapSizeZ = 1; // Only one layer
+    const int startX = 0; // Define the starting coordinates for printing
+    const int startY = 0;
 
     // --- 1. Create and Populate Map ---
     std::cout << "Creating and populating map (" << mapSizeX << "x" << mapSizeY << "x" << mapSizeZ << ")..." << std::endl;
@@ -84,6 +189,10 @@ bool runMapSerializerTests() {
              std::cerr << "Verification failed: " << e.what() << std::endl;
              allTestsPassed = false;
         }
+
+        // --- Print Loaded Map ---
+        // Use the new function with starting coordinates
+        printMapLayerToTerminal(*loadedMap, 0, startX, startY, mapSizeX, mapSizeY);
     }
 
     // --- 4. Manually Read and Print File Contents ---
