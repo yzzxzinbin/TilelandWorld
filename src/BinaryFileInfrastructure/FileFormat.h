@@ -3,6 +3,7 @@
 #define TILELANDWORLD_FILEFORMAT_H
 
 #include <cstdint>
+#include <type_traits> // For std::is_trivially_copyable
 
 namespace TilelandWorld {
 
@@ -32,16 +33,16 @@ namespace TilelandWorld {
     static_assert(std::is_trivially_copyable_v<FileHeader>, "FileHeader must be trivially copyable");
 
 
-    // --- 区块索引条目结构 (示例) ---
-    // #pragma pack(push, 1)
-    // struct ChunkIndexEntry {
-    //     int cx, cy, cz;       // 区块坐标
-    //     uint64_t offset;      // 区块数据在文件中的起始偏移量
-    //     uint32_t size;        // 区块数据的压缩后/原始大小
-    //     uint32_t checksum;    // 区块数据的校验和
-    // };
-    // #pragma pack(pop)
-    // static_assert(std::is_trivially_copyable_v<ChunkIndexEntry>, "ChunkIndexEntry must be trivially copyable");
+    // --- 区块索引条目结构 ---
+    #pragma pack(push, 1) // 确保结构体按 1 字节对齐
+    struct ChunkIndexEntry {
+        int32_t cx, cy, cz;   // 区块坐标 (使用固定大小类型)
+        uint64_t offset;      // 区块数据在文件中的起始偏移量
+        uint32_t size;        // 区块数据的压缩后/原始大小 (字节)
+        uint32_t checksum;    // 区块数据的校验和 (可选)
+    };
+    #pragma pack(pop) // 恢复默认对齐
+    static_assert(std::is_trivially_copyable_v<ChunkIndexEntry>, "ChunkIndexEntry must be trivially copyable");
 
 
 } // namespace TilelandWorld

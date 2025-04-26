@@ -10,7 +10,13 @@
 
 namespace TilelandWorld {
 
+    // 前向声明 MapSerializer，以便在 Chunk 中声明友元
+    class MapSerializer;
+
     class Chunk {
+        // 将 MapSerializer 声明为友元，允许它访问私有成员 (如 tiles)
+        friend class MapSerializer;
+
     public:
         // 构造函数：使用其在区块网格中的坐标初始化区块。
         Chunk(int cx, int cy, int cz);

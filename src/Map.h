@@ -10,7 +10,13 @@
 
 namespace TilelandWorld {
 
+    // 前向声明 MapSerializer，以便在 Map 中声明友元
+    class MapSerializer;
+
     class Map {
+        // 将 MapSerializer 声明为友元，允许它访问私有成员 (如 loadedChunks)
+        friend class MapSerializer;
+
     public:
         Map(); // 构造函数
 
