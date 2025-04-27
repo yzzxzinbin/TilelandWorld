@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstddef> // For size_t
+#include <array>   // For std::array
 
 namespace TilelandWorld {
 
@@ -12,8 +13,7 @@ namespace TilelandWorld {
      * @param data 指向数据块的指针。
      * @param size 数据块的大小（字节）。
      * @return 计算出的 32 位 XOR 校验和。
-     * @note 这是一个非常基础的校验和，容易发生碰撞，主要用于演示。
-     *       生产环境中建议使用 CRC32 或更强的哈希算法。
+     * @note 保留用于比较或旧格式。
      */
     inline uint32_t calculateXORChecksum(const void* data, size_t size) {
         if (!data || size == 0) {
@@ -54,12 +54,65 @@ namespace TilelandWorld {
              checksum ^= current_word;
         }
 
-
         return checksum;
     }
 
-    // TODO: 未来可以考虑替换为 CRC32 实现
-    // uint32_t calculateCRC32(const void* data, size_t size);
+    // --- CRC32 Calculation with Lookup Table ---
+
+    namespace Detail {
+        // CRC32 polynomial (IEEE 802.3) - reversed
+        constexpr uint32_t CRC32_POLYNOMIAL = 0xEDB88320;
+
+        // Function to generate the CRC32 lookup table
+        inline std::array<uint32_t, 256> generateCRC32Table() {
+            std::array<uint32_t, 256> table = {};
+            for (uint32_t i = 0; i < 256; ++i) {
+                uint32_t crc = i;
+                for (int j = 0; j < 8; ++j) {
+                    if (crc & 1) {
+                        crc = (crc >> 1) ^ CRC32_POLYNOMIAL;
+                    } else {
+                        crc >>= 1;
+                    }
+                }
+                table[i] = crc;
+            }
+            return table;
+        }
+
+        // Helper function to get the initialized table (thread-safe since C++11)
+        inline const std::array<uint32_t, 256>& getCRC32TableInstance() {
+            // Static local variable initialization is guaranteed to happen only once.
+            static const std::array<uint32_t, 256> crcTable = generateCRC32Table();
+            return crcTable;
+        }
+    } // namespace Detail
+
+    /**
+     * @brief 计算给定数据块的 CRC32 校验和 (IEEE 802.3 polynomial)。
+     * @param data 指向数据块的指针。
+     * @param size 数据块的大小（字节）。
+     * @return 计算出的 32 位 CRC32 校验和。
+     * @note 使用查找表优化。
+     */
+    inline uint32_t calculateCRC32(const void* data, size_t size) {
+        if (!data || size == 0) {
+            return 0;
+        }
+
+        const uint8_t* bytes = static_cast<const uint8_t*>(data);
+        uint32_t crc = 0xFFFFFFFF; // Initial value
+
+        // Get the precomputed lookup table
+        const auto& table = Detail::getCRC32TableInstance();
+
+        // Process data byte by byte using the lookup table
+        for (size_t i = 0; i < size; ++i) {
+            crc = (crc >> 8) ^ table[(crc ^ bytes[i]) & 0xFF];
+        }
+
+        return ~crc; // Final bit inversion
+    }
 
 } // namespace TilelandWorld
 

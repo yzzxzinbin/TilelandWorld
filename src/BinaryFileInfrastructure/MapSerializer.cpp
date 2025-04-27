@@ -1,5 +1,6 @@
 #include "MapSerializer.h"
 #include "../Constants.h" // For CHUNK_VOLUME, etc.
+#include "Checksum.h" // Include Checksum header
 #include <iostream> // For error reporting (temporary)
 #include <vector>
 #include <cstring> // For memcpy in checksum calculation
@@ -8,10 +9,10 @@ namespace TilelandWorld {
 
     // --- Header Read/Write (writeHeader 现在接收非 const 引用以更新) ---
     bool MapSerializer::writeHeader(BinaryWriter& writer, FileHeader& header) { // header 现在是非 const
-        // 计算校验和 (不包括 checksum 字段本身)
+        // 计算校验和 (不包括 checksum 字段本身) - 使用 CRC32
         FileHeader tempHeader = header; // 复制一份用于计算
         tempHeader.headerChecksum = 0; // 清零校验和字段
-        header.headerChecksum = calculateXORChecksum(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t)); // 计算并存储
+        header.headerChecksum = calculateCRC32(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t)); // 计算并存储 CRC32
 
         // 写入完整的文件头 (包括刚计算的校验和)
         return writer.write(header); // 直接写入整个结构体
@@ -42,13 +43,14 @@ namespace TilelandWorld {
              return false;
         }
 
-        // 重新计算校验和进行验证
+        // 重新计算校验和进行验证 - 使用 CRC32
         FileHeader tempHeader = header; // 复制一份用于计算
         tempHeader.headerChecksum = 0; // 清零校验和字段
-        uint32_t calculatedChecksum = calculateXORChecksum(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t));
+        uint32_t calculatedChecksum = calculateCRC32(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t));
 
         if (calculatedChecksum != storedChecksum) {
-            std::cerr << "Error: Header checksum mismatch!" << std::endl;
+            std::cerr << "Error: Header checksum mismatch! Expected 0x" << std::hex << storedChecksum
+                      << ", Calculated 0x" << calculatedChecksum << std::dec << std::endl;
             return false;
         }
 
@@ -65,8 +67,8 @@ namespace TilelandWorld {
         const void* dataPtr = chunk.tiles.data(); // 获取指向 tiles 数组数据的指针
         size_t dataSize = sizeof(Tile) * CHUNK_VOLUME;
 
-        // 计算校验和
-        outChecksum = calculateXORChecksum(dataPtr, dataSize);
+        // 计算校验和 - 使用 CRC32
+        outChecksum = calculateCRC32(dataPtr, dataSize);
 
         // 写入数据
         return writer.writeBytes(static_cast<const char*>(dataPtr), dataSize);
@@ -91,10 +93,11 @@ namespace TilelandWorld {
             return false;
         }
 
-        // 验证校验和
-        uint32_t calculatedChecksum = calculateXORChecksum(dataPtr, requiredSize);
+        // 验证校验和 - 使用 CRC32
+        uint32_t calculatedChecksum = calculateCRC32(dataPtr, requiredSize);
         if (calculatedChecksum != expectedChecksum) {
-            std::cerr << "Error: Chunk data checksum mismatch!" << std::endl;
+            std::cerr << "Error: Chunk data checksum mismatch! Expected 0x" << std::hex << expectedChecksum
+                      << ", Calculated 0x" << calculatedChecksum << std::dec << std::endl;
             return false;
         }
 

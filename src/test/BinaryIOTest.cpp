@@ -1,7 +1,7 @@
 #include "../src/BinaryFileInfrastructure/BinaryWriter.h"
 #include "../src/BinaryFileInfrastructure/BinaryReader.h"
 #include "../src/BinaryFileInfrastructure/FileFormat.h" // For FileHeader struct
-#include "../src/BinaryFileInfrastructure/Checksum.h"   // For calculateXORChecksum
+#include "../src/BinaryFileInfrastructure/Checksum.h"   // For checksum functions
 #include <iostream>
 #include <vector>
 #include <string>
@@ -214,13 +214,15 @@ bool runBinaryIOTests() {
     // --- Checksum Test ---
     std::cout << "\nTesting Checksum..." << std::endl; // 添加换行
     try {
-        uint32_t checksum1 = calculateXORChecksum(testBytes.data(), testBytes.size());
-        uint32_t checksum2 = calculateXORChecksum(testString.c_str(), testString.length());
-        std::cout << "Checksum calculated for testBytes: 0x" << std::hex << checksum1 << std::dec << std::endl;
-        std::cout << "Checksum calculated for testString: 0x" << std::hex << checksum2 << std::dec << std::endl;
+        // 使用 CRC32 进行测试
+        uint32_t checksum1 = calculateCRC32(testBytes.data(), testBytes.size());
+        uint32_t checksum2 = calculateCRC32(testString.c_str(), testString.length());
+        std::cout << "CRC32 calculated for testBytes: 0x" << std::hex << checksum1 << std::dec << std::endl;
+        std::cout << "CRC32 calculated for testString: 0x" << std::hex << checksum2 << std::dec << std::endl;
         // 简单的非零断言
         assert(checksum1 != 0 || testBytes.empty());
         assert(checksum2 != 0 || testString.empty());
+
         std::cout << "Checksum tests finished." << std::endl;
     } catch (const std::exception& e) {
          std::cerr << "Checksum test failed with exception: " << e.what() << std::endl;

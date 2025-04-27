@@ -5,7 +5,7 @@
 #include "../BinaryFileInfrastructure/Checksum.h"
 #include "../Constants.h"
 #include "../Tile.h"
-#include "../TerrainTypes.h" // 需要包含 TerrainTypes 以使用 getTerrainProperties
+#include "../TerrainTypes.h" // Needed for getTerrainProperties
 #include <iostream>
 #include <vector>
 #include <string>
@@ -20,35 +20,35 @@
 #include <windows.h>
 #endif
 
-// 使用 TilelandWorld 命名空间
+// Use TilelandWorld namespace
 using namespace TilelandWorld;
 
-// 定义测试文件名
+// Define the test filename
 const std::string testMapFilePath = "map_serializer_test.tlwf"; // Tileland World File
 
 // --- Copied from TileMainTest.cpp ---
 // Helper to generate ANSI 24-bit color escape codes
 std::string formatTileForTerminal(const TilelandWorld::Tile& tile) {
-    // 获取地形属性
+    // Get terrain properties
     const auto& props = getTerrainProperties(tile.terrain);
 
-    // 检查地形是否可见
+    // Check if terrain is visible
     if (!props.isVisible) {
-        // 如果不可见 (如 VOIDBLOCK)，输出两个空格并重置颜色
+        // If not visible (e.g., VOIDBLOCK), output two spaces and reset color
         return "  \x1b[0m";
     }
 
-    // 检查 Tile 是否已探索 (对于可见地形)
+    // Check if Tile is explored (for visible terrain)
     if (!tile.isExplored) {
         // Example: Dark gray background, slightly lighter gray foreground for '?'
         return "\x1b[48;2;50;50;50m\x1b[38;2;100;100;100m??\x1b[0m"; // Use two '?' for aspect ratio
     }
 
-    // --- 可见且已探索的地形 ---
-    // 直接调用 Tile 的方法获取光照调整后的颜色
+    // --- Visible and explored terrain ---
+    // Directly call Tile's methods to get light-adjusted colors
     TilelandWorld::RGBColor fg = tile.getForegroundColor();
     TilelandWorld::RGBColor bg = tile.getBackgroundColor();
-    std::string displayChar = props.displayChar; // 使用属性中的字符
+    std::string displayChar = props.displayChar; // Use character from properties
 
     // ANSI escape codes for 24-bit color
     std::string fgCode = "\x1b[38;2;" + std::to_string(fg.r) + ";" + std::to_string(fg.g) + ";" + std::to_string(fg.b) + "m";
@@ -61,7 +61,7 @@ std::string formatTileForTerminal(const TilelandWorld::Tile& tile) {
 // --- End Copied Section ---
 
 // Function to print a specific Z-layer of the map to the terminal with coordinates and chunk separators
-// 修改：接收非 const Map 引用以允许触发生成
+// Modified: Receives non-const Map reference to allow triggering generation (though not strictly needed here as map is pre-populated)
 void printMapLayerToTerminal(Map& map, int zLayer, int startX, int startY, int width, int height) {
     std::cout << "\n--- Map Layer Z=" << zLayer
               << " (Area: X=" << startX << " to " << startX + width - 1
@@ -112,10 +112,12 @@ void printMapLayerToTerminal(Map& map, int zLayer, int startX, int startY, int w
                  std::cout << "|"; // Vertical chunk separator
              }
             try {
+                // Get tile (using const version is fine here as map is loaded)
                 const Tile& tile = map.getTile(x, y, zLayer);
-                // Print two characters per tile for better aspect ratio
-                std::cout << formatTileForTerminal(tile) << formatTileForTerminal(tile);
+                // Print the formatted tile string (which already contains two chars) ONCE
+                std::cout << formatTileForTerminal(tile); // <-- FIX: Call only once
             } catch (const std::exception& e) {
+                // Handle potential errors during access (e.g., if getTile threw for some reason)
                 std::cerr << "EE"; // Print 'EE' for error accessing tile
             }
         }
@@ -124,7 +126,7 @@ void printMapLayerToTerminal(Map& map, int zLayer, int startX, int startY, int w
     std::cout << "---------------------------------------" << std::endl; // Footer
 }
 
-// 运行地图序列化测试
+// Run the map serializer tests
 bool runMapSerializerTests() {
     std::cout << "--- Running Map Serializer Tests ---" << std::endl;
     bool allTestsPassed = true;
@@ -205,7 +207,7 @@ bool runMapSerializerTests() {
         }
 
         // --- Print Loaded Map ---
-        // Use the new function with starting coordinates
+        // Use the function with starting coordinates
         printMapLayerToTerminal(*loadedMap, 0, startX, startY, mapSizeX, mapSizeY);
     }
 
@@ -222,7 +224,8 @@ bool runMapSerializerTests() {
         // Read and Print Header
         std::cout << "\n[File Header]" << std::endl;
         FileHeader header = {};
-        if (!reader.read(header)) { // Read the whole header struct at once
+        // Read the header struct (assuming read(T&) reads sizeof(T) bytes)
+        if (!reader.read(header)) {
              throw std::runtime_error("Failed to read file header.");
         }
         std::cout << "  Magic Number: 0x" << std::hex << header.magicNumber << std::dec
@@ -234,9 +237,10 @@ bool runMapSerializerTests() {
         std::cout << "  Header Checksum: 0x" << std::hex << header.headerChecksum << std::dec << std::endl;
 
         // Verify header checksum manually (as done in readAndValidateHeader)
-        FileHeader tempHeader = header;
-        tempHeader.headerChecksum = 0;
-        uint32_t calculatedHeaderChecksum = calculateXORChecksum(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t));
+        FileHeader tempHeader = header; // Copy for calculation
+        tempHeader.headerChecksum = 0; // Zero out the checksum field
+        // Use CRC32 for manual verification
+        uint32_t calculatedHeaderChecksum = calculateCRC32(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t));
         std::cout << "  Calculated Hdr Checksum: 0x" << std::hex << calculatedHeaderChecksum << std::dec
                   << " (" << (calculatedHeaderChecksum == header.headerChecksum ? "OK" : "Mismatch!") << ")" << std::endl;
         assert(calculatedHeaderChecksum == header.headerChecksum);
@@ -257,6 +261,7 @@ bool runMapSerializerTests() {
         std::vector<ChunkIndexEntry> indexEntries(indexCount);
         if (indexCount > 0) {
              size_t indexBytesToRead = indexCount * sizeof(ChunkIndexEntry);
+             // Read index entries into the vector
              size_t indexBytesRead = reader.readBytes(reinterpret_cast<char*>(indexEntries.data()), indexBytesToRead);
              if (indexBytesRead != indexBytesToRead) {
                  throw std::runtime_error("Failed to read all index entries.");
@@ -275,7 +280,8 @@ bool runMapSerializerTests() {
 
         // Read and Verify Chunk Data (Basic Verification)
         std::cout << "\n[Chunk Data Verification (at offset " << header.dataOffset << ")]" << std::endl;
-        assert(header.dataOffset == sizeof(FileHeader)); // Check if data starts right after header
+        // Check if data starts right after header (assuming no metadata)
+        assert(header.dataOffset == sizeof(FileHeader));
 
         for (size_t i = 0; i < indexEntries.size(); ++i) {
              const auto& entry = indexEntries[i];
@@ -297,8 +303,8 @@ bool runMapSerializerTests() {
                  continue;
              }
 
-             // Verify checksum
-             uint32_t calculatedDataChecksum = calculateXORChecksum(chunkBuffer.data(), entry.size);
+             // Verify checksum using CRC32
+             uint32_t calculatedDataChecksum = calculateCRC32(chunkBuffer.data(), entry.size);
              std::cout << "    Data Checksum: Expected=0x" << std::hex << entry.checksum
                        << ", Calculated=0x" << calculatedDataChecksum << std::dec
                        << " (" << (calculatedDataChecksum == entry.checksum ? "OK" : "Mismatch!") << ")" << std::endl;
@@ -333,8 +339,8 @@ bool runMapSerializerTests() {
 
 int main() {
     if (runMapSerializerTests()) {
-        return 0; // 成功
+        return 0; // Success
     } else {
-        return 1; // 失败
+        return 1; // Failure
     }
 }
