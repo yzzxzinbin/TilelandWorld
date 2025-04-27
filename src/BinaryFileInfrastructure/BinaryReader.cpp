@@ -62,11 +62,11 @@ namespace TilelandWorld {
             if (!read(len)) {
                 return false; // 无法读取长度
             }
-        } catch (const std::runtime_error& e) {
-            LOG_ERROR("BinaryReader::readString failed to read length: " + std::string(e.what()));
-            return false;
-        } catch (const std::ios_base::failure& e) {
+        } catch (const std::ios_base::failure& e) { // <-- Catch specific I/O failure first
             LOG_ERROR("BinaryReader::readString failed to read length (ios_base::failure): " + std::string(e.what()));
+            return false;
+        } catch (const std::runtime_error& e) { // <-- Catch more general runtime_error later
+            LOG_ERROR("BinaryReader::readString failed to read length: " + std::string(e.what()));
             return false;
         }
 

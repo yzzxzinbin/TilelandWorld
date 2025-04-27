@@ -47,10 +47,10 @@ namespace TilelandWorld {
                 writeBytes(str.c_str(), len); // 直接调用，让异常传播
             }
             return true; // 如果没有抛出异常，则成功
-        } catch (const std::runtime_error& e) { // 捕获来自 write<T> 或 writeBytes 的异常
-             throw; // 重新抛出，让上层处理
-        } catch (const std::ios_base::failure& e) { // 以防万一捕获底层 I/O 错误
+        } catch (const std::ios_base::failure& e) { // <-- Catch specific I/O failure first
              throw std::runtime_error("BinaryWriter::writeString failed (ios_base::failure): " + std::string(e.what()));
+        } catch (const std::runtime_error& e) { // <-- Catch more general runtime_error later
+             throw; // 重新抛出，让上层处理
         }
     }
 
