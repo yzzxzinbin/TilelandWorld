@@ -1,278 +1,256 @@
 #include "MapSerializer.h"
 #include "../Constants.h" // For CHUNK_VOLUME, etc.
 #include "Checksum.h" // Include Checksum header
-#include <iostream> // For error reporting (temporary)
+#include "../Utils/Logger.h" // <-- 包含 Logger
+#include <iostream> // For std::cout in success messages
 #include <vector>
 #include <cstring> // For memcpy in checksum calculation
+#include <stdexcept> // For std::runtime_error
 
 namespace TilelandWorld {
 
-    // --- Header Read/Write (writeHeader 现在接收非 const 引用以更新) ---
-    bool MapSerializer::writeHeader(BinaryWriter& writer, FileHeader& header) { // header 现在是非 const
-        // 计算校验和 (不包括 checksum 字段本身) - 使用 CRC32
-        FileHeader tempHeader = header; // 复制一份用于计算
-        tempHeader.headerChecksum = 0; // 清零校验和字段
-        header.headerChecksum = calculateCRC32(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t)); // 计算并存储 CRC32
-
-        // 写入完整的文件头 (包括刚计算的校验和)
-        return writer.write(header); // 直接写入整个结构体
+    // 辅助函数：检测当前系统的字节序 (运行时)
+    bool isLittleEndianRuntime() {
+        uint16_t test = 1;
+        return (*reinterpret_cast<uint8_t*>(&test) == 1);
     }
 
-    bool MapSerializer::readAndValidateHeader(BinaryReader& reader, FileHeader& header) {
-        // 读取除校验和之外的部分
-        if (!reader.read(header.magicNumber)) return false;
-        if (!reader.read(header.versionMajor)) return false;
-        if (!reader.read(header.versionMinor)) return false;
-        if (!reader.read(header.metadataOffset)) return false;
-        if (!reader.read(header.indexOffset)) return false;
-        if (!reader.read(header.dataOffset)) return false;
+    // --- 文件头读写 ---
+    bool MapSerializer::writeHeader(BinaryWriter& writer, FileHeader& header) {
+        header.endianness = isLittleEndianRuntime() ? ENDIANNESS_LITTLE : ENDIANNESS_BIG;
+        header.checksumType = CHECKSUM_TYPE_CRC32;
+        header.reserved = 0;
 
-        // 读取文件中记录的校验和
-        uint32_t storedChecksum = 0;
-        if (!reader.read(storedChecksum)) return false;
+        FileHeader tempHeader = header;
+        tempHeader.headerChecksum = 0;
+        header.headerChecksum = calculateCRC32(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t));
 
-        // 验证魔数
+        return writer.write(header);
+    }
+
+    void MapSerializer::readAndValidateHeader(BinaryReader& reader, FileHeader& header) {
+        std::streampos startPos = reader.tell();
+        if (startPos == -1) {
+            throw std::runtime_error("Failed to get initial stream position for header validation.");
+        }
+
+        if (!reader.read(header)) {
+            throw std::runtime_error("Failed to read file header data.");
+        }
+
+        std::streampos endPos = reader.tell();
+        if (endPos == -1) {
+            throw std::runtime_error("Failed to get stream position after reading header.");
+        }
+
         if (header.magicNumber != MAGIC_NUMBER) {
-            std::cerr << "Error: Invalid magic number!" << std::endl;
-            return false;
+            throw std::runtime_error("Invalid magic number in file header.");
         }
 
-        // 验证版本 (简单示例：只支持当前版本)
         if (header.versionMajor != FORMAT_VERSION_MAJOR || header.versionMinor > FORMAT_VERSION_MINOR) {
-             std::cerr << "Error: Unsupported file version!" << std::endl;
-             return false;
+            throw std::runtime_error("Unsupported file version. File: "
+                + std::to_string(header.versionMajor) + "." + std::to_string(header.versionMinor)
+                + ", Supported: " + std::to_string(FORMAT_VERSION_MAJOR) + "." + std::to_string(FORMAT_VERSION_MINOR));
         }
 
-        // 重新计算校验和进行验证 - 使用 CRC32
-        FileHeader tempHeader = header; // 复制一份用于计算
-        tempHeader.headerChecksum = 0; // 清零校验和字段
-        uint32_t calculatedChecksum = calculateCRC32(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t));
+        uint8_t currentSystemEndianness = isLittleEndianRuntime() ? ENDIANNESS_LITTLE : ENDIANNESS_BIG;
+        if (header.endianness != currentSystemEndianness) {
+            LOG_WARNING("File endianness (" + std::to_string(header.endianness)
+                + ") differs from system endianness (" + std::to_string(currentSystemEndianness)
+                + "). Byte swapping not implemented.");
+        }
+
+        if (header.checksumType != CHECKSUM_TYPE_CRC32) {
+            throw std::runtime_error("Unsupported checksum type (" + std::to_string(header.checksumType) + "). Requires CRC32 ("
+                + std::to_string(CHECKSUM_TYPE_CRC32) + ").");
+        }
+
+        size_t headerSizeWithoutChecksum = sizeof(FileHeader) - sizeof(uint32_t);
+        std::vector<char> headerBytes(headerSizeWithoutChecksum);
+
+        if (!reader.seek(startPos)) {
+            throw std::runtime_error("Failed to seek back for header checksum verification.");
+        }
+        if (reader.readBytes(headerBytes.data(), headerSizeWithoutChecksum) != headerSizeWithoutChecksum) {
+            throw std::runtime_error("Failed to re-read header bytes for checksum verification.");
+        }
+        if (!reader.seek(endPos)) {
+            throw std::runtime_error("Failed to seek past header after verification.");
+        }
+
+        uint32_t calculatedChecksum = calculateCRC32(headerBytes.data(), headerSizeWithoutChecksum);
+        uint32_t storedChecksum = header.headerChecksum;
 
         if (calculatedChecksum != storedChecksum) {
-            std::cerr << "Error: Header checksum mismatch! Expected 0x" << std::hex << storedChecksum
-                      << ", Calculated 0x" << calculatedChecksum << std::dec << std::endl;
-            return false;
+            std::stringstream ss;
+            ss << "Header checksum mismatch! Expected 0x" << std::hex << storedChecksum
+                << ", Calculated 0x" << calculatedChecksum << std::dec;
+            throw std::runtime_error(ss.str());
         }
-
-        // 校验通过后，将读取到的校验和存入 header 对象（虽然计算时清零了）
-        header.headerChecksum = storedChecksum;
-
-        return true; // Header is valid
     }
 
-    // --- Chunk Data Serialization/Deserialization ---
-
-    // 将单个 Chunk 的 Tile 数据写入流，并计算校验和
+    // --- 区块数据序列化/反序列化 ---
     bool MapSerializer::saveChunkData(BinaryWriter& writer, const Chunk& chunk, uint32_t& outChecksum) {
-        const void* dataPtr = chunk.tiles.data(); // 获取指向 tiles 数组数据的指针
+        const void* dataPtr = chunk.tiles.data();
         size_t dataSize = sizeof(Tile) * CHUNK_VOLUME;
 
-        // 计算校验和 - 使用 CRC32
         outChecksum = calculateCRC32(dataPtr, dataSize);
 
-        // 写入数据
         return writer.writeBytes(static_cast<const char*>(dataPtr), dataSize);
     }
 
-    // 从流中读取数据填充 Chunk，并验证大小和校验和
-    bool MapSerializer::loadChunkData(BinaryReader& reader, Chunk& chunk, uint32_t expectedSize, uint32_t expectedChecksum) {
+    void MapSerializer::loadChunkData(BinaryReader& reader, Chunk& chunk, uint32_t expectedSize, uint32_t expectedChecksum) {
         size_t requiredSize = sizeof(Tile) * CHUNK_VOLUME;
 
-        // 验证预期大小是否匹配
         if (expectedSize != requiredSize) {
-            std::cerr << "Error: Chunk data size mismatch. Expected " << requiredSize << ", got " << expectedSize << std::endl;
-            return false;
+            throw std::runtime_error("Chunk data size mismatch. Expected " + std::to_string(requiredSize) + ", Got " + std::to_string(expectedSize));
         }
 
-        // 读取数据到 Chunk 的 tiles 数组
-        void* dataPtr = chunk.tiles.data(); // 获取指向 tiles 数组数据的指针
+        void* dataPtr = chunk.tiles.data();
         size_t bytesRead = reader.readBytes(static_cast<char*>(dataPtr), requiredSize);
 
         if (bytesRead != requiredSize) {
-            std::cerr << "Error: Failed to read complete chunk data. Read " << bytesRead << "/" << requiredSize << std::endl;
-            return false;
+            throw std::runtime_error("Failed to read complete chunk data. Read " + std::to_string(bytesRead) + "/" + std::to_string(requiredSize));
         }
 
-        // 验证校验和 - 使用 CRC32
         uint32_t calculatedChecksum = calculateCRC32(dataPtr, requiredSize);
         if (calculatedChecksum != expectedChecksum) {
-            std::cerr << "Error: Chunk data checksum mismatch! Expected 0x" << std::hex << expectedChecksum
-                      << ", Calculated 0x" << calculatedChecksum << std::dec << std::endl;
-            return false;
+            std::stringstream ss;
+            ss << "Chunk data checksum mismatch! Expected 0x" << std::hex << expectedChecksum
+                << ", Calculated 0x" << calculatedChecksum << std::dec;
+            throw std::runtime_error(ss.str());
         }
-
-        return true;
     }
 
-    // --- Index Serialization/Deserialization ---
-
-    // 将索引写入流 (数量 + 条目)
+    // --- 索引序列化/反序列化 ---
     bool MapSerializer::writeIndex(BinaryWriter& writer, const std::vector<ChunkIndexEntry>& index) {
-        // 1. 写入索引条目的数量
         size_t count = index.size();
         if (!writer.write(count)) return false;
 
-        // 2. 写入每个索引条目
         if (count > 0) {
-            // 直接写入整个 vector 的底层数据 (因为 ChunkIndexEntry 是 POD)
             return writer.writeBytes(reinterpret_cast<const char*>(index.data()), count * sizeof(ChunkIndexEntry));
         }
-        return true; // 写入 0 个条目也算成功
+        return true;
     }
 
-    // 从流中读取索引
-    bool MapSerializer::readIndex(BinaryReader& reader, std::vector<ChunkIndexEntry>& index) {
+    void MapSerializer::readIndex(BinaryReader& reader, std::vector<ChunkIndexEntry>& index) {
         index.clear();
-        // 1. 读取索引条目的数量
         size_t count = 0;
-        if (!reader.read(count)) return false;
+        if (!reader.read(count)) {
+            throw std::runtime_error("Failed to read index count.");
+        }
 
         if (count > 0) {
-            // 2. 读取所有索引条目
-            index.resize(count); // 调整 vector 大小以容纳数据
+            index.resize(count);
             size_t bytesToRead = count * sizeof(ChunkIndexEntry);
             size_t bytesRead = reader.readBytes(reinterpret_cast<char*>(index.data()), bytesToRead);
 
             if (bytesRead != bytesToRead) {
-                std::cerr << "Error: Failed to read complete index data." << std::endl;
-                index.clear(); // 读取失败，清空索引
-                return false;
+                index.clear();
+                throw std::runtime_error("Failed to read complete index data. Read " + std::to_string(bytesRead) + "/" + std::to_string(bytesToRead));
             }
         }
-        return true; // 读取成功 (即使 count 为 0)
     }
 
-    // --- saveMap / loadMap Implementation ---
-
+    // --- saveMap / loadMap 实现 ---
     bool MapSerializer::saveMap(const Map& map, const std::string& filepath) {
         try {
             BinaryWriter writer(filepath);
-            if (!writer.good()) return false;
 
-            // 1. 准备文件头 (偏移量稍后更新)
             FileHeader header = {};
             header.magicNumber = MAGIC_NUMBER;
             header.versionMajor = FORMAT_VERSION_MAJOR;
             header.versionMinor = FORMAT_VERSION_MINOR;
-            // 偏移量将在写入相应部分后设置
 
-            // 写入占位符头
             if (!writer.seek(0)) return false;
-            if (!writer.write(header)) return false; // 直接写入结构体占位
+            writer.write(header);
 
-            // 2. 写入元数据 (如果需要) - 暂跳过
-            header.metadataOffset = 0; // 无元数据
+            header.metadataOffset = 0;
 
-            // 3. 写入区块数据并构建索引
-            header.dataOffset = writer.tell(); // 数据区从当前位置开始
+            header.dataOffset = writer.tell();
             std::vector<ChunkIndexEntry> index;
-            index.reserve(map.loadedChunks.size()); // 预分配空间
+            index.reserve(map.loadedChunks.size());
 
-            for (const auto& pair : map.loadedChunks) { // 访问 map 的 loadedChunks (需要友元)
+            for (const auto& pair : map.loadedChunks) {
                 const Chunk& chunk = *pair.second;
-                ChunkIndexEntry entry = {}; // 初始化条目
+                ChunkIndexEntry entry = {};
                 entry.cx = chunk.getChunkX();
                 entry.cy = chunk.getChunkY();
                 entry.cz = chunk.getChunkZ();
 
-                entry.offset = writer.tell(); // 记录当前偏移量作为区块数据起点
-                std::streampos startPos = entry.offset; // Store start position
-                if (!saveChunkData(writer, chunk, entry.checksum)) { // 写入数据并获取校验和
-                     std::cerr << "Error saving chunk data for (" << entry.cx << "," << entry.cy << "," << entry.cz << ")" << std::endl;
-                     return false;
+                entry.offset = writer.tell();
+                std::streampos startPos = entry.offset;
+                if (!saveChunkData(writer, chunk, entry.checksum)) {
+                    LOG_ERROR("Failed to save chunk (" + std::to_string(entry.cx) + "," + std::to_string(entry.cy) + "," + std::to_string(entry.cz) + ") data.");
+                    return false;
                 }
-                std::streampos endPos = writer.tell(); // Get end position
-                // Explicitly cast both to uint64_t before subtraction
-                entry.size = static_cast<uint32_t>(static_cast<uint64_t>(endPos) - static_cast<uint64_t>(startPos)); // 计算写入的大小
+                std::streampos endPos = writer.tell();
+                entry.size = static_cast<uint32_t>(static_cast<uint64_t>(endPos) - static_cast<uint64_t>(startPos));
 
-                index.push_back(entry); // 添加到索引
+                index.push_back(entry);
             }
 
-            // 4. 写入区块索引
-            header.indexOffset = writer.tell(); // 索引区从当前位置开始
+            header.indexOffset = writer.tell();
             if (!writeIndex(writer, index)) {
-                 std::cerr << "Error writing chunk index." << std::endl;
-                 return false;
+                LOG_ERROR("Failed to write chunk index.");
+                return false;
             }
 
-            // 5. 回到文件开头，更新并写入最终的文件头
             std::streampos finalPos = writer.tell();
             if (!writer.seek(0)) return false;
-            if (!writeHeader(writer, header)) { // writeHeader 会计算并写入校验和
-                 std::cerr << "Error writing final header." << std::endl;
-                 return false;
+            if (!writeHeader(writer, header)) {
+                LOG_ERROR("Failed to write final file header.");
+                return false;
             }
 
-            // writer.seek(finalPos); // 通常不需要
-
-            std::cout << "Map saved successfully. Chunks: " << index.size() << std::endl;
+            std::cout << "Map saved successfully. Chunk count: " << index.size() << std::endl;
             return true;
 
         } catch (const std::exception& e) {
-            std::cerr << "Error saving map: " << e.what() << std::endl;
+            LOG_ERROR("Exception occurred during map saving: " + std::string(e.what()));
             return false;
         }
     }
 
     std::unique_ptr<Map> MapSerializer::loadMap(const std::string& filepath) {
-         try {
+        try {
             BinaryReader reader(filepath);
-            if (!reader.good()) return nullptr;
 
-            // 1. 读取并验证文件头
             FileHeader header = {};
-            if (!readAndValidateHeader(reader, header)) {
-                return nullptr; // Header 无效或读取失败
-            }
+            readAndValidateHeader(reader, header);
 
-            // 2. 读取元数据 (如果需要) - 暂跳过
-            // ...
-
-            // 3. 读取区块索引
             std::vector<ChunkIndexEntry> index;
             if (header.indexOffset == 0 || header.indexOffset >= reader.fileSize()) {
-                 std::cerr << "Error: Invalid or missing index offset in header." << std::endl;
-                 return nullptr;
+                throw std::runtime_error("Invalid or missing index offset in file header.");
             }
             if (!reader.seek(header.indexOffset)) {
-                 std::cerr << "Error: Failed to seek to index offset." << std::endl;
-                 return nullptr;
+                throw std::runtime_error("Failed to seek to index offset.");
             }
-            if (!readIndex(reader, index)) {
-                 std::cerr << "Error: Failed to read chunk index." << std::endl;
-                 return nullptr;
-            }
+            readIndex(reader, index);
 
-            // 4. 创建 Map 对象
             auto map = std::make_unique<Map>();
 
-            // 5. 根据索引加载区块数据
             for (const auto& entry : index) {
                 if (entry.offset == 0 || entry.offset >= reader.fileSize() || (entry.offset + entry.size) > reader.fileSize()) {
-                     std::cerr << "Error: Invalid data offset or size for chunk (" << entry.cx << "," << entry.cy << "," << entry.cz << ")" << std::endl;
-                     return nullptr; // 数据偏移或大小无效
+                    throw std::runtime_error("Invalid data offset or size for chunk ("
+                        + std::to_string(entry.cx) + "," + std::to_string(entry.cy) + "," + std::to_string(entry.cz) + ")");
                 }
                 if (!reader.seek(entry.offset)) {
-                     std::cerr << "Error: Failed to seek to chunk data offset for (" << entry.cx << "," << entry.cy << "," << entry.cz << ")" << std::endl;
-                     return nullptr;
+                    throw std::runtime_error("Failed to seek to data offset for chunk ("
+                        + std::to_string(entry.cx) + "," + std::to_string(entry.cy) + "," + std::to_string(entry.cz) + ")");
                 }
 
-                // 创建新区块并尝试加载数据
                 auto newChunk = std::make_unique<Chunk>(entry.cx, entry.cy, entry.cz);
-                if (!loadChunkData(reader, *newChunk, entry.size, entry.checksum)) {
-                     std::cerr << "Error: Failed to load data for chunk (" << entry.cx << "," << entry.cy << "," << entry.cz << ")" << std::endl;
-                     return nullptr; // 加载或校验失败
-                }
+                loadChunkData(reader, *newChunk, entry.size, entry.checksum);
 
-                // 将加载成功的区块添加到 Map 中 (需要友元访问)
                 map->loadedChunks.emplace(ChunkCoord{entry.cx, entry.cy, entry.cz}, std::move(newChunk));
             }
 
-            std::cout << "Map loaded successfully. Chunks loaded: " << index.size() << std::endl;
+            std::cout << "Map loaded successfully. Loaded chunk count: " << index.size() << std::endl;
             return map;
 
         } catch (const std::exception& e) {
-            std::cerr << "Error loading map: " << e.what() << std::endl;
+            LOG_ERROR("Exception occurred during map loading: " + std::string(e.what()));
             return nullptr;
         }
     }

@@ -2,6 +2,7 @@
 #include "../src/BinaryFileInfrastructure/BinaryReader.h"
 #include "../src/BinaryFileInfrastructure/FileFormat.h" // For FileHeader struct
 #include "../src/BinaryFileInfrastructure/Checksum.h"   // For checksum functions
+#include "../Utils/Logger.h" // <-- 包含 Logger
 #include <iostream>
 #include <vector>
 #include <string>
@@ -235,9 +236,17 @@ bool runBinaryIOTests() {
 }
 
 int main() {
-    if (runBinaryIOTests()) {
-        return 0; // 成功
-    } else {
-        return 1; // 失败
+    // 初始化日志
+    if (!TilelandWorld::Logger::getInstance().initialize("binary_io_test.log")) {
+        return 1; // 日志初始化失败
     }
+
+    LOG_INFO("Starting Binary I/O Tests...");
+    bool success = runBinaryIOTests();
+    LOG_INFO("Binary I/O Tests finished.");
+
+    // 关闭日志
+    TilelandWorld::Logger::getInstance().shutdown();
+
+    return success ? 0 : 1;
 }

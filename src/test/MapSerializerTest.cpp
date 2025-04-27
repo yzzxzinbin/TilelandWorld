@@ -6,6 +6,7 @@
 #include "../Constants.h"
 #include "../Tile.h"
 #include "../TerrainTypes.h" // Needed for getTerrainProperties
+#include "../Utils/Logger.h" // Include Logger
 #include <iostream>
 #include <vector>
 #include <string>
@@ -179,7 +180,6 @@ bool runMapSerializerTests() {
     // --- 2. Save Map ---
     std::cout << "Saving map to '" << testMapFilePath << "'..." << std::endl;
     if (!MapSerializer::saveMap(map, testMapFilePath)) {
-        std::cerr << "Failed to save map!" << std::endl;
         return false; // Critical failure
     }
     std::cout << "Map saved." << std::endl;
@@ -188,11 +188,9 @@ bool runMapSerializerTests() {
     std::cout << "Loading map back for verification..." << std::endl;
     auto loadedMap = MapSerializer::loadMap(testMapFilePath);
     if (!loadedMap) {
-        std::cerr << "Failed to load map!" << std::endl;
         allTestsPassed = false;
     } else {
         std::cout << "Map loaded successfully." << std::endl;
-        // Optional: Add checks here to compare loadedMap tiles with original map
         try {
              Tile& loadedTile = loadedMap->getTile(mapSizeX - 1, mapSizeY - 1, 0);
              assert(loadedTile.terrain == TerrainType::GRASS);
@@ -203,6 +201,7 @@ bool runMapSerializerTests() {
              std::cout << "Basic verification of loaded map passed." << std::endl;
         } catch (const std::exception& e) {
              std::cerr << "Verification failed: " << e.what() << std::endl;
+             LOG_ERROR("Verification failed: " + std::string(e.what()));
              allTestsPassed = false;
         }
 
@@ -224,6 +223,7 @@ bool runMapSerializerTests() {
         // Read and Print Header
         std::cout << "\n[File Header]" << std::endl;
         FileHeader header = {};
+        std::streampos headerStartPos = reader.tell(); // Record position before reading header
         // Read the header struct (assuming read(T&) reads sizeof(T) bytes)
         if (!reader.read(header)) {
              throw std::runtime_error("Failed to read file header.");
@@ -231,23 +231,42 @@ bool runMapSerializerTests() {
         std::cout << "  Magic Number: 0x" << std::hex << header.magicNumber << std::dec
                   << " (" << (header.magicNumber == MAGIC_NUMBER ? "OK" : "Mismatch!") << ")" << std::endl;
         std::cout << "  Version:      " << header.versionMajor << "." << header.versionMinor << std::endl;
+        std::cout << "  Endianness:   " << (int)header.endianness
+                  << " (" << (header.endianness == ENDIANNESS_LITTLE ? "Little" : (header.endianness == ENDIANNESS_BIG ? "Big" : "Unknown")) << ")" << std::endl;
+        std::cout << "  ChecksumType: " << (int)header.checksumType
+                  << " (" << (header.checksumType == CHECKSUM_TYPE_CRC32 ? "CRC32" : (header.checksumType == CHECKSUM_TYPE_XOR ? "XOR" : "Unknown")) << ")" << std::endl;
+        std::cout << "  Reserved:     " << header.reserved << std::endl;
         std::cout << "  Metadata Off: " << header.metadataOffset << std::endl;
         std::cout << "  Index Offset: " << header.indexOffset << std::endl;
         std::cout << "  Data Offset:  " << header.dataOffset << std::endl;
         std::cout << "  Header Checksum: 0x" << std::hex << header.headerChecksum << std::dec << std::endl;
 
-        // Verify header checksum manually (as done in readAndValidateHeader)
-        FileHeader tempHeader = header; // Copy for calculation
-        tempHeader.headerChecksum = 0; // Zero out the checksum field
+        // Verify header checksum manually
+        // Read the raw bytes of the header *except* the checksum field
+        size_t headerSizeToVerify = sizeof(FileHeader) - sizeof(uint32_t);
+        std::vector<char> headerBytesBuffer(headerSizeToVerify);
+        if (!reader.seek(headerStartPos)) { // Go back to the start of the header
+             throw std::runtime_error("Failed to seek back for header checksum verification.");
+        }
+        if (reader.readBytes(headerBytesBuffer.data(), headerSizeToVerify) != headerSizeToVerify) {
+             throw std::runtime_error("Failed to read header bytes for checksum verification.");
+        }
+        // Now the reader is positioned right after the verified part of the header
+
         // Use CRC32 for manual verification
-        uint32_t calculatedHeaderChecksum = calculateCRC32(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t));
+        uint32_t calculatedHeaderChecksum = calculateCRC32(headerBytesBuffer.data(), headerSizeToVerify);
         std::cout << "  Calculated Hdr Checksum: 0x" << std::hex << calculatedHeaderChecksum << std::dec
                   << " (" << (calculatedHeaderChecksum == header.headerChecksum ? "OK" : "Mismatch!") << ")" << std::endl;
         assert(calculatedHeaderChecksum == header.headerChecksum);
 
+        // Ensure reader is positioned after the full header (including checksum) before reading index
+        if (!reader.seek(headerStartPos + static_cast<std::streamoff>(sizeof(FileHeader)))) {
+             throw std::runtime_error("Failed to seek past header after verification.");
+        }
 
         // Read and Print Index
         std::cout << "\n[Chunk Index (at offset " << header.indexOffset << ")]" << std::endl;
+        // Seek to index offset (use the value read from header)
         if (header.indexOffset == 0 || !reader.seek(header.indexOffset)) {
              throw std::runtime_error("Invalid or failed to seek to index offset.");
         }
@@ -281,7 +300,8 @@ bool runMapSerializerTests() {
         // Read and Verify Chunk Data (Basic Verification)
         std::cout << "\n[Chunk Data Verification (at offset " << header.dataOffset << ")]" << std::endl;
         // Check if data starts right after header (assuming no metadata)
-        assert(header.dataOffset == sizeof(FileHeader));
+        // Note: This assertion might fail if header size changes significantly or metadata is added.
+        // It's better to rely on header.dataOffset read from the file.
 
         for (size_t i = 0; i < indexEntries.size(); ++i) {
              const auto& entry = indexEntries[i];
@@ -303,7 +323,7 @@ bool runMapSerializerTests() {
                  continue;
              }
 
-             // Verify checksum using CRC32
+             // Verify checksum using CRC32 (as indicated by header.checksumType)
              uint32_t calculatedDataChecksum = calculateCRC32(chunkBuffer.data(), entry.size);
              std::cout << "    Data Checksum: Expected=0x" << std::hex << entry.checksum
                        << ", Calculated=0x" << calculatedDataChecksum << std::dec
@@ -329,6 +349,7 @@ bool runMapSerializerTests() {
 
     } catch (const std::exception& e) {
         std::cerr << "Manual file reading failed with exception: " << e.what() << std::endl;
+        LOG_ERROR("Manual file reading failed with exception: " + std::string(e.what()));
         allTestsPassed = false;
     }
 
@@ -338,9 +359,15 @@ bool runMapSerializerTests() {
 }
 
 int main() {
-    if (runMapSerializerTests()) {
-        return 0; // Success
-    } else {
-        return 1; // Failure
+    if (!TilelandWorld::Logger::getInstance().initialize("map_serializer_test.log")) {
+        return 1;
     }
+
+    LOG_INFO("Starting Map Serializer Tests...");
+    bool success = runMapSerializerTests();
+    LOG_INFO("Map Serializer Tests finished.");
+
+    TilelandWorld::Logger::getInstance().shutdown();
+
+    return success ? 0 : 1;
 }

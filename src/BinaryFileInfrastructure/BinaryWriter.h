@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 #include <type_traits> // For std::is_trivially_copyable
+#include <stdexcept> // For std::runtime_error
+#include "../Utils/Logger.h" // <-- 包含 Logger
 
 namespace TilelandWorld {
 
@@ -23,12 +25,17 @@ namespace TilelandWorld {
 
         // 写入一个 POD (Plain Old Data) 类型的数据。
         // 使用 SFINAE 约束 T 必须是 trivially copyable。
+        // 现在流会因 failbit/badbit 抛出异常。
         template <typename T,
                   typename = std::enable_if_t<std::is_trivially_copyable_v<T>>>
         bool write(const T& data) {
-            if (!stream.good()) return false;
-            stream.write(reinterpret_cast<const char*>(&data), sizeof(T));
-            return stream.good();
+            try {
+                stream.write(reinterpret_cast<const char*>(&data), sizeof(T));
+                return true; // 成功（无异常）
+            } catch (const std::ios_base::failure& e) {
+                // 包装异常
+                throw std::runtime_error("BinaryWriter::write<T> failed: " + std::string(e.what()));
+            }
         }
 
         // 写入原始字节数据。

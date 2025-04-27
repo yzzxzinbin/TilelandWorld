@@ -1,9 +1,9 @@
 #include "Map.h"
 #include "Constants.h"
-#include "MapGenInfrastructure/FlatTerrainGenerator.h" // 包含默认生成器实现
+#include "MapGenInfrastructure/FlatTerrainGenerator.h"
+#include "Utils/Logger.h" // <-- 包含 Logger
 #include <stdexcept> // For exceptions
 #include <utility> // For std::move
-#include <iostream> // For error reporting (temporary)
 
 namespace TilelandWorld {
 
@@ -47,10 +47,9 @@ namespace TilelandWorld {
             if (terrainGenerator) {
                 terrainGenerator->generateChunk(*newChunk);
             } else {
-                // 如果没有生成器（理论上构造函数会保证有），可以记录错误或填充默认值
-                std::cerr << "Warning: No terrain generator available for chunk ("
-                          << cx << "," << cy << "," << cz << ")" << std::endl;
-                // newChunk 默认构造时已填充 VOIDBLOCK，所以这里可以不处理
+                // 使用日志记录警告
+                LOG_WARNING("No terrain generator available for chunk ("
+                          + std::to_string(cx) + "," + std::to_string(cy) + "," + std::to_string(cz) + ")");
             }
 
             loadedChunks.emplace(coord, std::move(newChunk)); // 插入新区块
@@ -120,6 +119,8 @@ namespace TilelandWorld {
         // targetTile.canEnterSameLevel = props.allowEnterSameLevel;
         // targetTile.canStandOnTop = props.allowStandOnTop;
         // targetTile.movementCost = props.defaultMovementCost;
+        // 可以添加日志记录地形变化
+        // LOG_INFO("Set terrain at (" + std::to_string(wx) + "," + std::to_string(wy) + "," + std::to_string(wz) + ") to " + std::to_string(static_cast<int>(terrainType)));
      }
 
 

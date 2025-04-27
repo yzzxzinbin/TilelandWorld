@@ -3,6 +3,7 @@
 #include "../Constants.h"
 #include "../TerrainTypes.h" // 需要包含 TerrainTypes 以使用 getTerrainProperties
 #include "../MapGenInfrastructure/FlatTerrainGenerator.h" // 虽然 Map 默认创建，但包含可能有助于理解
+#include "../Utils/Logger.h" // <-- 包含 Logger
 #include <iostream>
 #include <string>
 #include <vector>
@@ -118,6 +119,12 @@ void printMapLayerToTerminal(Map& map, int zLayer, int startX, int startY, int w
 
 
 int main() {
+    // 初始化日志
+    if (!TilelandWorld::Logger::getInstance().initialize("plain_map_gen_test.log")) {
+        return 1;
+    }
+
+    LOG_INFO("Starting Plain Map Generation Test...");
     std::cout << "--- Running Plain Map Generation Test ---" << std::endl;
 
 #ifdef _WIN32
@@ -158,10 +165,16 @@ int main() {
         printMapLayerToTerminal(map, 0, displayStartX, displayStartY, displayWidth, displayHeight); // Z=0 should be VOIDBLOCK
 
         std::cout << "\n--- Plain Map Generation Test Finished Successfully ---" << std::endl;
+        LOG_INFO("Plain Map Generation Test Finished Successfully.");
+        // 关闭日志
+        TilelandWorld::Logger::getInstance().shutdown();
         return 0; // Success
 
     } catch (const std::exception& e) {
         std::cerr << "\nError during Plain Map Generation Test: " << e.what() << std::endl;
+        LOG_ERROR("Error during Plain Map Generation Test: " + std::string(e.what()));
+        // 关闭日志
+        TilelandWorld::Logger::getInstance().shutdown();
         return 1; // Failure
     }
 }

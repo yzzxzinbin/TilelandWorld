@@ -1,6 +1,7 @@
 #include "Tile.h"
 #include "Constants.h" // <--- 包含 Constants.h 以获取 MAX_LIGHT_LEVEL
 #include "TerrainTypes.h" // 需要包含 TerrainTypes 以使用 getTerrainProperties
+#include "../Utils/Logger.h" // <-- 包含 Logger
 #include <iostream>
 #include <string>
 #include <vector>
@@ -56,6 +57,13 @@ void printTileInfo(const TilelandWorld::Tile& tile, const std::string& name) {
 }
 
 int main() {
+    // 初始化日志
+    if (!TilelandWorld::Logger::getInstance().initialize("tile_main_test.log")) {
+        // 如果日志失败，仍然尝试继续，但打印到 cerr
+        std::cerr << "Warning: Failed to initialize logger for TileMainTest." << std::endl;
+    }
+
+    LOG_INFO("Starting Tile Main Test...");
     using namespace TilelandWorld;
 
 #ifdef _WIN32
@@ -81,9 +89,11 @@ int main() {
     // Set console code page to UTF-8 (65001) for correct character display
     if (!SetConsoleOutputCP(65001)) {
         std::cerr << "Warning: Failed to set console output code page to UTF-8." << std::endl;
+        LOG_WARNING("Failed to set console output code page to UTF-8.");
     }
     if (!SetConsoleCP(65001)) {
          std::cerr << "Warning: Failed to set console input code page to UTF-8." << std::endl;
+         LOG_WARNING("Failed to set console input code page to UTF-8.");
     }
     // UTF-8 should now be active for console I/O.
 #endif // _WIN32
@@ -175,6 +185,10 @@ int main() {
         std::cout << "\n"; // Newline after each row
     }
     std::cout << "-------------------------\n";
+
+    LOG_INFO("Tile Main Test finished.");
+    // 关闭日志
+    TilelandWorld::Logger::getInstance().shutdown();
 
     std::cin.get(); 
     return 0;
