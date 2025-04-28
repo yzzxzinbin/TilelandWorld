@@ -41,6 +41,13 @@ namespace TilelandWorld {
         void setTile(int wx, int wy, int wz, const Tile& tile);
         void setTileTerrain(int wx, int wy, int wz, TerrainType terrainType);
 
+        // --- Iteration over loaded chunks ---
+        // Provide const iterators to allow reading loaded chunk data without exposing the map itself.
+        using LoadedChunksConstIterator = std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash>::const_iterator;
+
+        LoadedChunksConstIterator begin() const { return loadedChunks.cbegin(); }
+        LoadedChunksConstIterator end() const { return loadedChunks.cend(); }
+        size_t getLoadedChunkCount() const { return loadedChunks.size(); }
 
     private:
         // 存储已加载的区块，使用区块坐标作为键，是MAP层的核心
