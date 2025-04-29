@@ -44,8 +44,9 @@ class ParserState:
         self.in_char = False
         self.in_comment = False
         self.in_multiline_comment = False
+        self.was_in_multiline_comment_this_line = False  # 新增标志位
         # 上一次处理的不完整内容（处理跨行结构）
-        self.pending_signature = None
+        self.pending_lines = []  # 用于累积跨行定义
         # 当前访问修饰符 (public/protected/private)
         self.current_access = "private"  # C++ 默认为 private
         # 预处理器状态
@@ -86,12 +87,17 @@ class ParserState:
 
     def process_character(self, char, prev_char=None):
         """处理单个字符，更新括号栈和字符串/注释状态"""
+        # 标记当前是否处于多行注释状态
+        if self.in_multiline_comment:
+            self.was_in_multiline_comment_this_line = True
+
         # 处理注释
         if not self.in_string and not self.in_char:
             if self.in_multiline_comment:
                 if prev_char == "*" and char == "/":
                     self.in_multiline_comment = False
-                return
+                    return  # 结束多行注释后直接返回
+                return  # 仍在多行注释中
 
             if not self.in_comment:
                 if prev_char == "/" and char == "/":
@@ -147,7 +153,8 @@ class ParserState:
         # 尖括号跟踪 (用于模板)
         elif char == "<":
             if (
-                prev_char
+                prev_char is not None  # Add this check
+                and prev_char
                 in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
             ):
                 # 可能是模板的开始
@@ -159,6 +166,7 @@ class ParserState:
     def reset_line_state(self):
         """在处理新行时重置行内状态"""
         self.in_comment = False
+        self.was_in_multiline_comment_this_line = False  # 重置标志位
         # 注意：不重置多行注释状态，因为它可能跨行
 
     def is_clean_for_matching(self):
@@ -227,14 +235,13 @@ class CppSymbolScanner:
                 r"^(?!\s*#\s*define|\s*friend)"
                 r"(?:template\s*<[^>]+>\s*)?"  # 模板前缀
                 r"(?:(?:inline|constexpr|static|virtual|explicit)\s+)*"  # 修饰符
-                # More robust return type
+                # Group 1: Return type
                 r"((?:[\w:]+)(?:\s*\*+\s*|\s*&\s*|\s+))+\s*"
-                # Function name - Group 2
+                # Group 2: Function name
                 r"([a-zA-Z_][a-zA-Z0-9_:]*)\s*"
-                # Add negative lookahead for keywords before parenthesis
                 r"(?!\s*(?:if|for|while|switch)\b)"
-                # 函数名和参数, noexcept
-                r"\([^;{}]*\)\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*;"
+                # Group 3: Parameters (captured)
+                r"(\([^;{}]*\))\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*;"
             ),
             "global_function_def": re.compile(
                 # Avoid matching lines starting with #define
@@ -277,14 +284,13 @@ class CppSymbolScanner:
                 r"(?!\s*#\s*define|\s*friend)"  # 排除宏和友元声明
                 r"(?:template\s*<[^>]+>\s*)?"  # 可选的模板前缀
                 r"(?:(?:inline|constexpr|static|virtual|explicit)\s+)*"  # 修饰符
-                # 返回类型 - 允许构造函数/析构函数没有显式类型，或普通类型
+                # Group 1: Return type (optional for ctor/dtor)
                 r"((?:(?:[\w:]+)(?:<[^>]+>)?(?:\s*\*+\s*|\s*&\s*|\s+))*|\~?)?\s*"
-                # 函数名 (Group 2)
+                # Group 2: Function name
                 r"([a-zA-Z_][a-zA-Z0-9_~]*)\s*"  # 允许 ~ 用于析构函数
-                # 防止匹配 if/for/while 等关键字
                 r"(?!\s*(?:if|for|while|switch)\b)"
-                # 参数、const、noexcept、纯虚函数(= 0)、分号
-                r"\([^;{}]*\)\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*(?:=\s*0)?\s*;"
+                # Group 3: Parameters (captured)
+                r"(\([^;{}]*\))\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*(?:=\s*0)?\s*;"
             ),
             "member_function_def": re.compile(
                 r"^(?:\s*(?:public|protected|private)\s*:\s*)?(?!\s*#\s*define)"
@@ -314,14 +320,13 @@ class CppSymbolScanner:
                 r"^\s*friend\s+"  # Starts with friend
                 r"(?:template\s*<[^>]+>\s*)?"
                 r"(?:(?:inline|constexpr|static)\s+)*"  # Modifiers applicable to friend
-                # Return type
+                # Group 1: Return type
                 r"((?:[\w:]+)(?:\s*\*+\s*|\s*&\s*|\s+))+\s*"
-                # Function name (can have scope)
+                # Group 2: Function name
                 r"([a-zA-Z_][a-zA-Z0-9_:]*)\s*"
-                # Add negative lookahead for keywords before parenthesis
                 r"(?!\s*(?:if|for|while|switch)\b)"
-                # Parameters, const, noexcept, pure virtual (= 0), semicolon
-                r"\([^;{}]*\)\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*;"
+                # Group 3: Parameters (captured)
+                r"(\([^;{}]*\))\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*;"
             ),
             "access_modifier": re.compile(r"^\s*(public|protected|private)\s*:"),
             "nested_class": re.compile(
@@ -418,146 +423,195 @@ class CppSymbolScanner:
         logging.debug(f"--- Processing Line {line_num} ({file_path}) ---")
         logging.debug(f"Raw Stripped: '{stripped_line}'")
         logging.debug(
-            f"State: Current={self.state.current_state}, NS={self.state.namespace_stack}, Class={self.state.class_stack}, Braces={len(self.state.brace_stack)}"
+            f"State: Current={self.state.current_state}, NS={self.state.namespace_stack}, Class={self.state.class_stack}, Braces={len(self.state.brace_stack)}, Pending Lines={len(self.state.pending_lines)}"
         )
 
         if not stripped_line:
             logging.debug("Line is empty, skipping.")
+            if self.state.pending_lines:
+                logging.debug("Empty line encountered, clearing pending lines.")
+                self.state.pending_lines.clear()
             return
 
-        # --- Start: Multi-line function definition handling ---
-        possible_match_found_for_combined = False
-        if self.state.pending_signature:
-            potential_signature = self.state.pending_signature
-            # Clear pending state immediately, we'll re-set if needed
-            self.state.pending_signature = None
-            if stripped_line.startswith("{"):
-                combined_line = potential_signature + " {"  # Simple combination
-                logging.debug(f"Attempting combined match: '{combined_line}'")
-
-                # Determine patterns to check based on state *before* pending
-                func_def_patterns = {
-                    "out_of_class_member_def": self.out_of_class_patterns.get(
-                        "out_of_class_member_def"
-                    ),
-                    "global_function_def": self.global_patterns.get(
-                        "global_function_def"
-                    ),
-                    "member_function_def": self.class_patterns.get(
-                        "member_function_def"
-                    ),
-                }
-
-                for pattern_type, pattern in func_def_patterns.items():
-                    if pattern:  # Ensure pattern exists
-                        match = pattern.search(combined_line)
-                        if (
-                            match and self.state.is_clean_for_matching()
-                        ):  # Check clean state again
-                            logging.info(
-                                f"MATCHED COMBINED {pattern_type}: '{match.group(0)}'"
-                            )
-                            # Process the combined match
-                            self._process_match(
-                                pattern_type, match, line_num, file_path, combined_line
-                            )
-                            possible_match_found_for_combined = True
-                            # Update brace stack for the '{' that was just processed conceptually
-                            self.state.brace_stack.append("{")
-                            # Since we processed the combined line including the '{', skip normal processing for this line
-                            return
-            # If pending_signature existed but current line didn't start with '{',
-            # it wasn't a function definition, pending_signature remains None.
-
-        # --- End: Multi-line function definition handling ---
-
-        # 逐字符处理，更新状态机内部状态 (Moved after multi-line check)
         self.state.reset_line_state()
         prev_char = None
-        # Re-process characters for the current line if not handled above
         for char in stripped_line:
             self.state.process_character(char, prev_char)
             prev_char = char
 
-        # 根据当前状态选择合适的模式
-        patterns_to_check = {}
-        current_state_for_match = (
-            self.state.current_state
-        )  # Use state *after* potential pops from process_character
+        # 检查是否在多行注释中
+        if self.state.was_in_multiline_comment_this_line:
+            logging.debug(
+                "Line was part of a multi-line comment, skipping pattern/pending logic."
+            )
+            if not self.state.in_multiline_comment and self.state.pending_lines:
+                logging.debug("Multi-line comment ended, clearing any pending lines.")
+                self.state.pending_lines.clear()
+            return
 
-        # 函数定义状态特殊处理
-        if current_state_for_match == ParserState.FUNCTION_DEF:
-            # Only allow nested structures inside functions for now
-            patterns_to_check = {
-                k: v
-                for k, v in self.class_patterns.items()
-                if k in ["nested_class", "nested_struct", "nested_enum", "nested_union"]
-            }
-        elif current_state_for_match == ParserState.GLOBAL:
-            patterns_to_check.update(self.global_patterns)
-            patterns_to_check.update(self.out_of_class_patterns)
-        elif current_state_for_match == ParserState.NAMESPACE:
-            patterns_to_check.update(self.global_patterns)
-            patterns_to_check.update(self.out_of_class_patterns)
-        elif current_state_for_match == ParserState.CLASS:
-            patterns_to_check.update(self.class_patterns)
-
-        # 进行匹配
-        match_found_this_line = False
-        for pattern_type, pattern in patterns_to_check.items():
-            match = pattern.search(stripped_line)
-            if match and self.state.is_clean_for_matching():
-                logging.info(f"MATCHED {pattern_type}: '{match.group(0)}'")
-                self._process_match(
-                    pattern_type, match, line_num, file_path, stripped_line
-                )
-                match_found_this_line = True
-                break  # 一行通常只匹配一个主要符号
-
-        # --- Start: Update pending_signature logic ---
-        # If no match was found on this line (neither combined nor standalone)
-        # and it looks like a function signature start
-        if not match_found_this_line and not possible_match_found_for_combined:
-            # Heuristic: ends with ')', maybe 'const', maybe 'noexcept(...)', but not ';' or '{'
-            if (
-                (
-                    stripped_line.endswith(")")
-                    or re.search(r"\)\s*const\s*$", stripped_line)
-                    or re.search(r"\)\s*noexcept\s*\(.*\)\s*$", stripped_line)
-                )
-                and not stripped_line.endswith(";")
-                and not stripped_line.endswith("{")
+        if not self.state.is_clean_for_matching():
+            logging.debug(
+                "Not clean for matching (in comment/string), skipping pattern checks."
+            )
+            if self.state.pending_lines and (
+                stripped_line.endswith(";") or stripped_line.endswith("}")
             ):
-                logging.debug(f"Setting pending signature: '{stripped_line}'")
-                self.state.pending_signature = stripped_line
-            else:
-                # Clear pending if it wasn't cleared before and doesn't look like a start
-                if self.state.pending_signature:
-                    logging.debug(
-                        "Clearing pending signature (no match and not a signature start)."
-                    )
-                    self.state.pending_signature = None
-        elif match_found_this_line:
-            # If we found a match on this line itself, it can't be a pending signature start
-            if self.state.pending_signature:
                 logging.debug(
-                    "Clearing pending signature (match found on current line)."
+                    "Line ends with ';' or '}', clearing pending lines (even in comment/string)."
                 )
-                self.state.pending_signature = None
-        # --- End: Update pending_signature logic ---
+                self.state.pending_lines.clear()
+            return
 
-        # 处理一行内完整函数后的状态恢复 (Keep this logic)
+        match_found = False
+        processed_by_multiline = False
+        matched_pattern_type = None
+
+        if self.state.pending_lines:
+            if stripped_line.startswith("{"):
+                combined_content = (
+                    " ".join(self.state.pending_lines) + " " + stripped_line
+                )
+                logging.debug(f"Attempting combined match: '{combined_content}'")
+
+                definition_pattern_types = [
+                    "namespace",
+                    "class",
+                    "struct",
+                    "nested_class",
+                    "nested_struct",
+                    "global_function_def",
+                    "member_function_def",
+                    "out_of_class_member_def",
+                    "union",
+                    "nested_union",
+                    "enum",
+                    "nested_enum",
+                ]
+                patterns_to_try = {
+                    **self.global_patterns,
+                    **self.class_patterns,
+                    **self.out_of_class_patterns,
+                }
+                relevant_patterns = {
+                    ptype: pattern
+                    for ptype, pattern in patterns_to_try.items()
+                    if ptype in definition_pattern_types
+                }
+
+                for pattern_type, pattern in relevant_patterns.items():
+                    match = pattern.search(combined_content)
+                    if match and (
+                        match.group(0).rstrip().endswith("{")
+                        or match.group(0).rstrip().endswith("};")
+                    ):
+                        logging.info(
+                            f"MATCHED COMBINED {pattern_type}: '{match.group(0)}'"
+                        )
+                        self._process_match(
+                            pattern_type, match, line_num, file_path, combined_content
+                        )
+                        self.state.pending_lines.clear()
+                        match_found = True
+                        processed_by_multiline = True
+                        matched_pattern_type = pattern_type
+                        break
+
+                if not match_found:
+                    logging.debug("Combined match failed, clearing pending lines.")
+                    self.state.pending_lines.clear()
+
+            elif stripped_line.endswith(";") or stripped_line.endswith("}"):
+                logging.debug("Line ends with ';' or '}', clearing pending lines.")
+                self.state.pending_lines.clear()
+            else:
+                logging.debug(f"Appending to pending lines: '{stripped_line}'")
+                self.state.pending_lines.append(stripped_line)
+                processed_by_multiline = True
+
+        if not processed_by_multiline:
+            patterns_to_check = {}
+            current_state_for_match = self.state.current_state
+            if current_state_for_match == ParserState.FUNCTION_DEF:
+                patterns_to_check = {
+                    k: v
+                    for k, v in self.class_patterns.items()
+                    if k
+                    in ["nested_class", "nested_struct", "nested_enum", "nested_union"]
+                }
+            elif current_state_for_match == ParserState.GLOBAL:
+                patterns_to_check.update(self.global_patterns)
+                patterns_to_check.update(self.out_of_class_patterns)
+            elif current_state_for_match == ParserState.NAMESPACE:
+                patterns_to_check.update(self.global_patterns)
+                patterns_to_check.update(self.out_of_class_patterns)
+            elif current_state_for_match == ParserState.CLASS:
+                patterns_to_check.update(self.class_patterns)
+
+            for pattern_type, pattern in patterns_to_check.items():
+                match = pattern.search(stripped_line)
+                if match:
+                    logging.info(f"MATCHED {pattern_type}: '{match.group(0)}'")
+                    self._process_match(
+                        pattern_type, match, line_num, file_path, stripped_line
+                    )
+                    match_found = True
+                    matched_pattern_type = pattern_type
+                    if pattern_type in [
+                        "namespace",
+                        "class",
+                        "struct",
+                        "union",
+                        "enum",
+                        "global_function_def",
+                        "member_function_def",
+                        "out_of_class_member_def",
+                    ]:
+                        if self.state.pending_lines:
+                            logging.debug(
+                                "Clearing pending lines after single-line definition match."
+                            )
+                            self.state.pending_lines.clear()
+                    break
+
+            if not match_found:
+                if (
+                    not stripped_line.endswith("{")
+                    and not stripped_line.endswith(";")
+                    and not re.fullmatch(
+                        r"(public|protected|private)\s*:", stripped_line
+                    )
+                    and not stripped_line.startswith("#")
+                ):
+                    logging.debug(f"Starting pending lines: '{stripped_line}'")
+                    self.state.pending_lines = [stripped_line]
+                else:
+                    if self.state.pending_lines:
+                        logging.debug(
+                            "Clearing pending lines as current line ends scope/statement but didn't match."
+                        )
+                        self.state.pending_lines.clear()
+
+        is_inline_func_def_this_line = False
         if (
-            self.state.current_state == ParserState.FUNCTION_DEF
+            match_found
+            and not processed_by_multiline
+            and matched_pattern_type
+            in ["global_function_def", "member_function_def", "out_of_class_member_def"]
             and "{" in stripped_line
             and "}" in stripped_line
             and stripped_line.rfind("}") > stripped_line.rfind("{")
-            and not self.state.brace_stack
         ):
-            logging.info(
-                f"Auto-popping function state after inline function on line {line_num}"
-            )
-            self.state.pop_state()
+            is_inline_func_def_this_line = True
+
+        if (
+            is_inline_func_def_this_line
+            and self.state.current_state == ParserState.FUNCTION_DEF
+        ):
+            if len(self.state.brace_stack) == len(self.state.state_stack) - 1:
+                logging.info(
+                    f"Auto-popping function state after inline function on line {line_num}"
+                )
+                self.state.pop_state()
 
     def _process_match(
         self, pattern_type: str, match, line_num: int, file_path: str, line_content: str
@@ -577,13 +631,15 @@ class CppSymbolScanner:
             ]
         ):
             logging.debug(f"Skipping match in function body: {match.group(0)}")
-            return  # Don't process this match
+            return
 
         # 处理匹配结果
         if pattern_type == "namespace":
-            ns_name = match.group(1)
+            ns_name_match = match.group(1)
+            ns_name = ns_name_match if ns_name_match else "<anonymous>"
             self.state.push_state(ParserState.NAMESPACE, ns_name)
-            self._record_symbol("namespace", ns_name, line_num, file_path)
+            if ns_name_match:
+                self._record_symbol("namespace", ns_name_match, line_num, file_path)
         elif pattern_type in [
             "class",
             "struct",
@@ -597,10 +653,7 @@ class CppSymbolScanner:
         elif pattern_type == "access_modifier":
             self.state.current_access = match.group(1)
         elif pattern_type == "member_function_def":
-            func_name = match.group(
-                2
-            )  # Group index might differ based on regex, check definition
-            # Assuming group 2 is correct for member_function_def
+            func_name = match.group(2)
             self._record_symbol("member_function_def", func_name, line_num, file_path)
             self.state.push_state(ParserState.FUNCTION_DEF)
         elif pattern_type == "out_of_class_member_def":
@@ -617,6 +670,9 @@ class CppSymbolScanner:
         elif pattern_type == "global_function_def":
             func_name = match.group(2)  # Check group index
             if "::" in func_name:
+                logging.warning(
+                    f"global_function_def matched qualified name '{func_name}', treating as out-of-class."
+                )
                 parts = func_name.split("::")
                 class_name = "::".join(parts[:-1])
                 method_name = parts[-1]
@@ -635,61 +691,65 @@ class CppSymbolScanner:
         elif pattern_type in ["enum", "nested_enum"]:
             enum_name = match.group(1)
             self._record_symbol("enum", enum_name, line_num, file_path)
-            # Enum definitions like `enum class X { A, B };` might need state handling if complex
-            # For simple cases like the regex matches, maybe no state push needed,
-            # but if they contain nested items, CLASS state might be appropriate.
-            # Let's assume simple enums for now.
         elif pattern_type in ["union", "nested_union"]:
             union_name = match.group(1)
             self._record_symbol("union", union_name, line_num, file_path)
-            self.state.push_state(
-                ParserState.CLASS, union_name
-            )  # Unions have members like classes
+            self.state.push_state(ParserState.CLASS, union_name)
         else:
-            # Other symbol types (macros, variables, decls)
             symbol_name = None
-            if pattern_type in ["macro_constant", "macro_function"]:
-                symbol_name = match.group(1)
-                value = (
-                    match.group(2).strip() if pattern_type == "macro_constant" else None
-                )
-                kwargs = {"value": value} if value is not None else {}
-                self._record_symbol(
-                    pattern_type, symbol_name, line_num, file_path, **kwargs
-                )
-            elif pattern_type in [
-                "global_function_decl",
-                "member_function_decl",
-                "friend_function_decl",
-            ]:
-                symbol_name = match.group(2)  # Check group index
-                self._record_symbol(pattern_type, symbol_name, line_num, file_path)
-            elif pattern_type in ["global_variable", "member_variable"]:
-                symbol_name = match.group(2)  # Check group index
-                var_type = match.group(1).strip()  # Check group index
-                self._record_symbol(
-                    pattern_type,
-                    symbol_name,
-                    line_num,
-                    file_path,
-                    var_type=var_type,
-                )
+            kwargs = {}
+            try:
+                if pattern_type in ["macro_constant", "macro_function"]:
+                    symbol_name = match.group(1)
+                    if pattern_type == "macro_constant":
+                        value = match.group(2).strip()
+                        kwargs = {"value": value}
+                elif pattern_type in [
+                    "global_function_decl",
+                    "member_function_decl",
+                    "friend_function_decl",
+                ]:
+                    return_type = match.group(1).strip() if match.group(1) else ""
+                    symbol_name = match.group(2)
+                    parameters = match.group(3).strip()
 
-        # 内联函数处理 (Check if this logic needs adjustment with combined lines)
-        if (
-            pattern_type
-            in ["member_function_def", "global_function_def", "out_of_class_member_def"]
-            and "{"
-            in line_content  # Use the actual content processed (combined or single)
-            and "}" in line_content
-            and line_content.rfind("}") > line_content.rfind("{")
-        ):
-            logging.info(f"Detected inline function on line {line_num}")
-            if self.state.current_state == ParserState.FUNCTION_DEF:
-                # Check if the closing brace matches the one opened by this function
-                # This simple check might pop too early if braces aren't balanced on the line
-                # A more robust check would involve brace_stack depth
-                self.state.pop_state()
+                    if pattern_type == "member_function_decl":
+                        current_class_name = (
+                            self.state.class_stack[-1]
+                            if self.state.class_stack
+                            else None
+                        )
+                        if not return_type and symbol_name.startswith("~"):
+                            return_type = "<destructor>"
+                        elif (
+                            not return_type
+                            and current_class_name
+                            and symbol_name == current_class_name
+                        ):
+                            return_type = "<constructor>"
+                        elif not return_type:
+                            return_type = "<unknown>"
+
+                    kwargs = {"return_type": return_type, "parameters": parameters}
+
+                elif pattern_type in ["global_variable", "member_variable"]:
+                    var_type = match.group(1).strip()
+                    symbol_name = match.group(2)
+                    kwargs = {"var_type": var_type}
+
+                if symbol_name:
+                    self._record_symbol(
+                        pattern_type, symbol_name, line_num, file_path, **kwargs
+                    )
+                else:
+                    logging.warning(
+                        f"Could not extract symbol name for {pattern_type} from match: {match.groups()}"
+                    )
+
+            except IndexError:
+                logging.error(
+                    f"IndexError extracting groups for {pattern_type}. Match groups: {match.groups()}. Regex: {self.all_patterns[pattern_type].pattern}"
+                )
 
     def _record_symbol(
         self, symbol_type: str, name: str, line_num: int, file_path: str, **kwargs
@@ -740,20 +800,16 @@ class CppSymbolScanner:
                 f"Skipping keyword detected as symbol name: '{name}' as {symbol_type}"
             )
             return
-        if kwargs.get("var_type") in keywords:
+        var_type_kw = kwargs.get("var_type")
+        if var_type_kw and var_type_kw in keywords:
             logging.debug(
-                f"Skipping keyword detected as variable type: '{kwargs.get('var_type')}' for symbol '{name}'"
+                f"Skipping keyword detected as variable type: '{var_type_kw}' for symbol '{name}'"
             )
             return
-        # Specific false positive checks
-        if (
-            symbol_type == "global_variable" and name == "return"
-        ):  # Already checked, but keep for safety
+        if symbol_type == "global_variable" and name == "return":
             logging.debug(f"Skipping 'return' keyword as global_variable")
             return
-        if symbol_type == "global_function_decl" and name.startswith(
-            "std::"
-        ):  # Already checked
+        if symbol_type == "global_function_decl" and name.startswith("std::"):
             logging.debug(f"Skipping standard library usage: '{name}' as {symbol_type}")
             return
 
@@ -766,7 +822,10 @@ class CppSymbolScanner:
         current_namespace_stack = list(self.state.namespace_stack)  # Make copies
         current_class_stack = list(self.state.class_stack)
 
-        # Adjust scope based on symbol type and context
+        current_namespace_stack = [
+            ns for ns in current_namespace_stack if ns != "<anonymous>"
+        ]
+
         qualifier = kwargs.get("qualifier")
 
         if symbol_type in (
@@ -795,18 +854,12 @@ class CppSymbolScanner:
         elif symbol_type in ("class", "struct", "enum", "union"):
             # Top-level class/struct/enum/union within a namespace or global
             components.extend(current_namespace_stack)
-            # If it's nested (pushed state before recording), class_stack includes the parent
-            if current_class_stack:
-                components.extend(
-                    current_class_stack[:-1]
-                )  # Add parent scope, exclude self
+            if len(current_class_stack) > 0:
+                components.extend(current_class_stack[:-1])
 
         elif symbol_type == "namespace":
-            # Namespace definition itself
-            if current_namespace_stack:
-                components.extend(
-                    current_namespace_stack[:-1]
-                )  # Parent namespaces only
+            if len(current_namespace_stack) > 0:
+                components.extend(current_namespace_stack[:-1])
 
         else:  # Global functions, variables, macros
             components.extend(current_namespace_stack)
@@ -821,8 +874,12 @@ class CppSymbolScanner:
             f"Recorded symbol: Full Name='{full_name}', Type='{symbol_type}', Line={line_num}"
         )
 
-        # 记录符号信息
-        location = f"{file_path}:{line_num}"
+        try:
+            relative_path = os.path.relpath(file_path)
+        except ValueError:
+            relative_path = file_path
+
+        location = f"{relative_path}:{line_num}"
         symbol_info = {"location": location}
 
         # 添加额外信息
@@ -973,6 +1030,25 @@ class CppSymbolScanner:
                     ):
                         extra_info = f" {colorama.Fore.LIGHTBLACK_EX}类型:{default_color} {info['var_type']}"
                         logging.debug(f"    Location: {loc}, Type: {info['var_type']}")
+                    elif (
+                        original_type
+                        in [
+                            "global_function_decl",
+                            "member_function_decl",
+                            "friend_function_decl",
+                        ]
+                        and "return_type" in info
+                        and "parameters" in info
+                    ):
+                        rt = info["return_type"]
+                        params = info["parameters"]
+                        if rt == "<constructor>" or rt == "<destructor>":
+                            extra_info = f" {colorama.Fore.LIGHTBLACK_EX}类型:{default_color} {rt} {colorama.Fore.LIGHTBLACK_EX}参数:{default_color} {params}"
+                        else:
+                            extra_info = f" {colorama.Fore.LIGHTBLACK_EX}返回:{default_color} {rt} {colorama.Fore.LIGHTBLACK_EX}参数:{default_color} {params}"
+                        logging.debug(
+                            f"    Location: {loc}, Return: {rt}, Params: {params}"
+                        )
                     else:
                         logging.debug(f"    Location: {loc}")
 
