@@ -3,13 +3,193 @@ import re
 from typing import List, Dict, Tuple
 from collections import defaultdict
 import colorama  # Import colorama
+import logging  # Import logging
+
+# --- Logging Setup ---
+log_file = "scan_debug.log"
+# Configure logging to file, ensuring it's overwritten each run (filemode='w')
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    filename=log_file,
+    filemode="w",
+)
+# --- End Logging Setup ---
+
+
+class ParserState:
+    """状态机类用于跟踪解析状态和作用域"""
+
+    # 状态常量定义
+    GLOBAL = "GLOBAL"
+    NAMESPACE = "NAMESPACE"
+    CLASS = "CLASS"
+    FUNCTION_DEF = "FUNCTION_DEF"
+    TEMPLATE = "TEMPLATE"
+
+    def __init__(self):
+        # 当前状态
+        self.current_state = self.GLOBAL
+        # 状态栈用于跟踪嵌套结构
+        self.state_stack = []
+        # 作用域栈用于跟踪命名空间和类
+        self.namespace_stack = []
+        self.class_stack = []
+        # 括号栈用于正确匹配
+        self.brace_stack = []  # 跟踪大括号 { }
+        self.paren_stack = []  # 跟踪小括号 ( )
+        self.angle_stack = []  # 跟踪尖括号 < > (用于模板)
+        # 跟踪字符串和注释状态，避免在字符串或注释中匹配
+        self.in_string = False
+        self.in_char = False
+        self.in_comment = False
+        self.in_multiline_comment = False
+        # 上一次处理的不完整内容（处理跨行结构）
+        self.pending_signature = None
+        # 当前访问修饰符 (public/protected/private)
+        self.current_access = "private"  # C++ 默认为 private
+        # 预处理器状态
+        self.in_preprocessor = False
+
+    def push_state(self, new_state, scope_name=None):
+        """进入新状态"""
+        self.state_stack.append(self.current_state)
+        self.current_state = new_state
+        logging.debug(f"State pushed: {new_state}, scope: {scope_name}")
+
+        # 更新作用域信息
+        if new_state == self.NAMESPACE and scope_name:
+            self.namespace_stack.append(scope_name)
+        elif new_state == self.CLASS and scope_name:
+            self.class_stack.append(scope_name)
+
+    def pop_state(self):
+        """退出当前状态"""
+        if not self.state_stack:
+            # 防止状态栈为空时出错
+            self.current_state = self.GLOBAL
+            return False
+
+        old_state = self.current_state
+        self.current_state = self.state_stack.pop()
+
+        # 更新作用域信息
+        if old_state == self.NAMESPACE and self.namespace_stack:
+            popped = self.namespace_stack.pop()
+            logging.debug(f"Popped namespace: {popped}")
+        elif old_state == self.CLASS and self.class_stack:
+            popped = self.class_stack.pop()
+            logging.debug(f"Popped class: {popped}")
+
+        logging.debug(f"State popped: from {old_state} back to {self.current_state}")
+        return True
+
+    def process_character(self, char, prev_char=None):
+        """处理单个字符，更新括号栈和字符串/注释状态"""
+        # 处理注释
+        if not self.in_string and not self.in_char:
+            if self.in_multiline_comment:
+                if prev_char == "*" and char == "/":
+                    self.in_multiline_comment = False
+                return
+
+            if not self.in_comment:
+                if prev_char == "/" and char == "/":
+                    self.in_comment = True
+                    return
+                if prev_char == "/" and char == "*":
+                    self.in_multiline_comment = True
+                    return
+
+        # 在注释中忽略所有内容
+        if self.in_comment or self.in_multiline_comment:
+            return
+
+        # 处理字符串和字符字面量
+        if char == '"' and prev_char != "\\":
+            self.in_string = not self.in_string
+            return
+        if char == "'" and prev_char != "\\":
+            self.in_char = not self.in_char
+            return
+
+        # 在字符串或字符字面量中忽略括号
+        if self.in_string or self.in_char:
+            return
+
+        # 处理括号
+        if char == "{":
+            self.brace_stack.append("{")
+        elif char == "}":
+            if self.brace_stack:
+                self.brace_stack.pop()
+                # 检查是否退出了当前作用域
+                if not self.brace_stack:
+                    # 所有大括号都已匹配，回到全局状态
+                    self.pop_state()
+                elif len(self.brace_stack) < len(self.state_stack):
+                    # 如果括号栈小于状态栈，可能需要退出当前状态
+                    # 例如：从函数定义退回到类定义
+                    self.pop_state()
+                    # 添加此检查以处理嵌套函数定义完成的情况
+                    if self.current_state == self.FUNCTION_DEF and len(
+                        self.brace_stack
+                    ) <= len(self.state_stack):
+                        self.pop_state()
+
+        # 小括号跟踪
+        elif char == "(":
+            self.paren_stack.append("(")
+        elif char == ")":
+            if self.paren_stack:
+                self.paren_stack.pop()
+
+        # 尖括号跟踪 (用于模板)
+        elif char == "<":
+            if (
+                prev_char
+                in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
+            ):
+                # 可能是模板的开始
+                self.angle_stack.append("<")
+        elif char == ">":
+            if self.angle_stack:
+                self.angle_stack.pop()
+
+    def reset_line_state(self):
+        """在处理新行时重置行内状态"""
+        self.in_comment = False
+        # 注意：不重置多行注释状态，因为它可能跨行
+
+    def is_clean_for_matching(self):
+        """检查当前状态是否适合进行正则匹配"""
+        return not (
+            self.in_string
+            or self.in_char
+            or self.in_comment
+            or self.in_multiline_comment
+        )
+
+    def get_current_scope(self):
+        """获取当前的完整作用域"""
+        scope = []
+        scope.extend(self.namespace_stack)
+        scope.extend(self.class_stack)
+        return scope
+
+    def reset(self):
+        """重置状态机"""
+        self.__init__()
 
 
 class CppSymbolScanner:
     def __init__(self):
-        # 初始化各种正则表达式模式
-        self.patterns = {
-            # Match simple macro constants (#define NAME VALUE)
+        # 初始化状态机
+        self.state = ParserState()
+
+        # 按状态分组的正则表达式模式
+        self.global_patterns = {
+            # 全局状态下的匹配规则
             "macro_constant": re.compile(
                 r"^\s*#\s*define\s+"  # #define keyword
                 r"([a-zA-Z_]\w*)"  # Macro name (Group 1)
@@ -20,7 +200,6 @@ class CppSymbolScanner:
                 r"(.+?)"
                 r"\s*(?:$|//|/\*)"  # End of line or start of comment
             ),
-            # Match function-like macros (#define NAME(...) ...)
             "macro_function": re.compile(
                 r"^\s*#\s*define\s+"  # #define keyword
                 r"([a-zA-Z_]\w*)"  # Macro name (Group 1)
@@ -30,226 +209,747 @@ class CppSymbolScanner:
                 # Optional replacement value (can be complex, capture simply for now)
                 r"(.*)"  # Capture the rest (Group 2)
             ),
-            "namespace": re.compile(r"namespace\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\{"),
+            "namespace": re.compile(
+                r"^\s*namespace\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\{)?\s*$"
+            ),
             "class": re.compile(
                 # Allow template<...> before class/struct
                 r"(?:template\s*<[^>]+>\s*)?"
-                r"class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:final\s*)?(?::\s*[^{]+)?\{"
+                r"class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:final\s*)?(?::\s*[^{]+)?\s*\{"
             ),
             "struct": re.compile(
                 # Allow template<...> before class/struct
                 r"(?:template\s*<[^>]+>\s*)?"
-                r"struct\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?::\s*[^{]+)?\{"
+                r"struct\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?::\s*[^{]+)?\s*\{"
             ),
-            "function_decl": re.compile(
-                # Avoid matching lines starting with #define
-                r"^(?!\s*#\s*define)"
+            "global_function_decl": re.compile(
+                # Avoid matching lines starting with #define or friend
+                r"^(?!\s*#\s*define|\s*friend)"
                 r"(?:template\s*<[^>]+>\s*)?"  # 模板前缀
                 r"(?:(?:inline|constexpr|static|virtual|explicit)\s+)*"  # 修饰符
-                # More robust return type (allows pointers, refs, scope resolution)
+                # More robust return type
                 r"((?:[\w:]+)(?:\s*\*+\s*|\s*&\s*|\s+))+\s*"
-                # Function name (allow scope resolution)
+                # Function name - Group 2
                 r"([a-zA-Z_][a-zA-Z0-9_:]*)\s*"
+                # Add negative lookahead for keywords before parenthesis
+                r"(?!\s*(?:if|for|while|switch)\b)"
                 # 函数名和参数, noexcept
                 r"\([^;{}]*\)\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*;"
             ),
-            "function_def": re.compile(
+            "global_function_def": re.compile(
                 # Avoid matching lines starting with #define
                 r"^(?!\s*#\s*define)"
                 r"(?:template\s*<[^>]+>\s*)?"  # 模板前缀
                 r"(?:(?:inline|constexpr|static|virtual|explicit)\s+)*"  # 修饰符
                 # More robust return type
                 r"((?:[\w:]+)(?:\s*\*+\s*|\s*&\s*|\s+))+\s*"
-                # Function name (allow scope resolution)
+                # Function name (allow scope resolution) - Group 2
                 r"([a-zA-Z_][a-zA-Z0-9_:]*)\s*"
+                # Add negative lookahead for keywords before parenthesis
+                r"(?!\s*(?:if|for|while|switch)\b)"
                 # 函数名和参数, noexcept
                 r"\([^{}]*\)\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*\{"
             ),
-            "global_var": re.compile(
+            "global_variable": re.compile(
                 # Avoid matching lines starting with #define
                 r"^(?!\s*#\s*define)"
                 r"(?:extern\s+)?"  # extern修饰符
                 r"(?:(?:const|static|volatile|mutable)\s+)*"  # 其他修饰符
                 # More robust type
                 r"((?:[\w:]+)(?:\s*\*+\s*|\s*&\s*|\s+))+\s*"
-                # 变量名
+                # 变量名 - Group 2
                 r"([a-zA-Z_][a-zA-Z0-9_]*)\s*"
                 # Look for array, assignment, comma, or semicolon, but NOT immediately followed by (
                 r"(?:\[.*?\])?\s*(?![ \t]*\()[=;,]"
             ),
+            # 新增: 枚举类型
+            "enum": re.compile(
+                r"^\s*enum\s+(?:class|struct\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*(?::\s*[^{]+)?\s*\{[^}]*\}\s*;?"
+            ),
+            # 新增: 联合类型
+            "union": re.compile(r"^\s*union\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\{"),
         }
 
-        # 用于跟踪当前命名空间
-        self.current_namespace = []
+        self.class_patterns = {
+            # 类和结构体内的匹配规则
+            "member_function_decl": re.compile(
+                r"^\s*(?:(?:public|protected|private)\s*:\s*)?"  # 可选的访问修饰符
+                r"(?!\s*#\s*define|\s*friend)"  # 排除宏和友元声明
+                r"(?:template\s*<[^>]+>\s*)?"  # 可选的模板前缀
+                r"(?:(?:inline|constexpr|static|virtual|explicit)\s+)*"  # 修饰符
+                # 返回类型 - 允许构造函数/析构函数没有显式类型，或普通类型
+                r"((?:(?:[\w:]+)(?:<[^>]+>)?(?:\s*\*+\s*|\s*&\s*|\s+))*|\~?)?\s*"
+                # 函数名 (Group 2)
+                r"([a-zA-Z_][a-zA-Z0-9_~]*)\s*"  # 允许 ~ 用于析构函数
+                # 防止匹配 if/for/while 等关键字
+                r"(?!\s*(?:if|for|while|switch)\b)"
+                # 参数、const、noexcept、纯虚函数(= 0)、分号
+                r"\([^;{}]*\)\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*(?:=\s*0)?\s*;"
+            ),
+            "member_function_def": re.compile(
+                r"^(?:\s*(?:public|protected|private)\s*:\s*)?(?!\s*#\s*define)"
+                r"(?:template\s*<[^>]+>\s*)?"
+                r"(?:(?:inline|constexpr|static|virtual|explicit)\s+)*"
+                # 返回类型 (Group 1)
+                r"((?:(?:[\w:]+)(?:\s*\*+\s*|\s*&\s*|\s+))+|\~?)?\s*"
+                # 函数名 (Group 3)
+                r"([a-zA-Z_][a-zA-Z0-9_~]*)\s*"  # 允许 ~ 用于析构函数
+                # 防止匹配 if/for/while 等关键字
+                r"(?!\s*(?:if|for|while|switch)\b)"
+                # 参数、const、noexcept、函数体开始
+                r"\([^{}]*\)\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*\{"
+            ),
+            "member_variable": re.compile(
+                r"^\s*(?:(?:public|protected|private)\s*:\s*)?"  # 可选的访问修饰符
+                r"(?!\s*#\s*define|\s*using|\s*typedef|\s*friend|\s*class|\s*struct)"  # 排除特定关键字
+                r"(?:(?:static|mutable|const|volatile)\s+)*"  # 可选的修饰符
+                # 类型 (Group 1) - 更简化和安全的类型匹配
+                r"([\w:<>]+(?:\s*[\*&]\s*|\s+))"  # 简化的类型匹配
+                # 变量名 (Group 2)
+                r"([a-zA-Z_][a-zA-Z0-9_]*)"
+                # 可选的数组声明、初始化或分号
+                r"(?:\s*\[\s*\w*\s*\])?\s*(?:=\s*[^;]+)?\s*;"
+            ),
+            "friend_function_decl": re.compile(
+                r"^\s*friend\s+"  # Starts with friend
+                r"(?:template\s*<[^>]+>\s*)?"
+                r"(?:(?:inline|constexpr|static)\s+)*"  # Modifiers applicable to friend
+                # Return type
+                r"((?:[\w:]+)(?:\s*\*+\s*|\s*&\s*|\s+))+\s*"
+                # Function name (can have scope)
+                r"([a-zA-Z_][a-zA-Z0-9_:]*)\s*"
+                # Add negative lookahead for keywords before parenthesis
+                r"(?!\s*(?:if|for|while|switch)\b)"
+                # Parameters, const, noexcept, pure virtual (= 0), semicolon
+                r"\([^;{}]*\)\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*;"
+            ),
+            "access_modifier": re.compile(r"^\s*(public|protected|private)\s*:"),
+            "nested_class": re.compile(
+                r"^\s*(?:(?:public|protected|private)\s*:\s*)?\s*"
+                r"(?:template\s*<[^>]+>\s*)?"
+                r"class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:final\s*)?(?::\s*[^{]+)?\s*\{"
+            ),
+            "nested_struct": re.compile(
+                r"^\s*(?:(?:public|protected|private)\s*:\s*)?\s*"
+                r"(?:template\s*<[^>]+>\s*)?"
+                r"struct\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?::\s*[^{]+)?\s*\{"
+            ),
+            # 新增: 嵌套枚举类型
+            "nested_enum": re.compile(
+                r"^\s*(?:(?:public|protected|private)\s*:\s*)?\s*"
+                r"enum\s+(?:class|struct\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*(?::\s*[^{]+)?\s*\{[^}]*\}\s*;?"
+            ),
+            # 新增: 嵌套联合类型
+            "nested_union": re.compile(
+                r"^\s*(?:(?:public|protected|private)\s*:\s*)?\s*"
+                r"union\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\{"
+            ),
+        }
+
+        self.out_of_class_patterns = {
+            # 类外成员函数定义的匹配规则
+            "out_of_class_member_def": re.compile(
+                r"^(?!\s*#\s*define)"
+                r"(?:template\s*<[^>]+>\s*)?"
+                r"(?:(?:inline|constexpr|static|virtual|explicit)\s+)*"
+                # 返回类型 (Group 1)
+                r"((?:(?:[\w:]+)(?:\s*\*+\s*|\s*&\s*|\s+))+|\~?)?\s*"
+                # 类名限定符 (Group 2)
+                r"((?:[a-zA-Z_][a-zA-Z0-9_]*::)+)"
+                # 函数名 (Group 3)
+                r"([a-zA-Z_][a-zA-Z0-9_~]*)\s*"
+                # 防止匹配 if/for/while 等关键字
+                r"(?!\s*(?:if|for|while|switch)\b)"
+                # 参数、const、noexcept、函数体开始
+                r"\([^{}]*\)\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*\{"
+            ),
+        }
+
+        # 组合所有模式供按需选择
+        self.all_patterns = {}
+        for pattern_dict in [
+            self.global_patterns,
+            self.class_patterns,
+            self.out_of_class_patterns,
+        ]:
+            self.all_patterns.update(pattern_dict)
+
+        # 其他扫描器状态
         self.symbols = defaultdict(lambda: defaultdict(list))
 
     def reset(self):
         """重置扫描器状态"""
-        self.current_namespace = []
+        logging.info("Resetting scanner state.")
+        self.state.reset()
         self.symbols = defaultdict(lambda: defaultdict(list))
 
     def scan_file(self, file_path: str):
         """扫描单个C++文件"""
+        logging.info(f"Starting scan for file: {file_path}")
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            # 预处理：移除注释以减少干扰
-            content = self._remove_comments(content)
-
-            # 按行处理以便跟踪位置
+            # 处理每一行
             lines = content.split("\n")
+            logging.debug(f"File '{file_path}' split into {len(lines)} lines.")
+
+            # 重置扫描前的状态机，确保每个文件都从干净状态开始
+            self.state.reset()
+
             for line_num, line in enumerate(lines, 1):
                 self._process_line(line, line_num, file_path)
 
         except UnicodeDecodeError:
+            logging.warning(
+                f"UnicodeDecodeError: Could not decode file {file_path}, skipping."
+            )
             print(f"警告: 无法解码文件 {file_path}，跳过")
         except Exception as e:
+            logging.error(
+                f"Exception processing file {file_path}: {str(e)}", exc_info=True
+            )
             print(f"处理文件 {file_path} 时出错: {str(e)}")
-
-    def _remove_comments(self, content: str) -> str:
-        """移除C++注释"""
-        # 移除多行注释 /* ... */
-        content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
-        # 移除单行注释 //
-        content = re.sub(r"//.*$", "", content, flags=re.MULTILINE)
-        return content
+        logging.info(f"Finished scan for file: {file_path}")
 
     def _process_line(self, line: str, line_num: int, file_path: str):
-        """处理单行代码"""
+        """处理单行代码，基于状态机逻辑"""
         stripped_line = line.strip()
-        if not stripped_line:  # Skip empty lines early
+        logging.debug(f"--- Processing Line {line_num} ({file_path}) ---")
+        logging.debug(f"Raw Stripped: '{stripped_line}'")
+        logging.debug(
+            f"State: Current={self.state.current_state}, NS={self.state.namespace_stack}, Class={self.state.class_stack}, Braces={len(self.state.brace_stack)}"
+        )
+
+        if not stripped_line:
+            logging.debug("Line is empty, skipping.")
             return
 
-        # --- Priority 1: Macros ---
-        # Use match() for patterns that must start at the beginning of the line
-        macro_func_match = self.patterns["macro_function"].match(stripped_line)
-        if macro_func_match:
-            macro_name = macro_func_match.group(1)
-            self._record_symbol("macro_function", macro_name, line_num, file_path)
-            return  # Found macro function, stop processing this line
+        # --- Start: Multi-line function definition handling ---
+        possible_match_found_for_combined = False
+        if self.state.pending_signature:
+            potential_signature = self.state.pending_signature
+            # Clear pending state immediately, we'll re-set if needed
+            self.state.pending_signature = None
+            if stripped_line.startswith("{"):
+                combined_line = potential_signature + " {"  # Simple combination
+                logging.debug(f"Attempting combined match: '{combined_line}'")
 
-        macro_const_match = self.patterns["macro_constant"].match(stripped_line)
-        if macro_const_match:
-            macro_name = macro_const_match.group(1)
-            macro_value = macro_const_match.group(2).strip()
-            self._record_symbol(
-                "macro_constant", macro_name, line_num, file_path, value=macro_value
+                # Determine patterns to check based on state *before* pending
+                func_def_patterns = {
+                    "out_of_class_member_def": self.out_of_class_patterns.get(
+                        "out_of_class_member_def"
+                    ),
+                    "global_function_def": self.global_patterns.get(
+                        "global_function_def"
+                    ),
+                    "member_function_def": self.class_patterns.get(
+                        "member_function_def"
+                    ),
+                }
+
+                for pattern_type, pattern in func_def_patterns.items():
+                    if pattern:  # Ensure pattern exists
+                        match = pattern.search(combined_line)
+                        if (
+                            match and self.state.is_clean_for_matching()
+                        ):  # Check clean state again
+                            logging.info(
+                                f"MATCHED COMBINED {pattern_type}: '{match.group(0)}'"
+                            )
+                            # Process the combined match
+                            self._process_match(
+                                pattern_type, match, line_num, file_path, combined_line
+                            )
+                            possible_match_found_for_combined = True
+                            # Update brace stack for the '{' that was just processed conceptually
+                            self.state.brace_stack.append("{")
+                            # Since we processed the combined line including the '{', skip normal processing for this line
+                            return
+            # If pending_signature existed but current line didn't start with '{',
+            # it wasn't a function definition, pending_signature remains None.
+
+        # --- End: Multi-line function definition handling ---
+
+        # 逐字符处理，更新状态机内部状态 (Moved after multi-line check)
+        self.state.reset_line_state()
+        prev_char = None
+        # Re-process characters for the current line if not handled above
+        for char in stripped_line:
+            self.state.process_character(char, prev_char)
+            prev_char = char
+
+        # 根据当前状态选择合适的模式
+        patterns_to_check = {}
+        current_state_for_match = (
+            self.state.current_state
+        )  # Use state *after* potential pops from process_character
+
+        # 函数定义状态特殊处理
+        if current_state_for_match == ParserState.FUNCTION_DEF:
+            # Only allow nested structures inside functions for now
+            patterns_to_check = {
+                k: v
+                for k, v in self.class_patterns.items()
+                if k in ["nested_class", "nested_struct", "nested_enum", "nested_union"]
+            }
+        elif current_state_for_match == ParserState.GLOBAL:
+            patterns_to_check.update(self.global_patterns)
+            patterns_to_check.update(self.out_of_class_patterns)
+        elif current_state_for_match == ParserState.NAMESPACE:
+            patterns_to_check.update(self.global_patterns)
+            patterns_to_check.update(self.out_of_class_patterns)
+        elif current_state_for_match == ParserState.CLASS:
+            patterns_to_check.update(self.class_patterns)
+
+        # 进行匹配
+        match_found_this_line = False
+        for pattern_type, pattern in patterns_to_check.items():
+            match = pattern.search(stripped_line)
+            if match and self.state.is_clean_for_matching():
+                logging.info(f"MATCHED {pattern_type}: '{match.group(0)}'")
+                self._process_match(
+                    pattern_type, match, line_num, file_path, stripped_line
+                )
+                match_found_this_line = True
+                break  # 一行通常只匹配一个主要符号
+
+        # --- Start: Update pending_signature logic ---
+        # If no match was found on this line (neither combined nor standalone)
+        # and it looks like a function signature start
+        if not match_found_this_line and not possible_match_found_for_combined:
+            # Heuristic: ends with ')', maybe 'const', maybe 'noexcept(...)', but not ';' or '{'
+            if (
+                (
+                    stripped_line.endswith(")")
+                    or re.search(r"\)\s*const\s*$", stripped_line)
+                    or re.search(r"\)\s*noexcept\s*\(.*\)\s*$", stripped_line)
+                )
+                and not stripped_line.endswith(";")
+                and not stripped_line.endswith("{")
+            ):
+                logging.debug(f"Setting pending signature: '{stripped_line}'")
+                self.state.pending_signature = stripped_line
+            else:
+                # Clear pending if it wasn't cleared before and doesn't look like a start
+                if self.state.pending_signature:
+                    logging.debug(
+                        "Clearing pending signature (no match and not a signature start)."
+                    )
+                    self.state.pending_signature = None
+        elif match_found_this_line:
+            # If we found a match on this line itself, it can't be a pending signature start
+            if self.state.pending_signature:
+                logging.debug(
+                    "Clearing pending signature (match found on current line)."
+                )
+                self.state.pending_signature = None
+        # --- End: Update pending_signature logic ---
+
+        # 处理一行内完整函数后的状态恢复 (Keep this logic)
+        if (
+            self.state.current_state == ParserState.FUNCTION_DEF
+            and "{" in stripped_line
+            and "}" in stripped_line
+            and stripped_line.rfind("}") > stripped_line.rfind("{")
+            and not self.state.brace_stack
+        ):
+            logging.info(
+                f"Auto-popping function state after inline function on line {line_num}"
             )
-            return  # Found macro constant, stop processing this line
+            self.state.pop_state()
 
-        # --- Priority 2: Namespace / Class / Struct ---
-        # Use search() for patterns that can appear anywhere in the line
-        namespace_match = self.patterns["namespace"].search(line)
-        if namespace_match:
-            ns_name = namespace_match.group(1)
-            self.current_namespace.append(ns_name)
+    def _process_match(
+        self, pattern_type: str, match, line_num: int, file_path: str, line_content: str
+    ):
+        """Helper function to process a regex match and update state."""
+        # (Extracted logic from the original loop for clarity)
+
+        # 检查是否在函数体内 (除非是允许的嵌套结构)
+        if (
+            self.state.current_state == ParserState.FUNCTION_DEF
+            and pattern_type
+            not in [
+                "nested_class",
+                "nested_struct",
+                "nested_enum",
+                "nested_union",
+            ]
+        ):
+            logging.debug(f"Skipping match in function body: {match.group(0)}")
+            return  # Don't process this match
+
+        # 处理匹配结果
+        if pattern_type == "namespace":
+            ns_name = match.group(1)
+            self.state.push_state(ParserState.NAMESPACE, ns_name)
             self._record_symbol("namespace", ns_name, line_num, file_path)
-            # Don't return yet, a class/struct might be on the same line
+        elif pattern_type in [
+            "class",
+            "struct",
+            "nested_class",
+            "nested_struct",
+        ]:
+            class_name = match.group(1)
+            actual_type = "struct" if "struct" in pattern_type else "class"
+            self.state.push_state(ParserState.CLASS, class_name)
+            self._record_symbol(actual_type, class_name, line_num, file_path)
+        elif pattern_type == "access_modifier":
+            self.state.current_access = match.group(1)
+        elif pattern_type == "member_function_def":
+            func_name = match.group(
+                2
+            )  # Group index might differ based on regex, check definition
+            # Assuming group 2 is correct for member_function_def
+            self._record_symbol("member_function_def", func_name, line_num, file_path)
+            self.state.push_state(ParserState.FUNCTION_DEF)
+        elif pattern_type == "out_of_class_member_def":
+            qualifier = match.group(2).rstrip(":")
+            func_name = match.group(3)
+            self._record_symbol(
+                "member_function_def",  # Record as member_function_def
+                func_name,
+                line_num,
+                file_path,
+                qualifier=qualifier,
+            )
+            self.state.push_state(ParserState.FUNCTION_DEF)
+        elif pattern_type == "global_function_def":
+            func_name = match.group(2)  # Check group index
+            if "::" in func_name:
+                parts = func_name.split("::")
+                class_name = "::".join(parts[:-1])
+                method_name = parts[-1]
+                self._record_symbol(
+                    "member_function_def",  # Record as member_function_def
+                    method_name,
+                    line_num,
+                    file_path,
+                    qualifier=class_name,
+                )
+            else:
+                self._record_symbol(
+                    "global_function_def", func_name, line_num, file_path
+                )
+            self.state.push_state(ParserState.FUNCTION_DEF)
+        elif pattern_type in ["enum", "nested_enum"]:
+            enum_name = match.group(1)
+            self._record_symbol("enum", enum_name, line_num, file_path)
+            # Enum definitions like `enum class X { A, B };` might need state handling if complex
+            # For simple cases like the regex matches, maybe no state push needed,
+            # but if they contain nested items, CLASS state might be appropriate.
+            # Let's assume simple enums for now.
+        elif pattern_type in ["union", "nested_union"]:
+            union_name = match.group(1)
+            self._record_symbol("union", union_name, line_num, file_path)
+            self.state.push_state(
+                ParserState.CLASS, union_name
+            )  # Unions have members like classes
+        else:
+            # Other symbol types (macros, variables, decls)
+            symbol_name = None
+            if pattern_type in ["macro_constant", "macro_function"]:
+                symbol_name = match.group(1)
+                value = (
+                    match.group(2).strip() if pattern_type == "macro_constant" else None
+                )
+                kwargs = {"value": value} if value is not None else {}
+                self._record_symbol(
+                    pattern_type, symbol_name, line_num, file_path, **kwargs
+                )
+            elif pattern_type in [
+                "global_function_decl",
+                "member_function_decl",
+                "friend_function_decl",
+            ]:
+                symbol_name = match.group(2)  # Check group index
+                self._record_symbol(pattern_type, symbol_name, line_num, file_path)
+            elif pattern_type in ["global_variable", "member_variable"]:
+                symbol_name = match.group(2)  # Check group index
+                var_type = match.group(1).strip()  # Check group index
+                self._record_symbol(
+                    pattern_type,
+                    symbol_name,
+                    line_num,
+                    file_path,
+                    var_type=var_type,
+                )
 
-        class_match = self.patterns["class"].search(line)
-        if class_match:
-            class_name = class_match.group(1)
-            self._record_symbol("class", class_name, line_num, file_path)
-            return  # Assuming class def takes priority
-
-        struct_match = self.patterns["struct"].search(line)
-        if struct_match:
-            struct_name = struct_match.group(1)
-            self._record_symbol("struct", struct_name, line_num, file_path)
-            return
-
-        # --- Priority 3: Functions / Variables (only if not a macro) ---
-        # Use search() as these might be indented
-        func_def_match = self.patterns["function_def"].search(line)
-        if func_def_match:
-            # Adjust group index if needed based on regex changes
-            func_name = func_def_match.group(2)
-            self._record_symbol("function_def", func_name, line_num, file_path)
-            return
-
-        func_decl_match = self.patterns["function_decl"].search(line)
-        if func_decl_match:
-            # Adjust group index if needed
-            func_name = func_decl_match.group(2)
-            self._record_symbol("function_decl", func_name, line_num, file_path)
-            return
-
-        global_var_match = self.patterns["global_var"].search(line)
-        if global_var_match:
-            # Adjust group index if needed
-            var_name = global_var_match.group(2)
-            self._record_symbol("global_var", var_name, line_num, file_path)
-            return
-
-        # --- Namespace End Handling (Simplified) ---
-        # WARNING: This is very inaccurate without proper brace counting
-        if "}" in stripped_line and self.current_namespace:
-            if stripped_line.startswith("}"):
-                try:
-                    self.current_namespace.pop()
-                except IndexError:
-                    pass
+        # 内联函数处理 (Check if this logic needs adjustment with combined lines)
+        if (
+            pattern_type
+            in ["member_function_def", "global_function_def", "out_of_class_member_def"]
+            and "{"
+            in line_content  # Use the actual content processed (combined or single)
+            and "}" in line_content
+            and line_content.rfind("}") > line_content.rfind("{")
+        ):
+            logging.info(f"Detected inline function on line {line_num}")
+            if self.state.current_state == ParserState.FUNCTION_DEF:
+                # Check if the closing brace matches the one opened by this function
+                # This simple check might pop too early if braces aren't balanced on the line
+                # A more robust check would involve brace_stack depth
+                self.state.pop_state()
 
     def _record_symbol(
         self, symbol_type: str, name: str, line_num: int, file_path: str, **kwargs
     ):
-        """记录找到的符号, 允许附加信息"""
-        full_name = "::".join(self.current_namespace + [name])
+        """记录找到的符号，基于当前状态机环境"""
+        # 添加额外的安全检查，防止记录明显错误的符号
+        # Check for keywords mistaken as variable names or types
+        keywords = {
+            "if",
+            "for",
+            "while",
+            "switch",
+            "return",
+            "throw",
+            "try",
+            "catch",
+            "class",
+            "struct",
+            "namespace",
+            "enum",
+            "union",
+            "using",
+            "typedef",
+            "friend",
+            "public",
+            "protected",
+            "private",
+            "static",
+            "const",
+            "virtual",
+            "inline",
+            "explicit",
+            "extern",
+            "mutable",
+            "volatile",
+            "constexpr",
+            "noexcept",
+            "sizeof",
+            "new",
+            "delete",
+            "this",
+            "true",
+            "false",
+            "nullptr",
+        }
+        if name in keywords:
+            logging.debug(
+                f"Skipping keyword detected as symbol name: '{name}' as {symbol_type}"
+            )
+            return
+        if kwargs.get("var_type") in keywords:
+            logging.debug(
+                f"Skipping keyword detected as variable type: '{kwargs.get('var_type')}' for symbol '{name}'"
+            )
+            return
+        # Specific false positive checks
+        if (
+            symbol_type == "global_variable" and name == "return"
+        ):  # Already checked, but keep for safety
+            logging.debug(f"Skipping 'return' keyword as global_variable")
+            return
+        if symbol_type == "global_function_decl" and name.startswith(
+            "std::"
+        ):  # Already checked
+            logging.debug(f"Skipping standard library usage: '{name}' as {symbol_type}")
+            return
+
+        logging.debug(
+            f"Recording symbol: type='{symbol_type}', name='{name}', line={line_num}, kwargs={kwargs}"
+        )
+        components = []
+
+        # 基于当前状态机状态构建作用域
+        current_namespace_stack = list(self.state.namespace_stack)  # Make copies
+        current_class_stack = list(self.state.class_stack)
+
+        # Adjust scope based on symbol type and context
+        qualifier = kwargs.get("qualifier")
+
+        if symbol_type in (
+            "member_function_def",
+            "member_function_decl",
+            "member_variable",
+            "nested_class",  # Nested types belong to the parent class/struct
+            "nested_struct",
+            "nested_enum",
+            "nested_union",
+        ):
+            if qualifier:
+                # Class/struct specified explicitly (out-of-line definition)
+                qualifier_parts = qualifier.split("::")
+                # If the qualifier starts with '::', it's global, don't prepend namespaces
+                if not qualifier.startswith("::"):
+                    components.extend(current_namespace_stack)
+                components.extend(qualifier_parts)
+            elif current_class_stack:
+                # Inside a class/struct definition
+                components.extend(current_namespace_stack)
+                components.extend(current_class_stack)
+            else:  # Should not happen for member symbols, but as fallback
+                components.extend(current_namespace_stack)
+
+        elif symbol_type in ("class", "struct", "enum", "union"):
+            # Top-level class/struct/enum/union within a namespace or global
+            components.extend(current_namespace_stack)
+            # If it's nested (pushed state before recording), class_stack includes the parent
+            if current_class_stack:
+                components.extend(
+                    current_class_stack[:-1]
+                )  # Add parent scope, exclude self
+
+        elif symbol_type == "namespace":
+            # Namespace definition itself
+            if current_namespace_stack:
+                components.extend(
+                    current_namespace_stack[:-1]
+                )  # Parent namespaces only
+
+        else:  # Global functions, variables, macros
+            components.extend(current_namespace_stack)
+
+        # Construct full name
+        full_name_parts = components + [name]
+        # Filter out empty strings just in case
+        full_name_parts = [part for part in full_name_parts if part]
+        full_name = "::".join(full_name_parts)
+
+        logging.info(
+            f"Recorded symbol: Full Name='{full_name}', Type='{symbol_type}', Line={line_num}"
+        )
+
+        # 记录符号信息
         location = f"{file_path}:{line_num}"
-        # Store a dictionary containing location and any extra info
         symbol_info = {"location": location}
+
+        # 添加额外信息
+        kwargs.pop("qualifier", None)  # 已使用，不需要再保存
         symbol_info.update(kwargs)
+
         self.symbols[symbol_type][full_name].append(symbol_info)
 
     def scan_directory(self, dir_path: str):
         """扫描目录下的所有C++文件"""
-        self.reset()
+        logging.info(f"Starting directory scan: {dir_path}")
+        self.reset()  # Reset state for the directory scan
 
         for root, _, files in os.walk(dir_path):
             for file in files:
                 if file.endswith((".cpp", ".h", ".hpp", ".cc", ".cxx", ".hh", ".c")):
                     full_path = os.path.join(root, file)
                     self.scan_file(full_path)
+        logging.info(f"Finished directory scan: {dir_path}")
 
-    def get_symbols(self) -> Dict[str, Dict[str, List[str]]]:
+    def get_symbols(self) -> Dict[str, Dict[str, List[dict]]]:
         """获取所有找到的符号"""
         return self.symbols
 
     def print_summary(self):
         """打印格式化且彩色的符号摘要"""
-        colorama.init(autoreset=True)  # Initialize colorama
+        colorama.init(autoreset=True)
 
-        # Define colors for different symbol types
+        # 定义类型颜色
         type_colors = {
             "namespace": colorama.Fore.CYAN,
             "class": colorama.Fore.GREEN,
             "struct": colorama.Fore.YELLOW,
-            "function_decl": colorama.Fore.BLUE,
-            "function_def": colorama.Fore.LIGHTBLUE_EX,
-            "global_var": colorama.Fore.MAGENTA,
-            "macro_constant": colorama.Fore.LIGHTCYAN_EX,  # Color for macro constants
-            "macro_function": colorama.Fore.LIGHTRED_EX,  # Color for function-like macros
+            "enum": colorama.Fore.YELLOW,
+            "union": colorama.Fore.YELLOW,
+            "global_function_decl": colorama.Fore.BLUE,
+            "global_function_def": colorama.Fore.LIGHTBLUE_EX,
+            "member_function_decl": colorama.Fore.LIGHTGREEN_EX,
+            "member_function_def": colorama.Fore.LIGHTWHITE_EX,
+            "friend_function_decl": colorama.Fore.LIGHTYELLOW_EX,
+            "global_variable": colorama.Fore.MAGENTA,
+            "member_variable": colorama.Fore.LIGHTMAGENTA_EX,
+            "macro_constant": colorama.Fore.LIGHTCYAN_EX,
+            "macro_function": colorama.Fore.LIGHTRED_EX,
         }
         default_color = colorama.Style.RESET_ALL
 
+        # 创建类型分类映射，将相似类型合并
+        type_categories = {
+            "struct": "DATA_STRUCTURES",
+            "union": "DATA_STRUCTURES",
+            "enum": "DATA_STRUCTURES",
+        }
+
+        # 根据分类组织符号
+        categorized_symbols = defaultdict(lambda: defaultdict(list))
+        for symbol_type, symbols_by_name in self.symbols.items():
+            # 确定该类型的分类
+            category = type_categories.get(symbol_type, symbol_type.upper())
+            # 将该类型下的所有符号添加到对应分类中，并记录原始类型
+            for name, occurrences in symbols_by_name.items():
+                for occurrence in occurrences:
+                    occurrence_copy = occurrence.copy()
+                    occurrence_copy["original_type"] = symbol_type
+                    categorized_symbols[category][name].append(occurrence_copy)
+
+        logging.info("Starting summary print.")
         if not self.symbols:
             print("未找到任何符号。")
+            logging.info("No symbols found to print.")
             return
 
-        for symbol_type, symbols_by_name in sorted(self.symbols.items()):
-            color = type_colors.get(symbol_type, default_color)
-            print(f"\n{color}=== {symbol_type.upper()} ===")
+        # 打印分类摘要
+        for category, symbols_by_name in sorted(categorized_symbols.items()):
+            # 对于合并的类型，使用特定颜色
+            if category == "DATA_STRUCTURES":
+                color = colorama.Fore.YELLOW
+                print(f"\n{color}=== 数据结构 (STRUCT/UNION/ENUM) ===")
+                logging.debug(f"Printing summary for category: {category}")
+            else:
+                # 查找原始类型的颜色
+                original_type = next(iter(symbols_by_name.values()))[0].get(
+                    "original_type", category
+                )
+                color = type_colors.get(original_type.lower(), default_color)
+
+                # 根据类型调整显示名称
+                category_display = category.lower()
+                if category_display == "namespace":
+                    category_display = "命名空间"
+                elif category_display == "class":
+                    category_display = "类"
+                elif category_display == "global_function_def":
+                    category_display = "全局函数定义"
+                elif category_display == "global_function_decl":
+                    category_display = "全局函数声明"
+                elif category_display == "member_function_def":
+                    category_display = "成员函数定义"
+                elif category_display == "member_function_decl":
+                    category_display = "成员函数声明"
+                elif category_display == "global_variable":
+                    category_display = "全局变量"
+                elif category_display == "member_variable":
+                    category_display = "成员变量"
+                else:
+                    category_display = category
+
+                print(f"\n{color}=== {category_display.upper()} ===")
+                logging.debug(f"Printing summary for type: {original_type}")
 
             if not symbols_by_name:
                 print(f"  (无)")
+                logging.debug(f"  No symbols of category {category} found.")
                 continue
 
-            # Sort symbols by name
             for name, symbol_occurrences in sorted(symbols_by_name.items()):
-                print(f"{color}{name}{default_color}")
+                # 获取第一个出现的原始类型以显示
+                original_type = symbol_occurrences[0].get("original_type", "")
 
-                # Sort occurrences by location (file then line)
+                # 对于数据结构类别，显示具体类型
+                if category == "DATA_STRUCTURES":
+                    print(f"{color}{name} ({original_type}){default_color}")
+                    logging.debug(f"  Symbol: {name} ({original_type})")
+                else:
+                    print(f"{color}{name}{default_color}")
+                    logging.debug(f"  Symbol: {name}")
+
                 sorted_occurrences = sorted(
                     symbol_occurrences,
                     key=lambda x: (
@@ -261,11 +961,21 @@ class CppSymbolScanner:
                 for info in sorted_occurrences:
                     loc = info["location"]
                     extra_info = ""
-                    # Add value display for macro constants
-                    if symbol_type == "macro_constant" and "value" in info:
-                        extra_info = f" {colorama.Fore.LIGHTBLACK_EX}值:{default_color} {info['value']}"
 
-                    # Extract file and line number
+                    original_type = info.get("original_type", "")
+
+                    if original_type == "macro_constant" and "value" in info:
+                        extra_info = f" {colorama.Fore.LIGHTBLACK_EX}值:{default_color} {info['value']}"
+                        logging.debug(f"    Location: {loc}, Value: {info['value']}")
+                    elif (
+                        original_type in ["global_variable", "member_variable"]
+                        and "var_type" in info
+                    ):
+                        extra_info = f" {colorama.Fore.LIGHTBLACK_EX}类型:{default_color} {info['var_type']}"
+                        logging.debug(f"    Location: {loc}, Type: {info['var_type']}")
+                    else:
+                        logging.debug(f"    Location: {loc}")
+
                     try:
                         file_part, line_part = loc.rsplit(":", 1)
                         print(
@@ -274,7 +984,8 @@ class CppSymbolScanner:
                     except ValueError:
                         print(
                             f"  - {colorama.Fore.LIGHTBLACK_EX}位置:{default_color} {loc}{default_color}{extra_info}"
-                        )  # Fallback if split fails
+                        )
+        logging.info("Finished summary print.")
 
 
 if __name__ == "__main__":
@@ -282,11 +993,14 @@ if __name__ == "__main__":
 
     if len(sys.argv) < 2:
         print("用法: python cpp_scanner.py <目录路径>")
+        logging.error("Script called without directory path argument.")
         sys.exit(1)
 
     scanner = CppSymbolScanner()
     target_dir = sys.argv[1]
     print(f"开始扫描目录: {target_dir}")
+    logging.info(f"Target directory set to: {target_dir}")
     scanner.scan_directory(target_dir)
     scanner.print_summary()
-    print("\n扫描完成。")  # Add a final message
+    print("\n扫描完成。")
+    logging.info("Script execution finished.")
