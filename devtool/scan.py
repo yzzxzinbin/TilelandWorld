@@ -2,6 +2,7 @@ import os
 import re
 from typing import List, Dict, Tuple
 from collections import defaultdict
+from parastate import ParserState
 import colorama  # Import colorama
 import logging  # Import logging
 
@@ -15,179 +16,6 @@ logging.basicConfig(
     filemode="w",
 )
 # --- End Logging Setup ---
-
-
-class ParserState:
-    """状态机类用于跟踪解析状态和作用域"""
-
-    # 状态常量定义
-    GLOBAL = "GLOBAL"
-    NAMESPACE = "NAMESPACE"
-    CLASS = "CLASS"
-    FUNCTION_DEF = "FUNCTION_DEF"
-    TEMPLATE = "TEMPLATE"
-
-    def __init__(self):
-        # 当前状态
-        self.current_state = self.GLOBAL
-        # 状态栈用于跟踪嵌套结构
-        self.state_stack = []
-        # 作用域栈用于跟踪命名空间和类
-        self.namespace_stack = []
-        self.class_stack = []
-        # 括号栈用于正确匹配
-        self.brace_stack = []  # 跟踪大括号 { }
-        self.paren_stack = []  # 跟踪小括号 ( )
-        self.angle_stack = []  # 跟踪尖括号 < > (用于模板)
-        # 跟踪字符串和注释状态，避免在字符串或注释中匹配
-        self.in_string = False
-        self.in_char = False
-        self.in_comment = False
-        self.in_multiline_comment = False
-        self.was_in_multiline_comment_this_line = False  # 新增标志位
-        # 上一次处理的不完整内容（处理跨行结构）
-        self.pending_lines = []  # 用于累积跨行定义
-        # 当前访问修饰符 (public/protected/private)
-        self.current_access = "private"  # C++ 默认为 private
-        # 预处理器状态
-        self.in_preprocessor = False
-
-    def push_state(self, new_state, scope_name=None):
-        """进入新状态"""
-        self.state_stack.append(self.current_state)
-        self.current_state = new_state
-        logging.debug(f"State pushed: {new_state}, scope: {scope_name}")
-
-        # 更新作用域信息
-        if new_state == self.NAMESPACE and scope_name:
-            self.namespace_stack.append(scope_name)
-        elif new_state == self.CLASS and scope_name:
-            self.class_stack.append(scope_name)
-
-    def pop_state(self):
-        """退出当前状态"""
-        if not self.state_stack:
-            # 防止状态栈为空时出错
-            self.current_state = self.GLOBAL
-            return False
-
-        old_state = self.current_state
-        self.current_state = self.state_stack.pop()
-
-        # 更新作用域信息
-        if old_state == self.NAMESPACE and self.namespace_stack:
-            popped = self.namespace_stack.pop()
-            logging.debug(f"Popped namespace: {popped}")
-        elif old_state == self.CLASS and self.class_stack:
-            popped = self.class_stack.pop()
-            logging.debug(f"Popped class: {popped}")
-
-        logging.debug(f"State popped: from {old_state} back to {self.current_state}")
-        return True
-
-    def process_character(self, char, prev_char=None):
-        """处理单个字符，更新括号栈和字符串/注释状态"""
-        # 标记当前是否处于多行注释状态
-        if self.in_multiline_comment:
-            self.was_in_multiline_comment_this_line = True
-
-        # 处理注释
-        if not self.in_string and not self.in_char:
-            if self.in_multiline_comment:
-                if prev_char == "*" and char == "/":
-                    self.in_multiline_comment = False
-                    return  # 结束多行注释后直接返回
-                return  # 仍在多行注释中
-
-            if not self.in_comment:
-                if prev_char == "/" and char == "/":
-                    self.in_comment = True
-                    return
-                if prev_char == "/" and char == "*":
-                    self.in_multiline_comment = True
-                    return
-
-        # 在注释中忽略所有内容
-        if self.in_comment or self.in_multiline_comment:
-            return
-
-        # 处理字符串和字符字面量
-        if char == '"' and prev_char != "\\":
-            self.in_string = not self.in_string
-            return
-        if char == "'" and prev_char != "\\":
-            self.in_char = not self.in_char
-            return
-
-        # 在字符串或字符字面量中忽略括号
-        if self.in_string or self.in_char:
-            return
-
-        # 处理括号
-        if char == "{":
-            self.brace_stack.append("{")
-        elif char == "}":
-            if self.brace_stack:
-                self.brace_stack.pop()
-                # 检查是否退出了当前作用域
-                if not self.brace_stack:
-                    # 所有大括号都已匹配，回到全局状态
-                    self.pop_state()
-                elif len(self.brace_stack) < len(self.state_stack):
-                    # 如果括号栈小于状态栈，可能需要退出当前状态
-                    # 例如：从函数定义退回到类定义
-                    self.pop_state()
-                    # 添加此检查以处理嵌套函数定义完成的情况
-                    if self.current_state == self.FUNCTION_DEF and len(
-                        self.brace_stack
-                    ) <= len(self.state_stack):
-                        self.pop_state()
-
-        # 小括号跟踪
-        elif char == "(":
-            self.paren_stack.append("(")
-        elif char == ")":
-            if self.paren_stack:
-                self.paren_stack.pop()
-
-        # 尖括号跟踪 (用于模板)
-        elif char == "<":
-            if (
-                prev_char is not None  # Add this check
-                and prev_char
-                in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
-            ):
-                # 可能是模板的开始
-                self.angle_stack.append("<")
-        elif char == ">":
-            if self.angle_stack:
-                self.angle_stack.pop()
-
-    def reset_line_state(self):
-        """在处理新行时重置行内状态"""
-        self.in_comment = False
-        self.was_in_multiline_comment_this_line = False  # 重置标志位
-        # 注意：不重置多行注释状态，因为它可能跨行
-
-    def is_clean_for_matching(self):
-        """检查当前状态是否适合进行正则匹配"""
-        return not (
-            self.in_string
-            or self.in_char
-            or self.in_comment
-            or self.in_multiline_comment
-        )
-
-    def get_current_scope(self):
-        """获取当前的完整作用域"""
-        scope = []
-        scope.extend(self.namespace_stack)
-        scope.extend(self.class_stack)
-        return scope
-
-    def reset(self):
-        """重置状态机"""
-        self.__init__()
 
 
 class CppSymbolScanner:
@@ -244,17 +72,14 @@ class CppSymbolScanner:
                 r"(\([^;{}]*\))\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*;"
             ),
             "global_function_def": re.compile(
-                # Avoid matching lines starting with #define
                 r"^(?!\s*#\s*define)"
                 r"(?:template\s*<[^>]+>\s*)?"  # 模板前缀
                 r"(?:(?:inline|constexpr|static|virtual|explicit)\s+)*"  # 修饰符
-                # More robust return type
-                r"((?:[\w:]+)(?:\s*\*+\s*|\s*&\s*|\s+))+\s*"
-                # Function name (allow scope resolution) - Group 2
-                r"([a-zA-Z_][a-zA-Z0-9_:]*)\s*"
-                # Add negative lookahead for keywords before parenthesis
+                # 返回类型（严格匹配模板和限定符）
+                r"((?:(?:\w+\s*::\s*)*\w+(?:\s*<\s*[^<>]*\s*>)?(?:\s*[*&]\s*)*\s+)+)"
+                # 函数名（强制要求至少有一个字符）
+                r"((?:[a-zA-Z_][a-zA-Z0-9_]*\s*::\s*)*[a-zA-Z_][a-zA-Z0-9_]*)\s*"
                 r"(?!\s*(?:if|for|while|switch)\b)"
-                # 函数名和参数, noexcept
                 r"\([^{}]*\)\s*(?:const\s*)?(?:noexcept(?:\([^)]*\))?)?\s*\{"
             ),
             "global_variable": re.compile(
@@ -370,23 +195,41 @@ class CppSymbolScanner:
             ),
         }
 
+        self.function_body_patterns = {
+            # 函数体内部的匹配规则 (捕获完整调用前缀+名称)
+            "function_call": re.compile(
+                r"(?<!\w)(?!(?:if|while|for|switch|catch)\s*\()"  # 排除关键字后跟括号的情况
+                # Group 1: Capture prefix and function name together
+                r"((?:(?:\w+\s*::\s*)*\w+\s*(?:\.|->)\s*)?\b\w+)\s*"
+                r"(?:<\s*(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*\s*>)?\s*"  # 改进的模板参数匹配
+                r"\("  # 参数列表开始
+                r"(?:[^()]|\((?:[^()]|\([^()]*\))*\))*"  # 参数内容 (支持嵌套括号)
+                r"\)"  # 参数列表结束
+                r"(?=\s*(?:[;,:)\]}]|$))"  # 确保后跟有效结束符
+            )
+        }
+
         # 组合所有模式供按需选择
         self.all_patterns = {}
         for pattern_dict in [
             self.global_patterns,
             self.class_patterns,
             self.out_of_class_patterns,
+            self.function_body_patterns,
         ]:
             self.all_patterns.update(pattern_dict)
 
         # 其他扫描器状态
         self.symbols = defaultdict(lambda: defaultdict(list))
+        # 调用图: { defining_func_full_name: {called_func_name1, ...} }
+        self.call_graph = defaultdict(set)
 
     def reset(self):
         """重置扫描器状态"""
         logging.info("Resetting scanner state.")
         self.state.reset()
         self.symbols = defaultdict(lambda: defaultdict(list))
+        self.call_graph = defaultdict(set)  # 重置调用图
 
     def scan_file(self, file_path: str):
         """扫描单个C++文件"""
@@ -538,6 +381,7 @@ class CppSymbolScanner:
                     if k
                     in ["nested_class", "nested_struct", "nested_enum", "nested_union"]
                 }
+                patterns_to_check.update(self.function_body_patterns)
             elif current_state_for_match == ParserState.GLOBAL:
                 patterns_to_check.update(self.global_patterns)
                 patterns_to_check.update(self.out_of_class_patterns)
@@ -617,29 +461,66 @@ class CppSymbolScanner:
         self, pattern_type: str, match, line_num: int, file_path: str, line_content: str
     ):
         """Helper function to process a regex match and update state."""
-        # (Extracted logic from the original loop for clarity)
 
-        # 检查是否在函数体内 (除非是允许的嵌套结构)
-        if (
-            self.state.current_state == ParserState.FUNCTION_DEF
-            and pattern_type
-            not in [
+        # --- Helper to calculate full name based on current state ---
+        def calculate_full_name(base_name, symbol_type_for_scope, qualifier=None):
+            components = []
+            current_namespace_stack = list(self.state.namespace_stack)
+            current_class_stack = list(self.state.class_stack)
+            current_namespace_stack = [
+                ns for ns in current_namespace_stack if ns != "<anonymous>"
+            ]
+
+            if symbol_type_for_scope in (
+                "member_function_def",
+                "member_function_decl",
+                "member_variable",
                 "nested_class",
                 "nested_struct",
                 "nested_enum",
                 "nested_union",
-            ]
-        ):
-            logging.debug(f"Skipping match in function body: {match.group(0)}")
-            return
+            ):
+                if qualifier:
+                    qualifier_parts = qualifier.split("::")
+                    if not qualifier.startswith("::"):
+                        components.extend(current_namespace_stack)
+                    components.extend(qualifier_parts)
+                elif current_class_stack:
+                    components.extend(current_namespace_stack)
+                    components.extend(current_class_stack)
+                else:
+                    components.extend(current_namespace_stack)
+            elif symbol_type_for_scope in ("class", "struct", "enum", "union"):
+                components.extend(current_namespace_stack)
+                if len(current_class_stack) > 0:
+                    components.extend(current_class_stack[:-1])
+            elif symbol_type_for_scope == "namespace":
+                if len(current_namespace_stack) > 0:
+                    components.extend(current_namespace_stack[:-1])
+            else:  # Global functions, variables, macros
+                components.extend(current_namespace_stack)
+
+            full_name_parts = components + [base_name]
+            full_name_parts = [part for part in full_name_parts if part]
+            return "::".join(full_name_parts)
+
+        # --- End Helper ---
 
         # 处理匹配结果
         if pattern_type == "namespace":
             ns_name_match = match.group(1)
             ns_name = ns_name_match if ns_name_match else "<anonymous>"
+            # 计算完整名称用于记录
+            full_ns_name = (
+                calculate_full_name(ns_name_match, "namespace")
+                if ns_name_match
+                else "<anonymous>"
+            )
             self.state.push_state(ParserState.NAMESPACE, ns_name)
             if ns_name_match:
-                self._record_symbol("namespace", ns_name_match, line_num, file_path)
+                self._record_symbol(
+                    "namespace", ns_name_match, line_num, file_path
+                )  # 记录时仍用基本名
         elif pattern_type in [
             "class",
             "struct",
@@ -648,54 +529,87 @@ class CppSymbolScanner:
         ]:
             class_name = match.group(1)
             actual_type = "struct" if "struct" in pattern_type else "class"
-            self.state.push_state(ParserState.CLASS, class_name)
-            self._record_symbol(actual_type, class_name, line_num, file_path)
+            # 计算完整名称用于状态和记录
+            full_class_name = calculate_full_name(class_name, actual_type)
+            self.state.push_state(ParserState.CLASS, class_name)  # 状态栈用基本名
+            self._record_symbol(
+                actual_type, class_name, line_num, file_path
+            )  # 记录时用基本名
         elif pattern_type == "access_modifier":
             self.state.current_access = match.group(1)
         elif pattern_type == "member_function_def":
             func_name = match.group(2)
-            self._record_symbol("member_function_def", func_name, line_num, file_path)
-            self.state.push_state(ParserState.FUNCTION_DEF)
+            # 计算完整名称用于状态和记录
+            full_func_name = calculate_full_name(func_name, "member_function_def")
+            self._record_symbol(
+                "member_function_def", func_name, line_num, file_path
+            )  # 记录时用基本名
+            self.state.push_state(
+                ParserState.FUNCTION_DEF, full_func_name
+            )  # 状态传递完整名
         elif pattern_type == "out_of_class_member_def":
-            qualifier = match.group(2).rstrip(":")
+            qualifier = match.group(2).rstrip("::")
             func_name = match.group(3)
+            # 计算完整名称用于状态和记录
+            full_func_name = calculate_full_name(
+                func_name, "member_function_def", qualifier=qualifier
+            )
             self._record_symbol(
                 "member_function_def",  # Record as member_function_def
                 func_name,
                 line_num,
                 file_path,
                 qualifier=qualifier,
-            )
-            self.state.push_state(ParserState.FUNCTION_DEF)
+            )  # 记录时用基本名
+            self.state.push_state(
+                ParserState.FUNCTION_DEF, full_func_name
+            )  # 状态传递完整名
         elif pattern_type == "global_function_def":
-            func_name = match.group(2)  # Check group index
+            func_name = match.group(2)
+            qualifier = None
+            record_type = "global_function_def"
             if "::" in func_name:
                 logging.warning(
                     f"global_function_def matched qualified name '{func_name}', treating as out-of-class."
                 )
                 parts = func_name.split("::")
-                class_name = "::".join(parts[:-1])
-                method_name = parts[-1]
-                self._record_symbol(
-                    "member_function_def",  # Record as member_function_def
-                    method_name,
-                    line_num,
-                    file_path,
-                    qualifier=class_name,
-                )
-            else:
-                self._record_symbol(
-                    "global_function_def", func_name, line_num, file_path
-                )
-            self.state.push_state(ParserState.FUNCTION_DEF)
+                qualifier = "::".join(parts[:-1])
+                func_name = parts[-1]  # 更新 func_name 为基本名
+                record_type = "member_function_def"  # 记录类型改为成员函数
+
+            # 计算完整名称用于状态和记录
+            full_func_name = calculate_full_name(
+                func_name, record_type, qualifier=qualifier
+            )
+            self._record_symbol(
+                record_type, func_name, line_num, file_path, qualifier=qualifier
+            )  # 记录时用基本名
+            self.state.push_state(
+                ParserState.FUNCTION_DEF, full_func_name
+            )  # 状态传递完整名
         elif pattern_type in ["enum", "nested_enum"]:
             enum_name = match.group(1)
             self._record_symbol("enum", enum_name, line_num, file_path)
         elif pattern_type in ["union", "nested_union"]:
             union_name = match.group(1)
+            # 计算完整名称用于状态
+            full_union_name = calculate_full_name(union_name, "union")
             self._record_symbol("union", union_name, line_num, file_path)
-            self.state.push_state(ParserState.CLASS, union_name)
-        else:
+            self.state.push_state(ParserState.CLASS, union_name)  # 状态栈用基本名
+        elif pattern_type == "function_call":
+            # 函数调用现在由 _record_symbol 处理关联
+            try:
+                # Group 1 now captures the full call string (prefix + name)
+                called_func_string = match.group(1)
+                # 直接调用 _record_symbol，它内部会检查状态并更新 call_graph
+                self._record_symbol(
+                    "function_call", called_func_string, line_num, file_path
+                )
+            except IndexError:
+                logging.error(
+                    f"IndexError extracting function call name. Match groups: {match.groups()}"
+                )
+        else:  # 处理其他声明和简单匹配
             symbol_name = None
             kwargs = {}
             try:
@@ -714,6 +628,7 @@ class CppSymbolScanner:
                     parameters = match.group(3).strip()
 
                     if pattern_type == "member_function_decl":
+                        # ... (constructor/destructor logic remains the same) ...
                         current_class_name = (
                             self.state.class_stack[-1]
                             if self.state.class_stack
@@ -738,23 +653,24 @@ class CppSymbolScanner:
                     kwargs = {"var_type": var_type}
 
                 if symbol_name:
+                    # 对于非函数调用，直接记录
                     self._record_symbol(
                         pattern_type, symbol_name, line_num, file_path, **kwargs
-                    )
-                else:
-                    logging.warning(
-                        f"Could not extract symbol name for {pattern_type} from match: {match.groups()}"
                     )
 
             except IndexError:
                 logging.error(
                     f"IndexError extracting groups for {pattern_type}. Match groups: {match.groups()}. Regex: {self.all_patterns[pattern_type].pattern}"
                 )
+            except Exception as e:
+                logging.error(
+                    f"Error processing match for {pattern_type} on line {line_num}: {e}. Match groups: {match.groups()}"
+                )
 
     def _record_symbol(
         self, symbol_type: str, name: str, line_num: int, file_path: str, **kwargs
     ):
-        """记录找到的符号，基于当前状态机环境"""
+        """记录找到的符号，并处理函数调用关联"""
         # 添加额外的安全检查，防止记录明显错误的符号
         # Check for keywords mistaken as variable names or types
         keywords = {
@@ -809,30 +725,37 @@ class CppSymbolScanner:
         if symbol_type == "global_variable" and name == "return":
             logging.debug(f"Skipping 'return' keyword as global_variable")
             return
-        if symbol_type == "global_function_decl" and name.startswith("std::"):
-            logging.debug(f"Skipping standard library usage: '{name}' as {symbol_type}")
-            return
 
         logging.debug(
             f"Recording symbol: type='{symbol_type}', name='{name}', line={line_num}, kwargs={kwargs}"
         )
+
+        # --- 函数调用关联 ---
+        # 如果当前记录的是函数调用，并且状态机处于函数定义内部
+        if (
+            symbol_type == "function_call"
+            and self.state.current_defining_function_full_name
+        ):
+            defining_func = self.state.current_defining_function_full_name
+            # 将捕获到的完整调用字符串 'name' 添加到调用图中
+            self.call_graph[defining_func].add(name)
+            logging.debug(f"Call recorded: '{defining_func}' calls '{name}'")
+            # 注意：'name' 现在是 "prefix::name" 或 "obj.name" 或 "ptr->name" 或 "name"
+
+        # --- 计算完整名称 ---
         components = []
-
-        # 基于当前状态机状态构建作用域
-        current_namespace_stack = list(self.state.namespace_stack)  # Make copies
+        current_namespace_stack = list(self.state.namespace_stack)
         current_class_stack = list(self.state.class_stack)
-
         current_namespace_stack = [
             ns for ns in current_namespace_stack if ns != "<anonymous>"
         ]
-
         qualifier = kwargs.get("qualifier")
 
         if symbol_type in (
             "member_function_def",
             "member_function_decl",
             "member_variable",
-            "nested_class",  # Nested types belong to the parent class/struct
+            "nested_class",
             "nested_struct",
             "nested_enum",
             "nested_union",
@@ -850,17 +773,19 @@ class CppSymbolScanner:
                 components.extend(current_class_stack)
             else:  # Should not happen for member symbols, but as fallback
                 components.extend(current_namespace_stack)
-
         elif symbol_type in ("class", "struct", "enum", "union"):
             # Top-level class/struct/enum/union within a namespace or global
             components.extend(current_namespace_stack)
             if len(current_class_stack) > 0:
                 components.extend(current_class_stack[:-1])
-
         elif symbol_type == "namespace":
             if len(current_namespace_stack) > 0:
                 components.extend(current_namespace_stack[:-1])
-
+        elif symbol_type == "function_call":
+            components.extend(current_namespace_stack)
+            components.extend(
+                current_class_stack
+            )  # Calls happen within class scope too
         else:  # Global functions, variables, macros
             components.extend(current_namespace_stack)
 
@@ -924,6 +849,7 @@ class CppSymbolScanner:
             "member_variable": colorama.Fore.LIGHTMAGENTA_EX,
             "macro_constant": colorama.Fore.LIGHTCYAN_EX,
             "macro_function": colorama.Fore.LIGHTRED_EX,
+            "function_call": colorama.Fore.RED,
         }
         default_color = colorama.Style.RESET_ALL
 
@@ -932,6 +858,7 @@ class CppSymbolScanner:
             "struct": "DATA_STRUCTURES",
             "union": "DATA_STRUCTURES",
             "enum": "DATA_STRUCTURES",
+            "function_call": "FUNCTION_CALLS",
         }
 
         # 根据分类组织符号
@@ -944,6 +871,7 @@ class CppSymbolScanner:
                 for occurrence in occurrences:
                     occurrence_copy = occurrence.copy()
                     occurrence_copy["original_type"] = symbol_type
+                    occurrence_copy["full_name"] = name
                     categorized_symbols[category][name].append(occurrence_copy)
 
         logging.info("Starting summary print.")
@@ -954,11 +882,13 @@ class CppSymbolScanner:
 
         # 打印分类摘要
         for category, symbols_by_name in sorted(categorized_symbols.items()):
-            # 对于合并的类型，使用特定颜色
+            # 对于合并的类型，显示特定颜色
             if category == "DATA_STRUCTURES":
                 color = colorama.Fore.YELLOW
                 print(f"\n{color}=== 数据结构 (STRUCT/UNION/ENUM) ===")
                 logging.debug(f"Printing summary for category: {category}")
+            elif category == "FUNCTION_CALLS":
+                continue  # Skip printing raw function calls for now
             else:
                 # 查找原始类型的颜色
                 original_type = next(iter(symbols_by_name.values()))[0].get(
@@ -995,17 +925,17 @@ class CppSymbolScanner:
                 logging.debug(f"  No symbols of category {category} found.")
                 continue
 
-            for name, symbol_occurrences in sorted(symbols_by_name.items()):
-                # 获取第一个出现的原始类型以显示
+            for full_name, symbol_occurrences in sorted(symbols_by_name.items()):
                 original_type = symbol_occurrences[0].get("original_type", "")
+                display_name = full_name
 
                 # 对于数据结构类别，显示具体类型
                 if category == "DATA_STRUCTURES":
-                    print(f"{color}{name} ({original_type}){default_color}")
-                    logging.debug(f"  Symbol: {name} ({original_type})")
+                    print(f"{color}{display_name} ({original_type}){default_color}")
+                    logging.debug(f"  Symbol: {display_name} ({original_type})")
                 else:
-                    print(f"{color}{name}{default_color}")
-                    logging.debug(f"  Symbol: {name}")
+                    print(f"{color}{display_name}{default_color}")
+                    logging.debug(f"  Symbol: {display_name}")
 
                 sorted_occurrences = sorted(
                     symbol_occurrences,
@@ -1018,17 +948,27 @@ class CppSymbolScanner:
                 for info in sorted_occurrences:
                     loc = info["location"]
                     extra_info = ""
+                    current_full_name = info.get("full_name", "")
 
-                    original_type = info.get("original_type", "")
+                    # 添加调用列表到函数定义
+                    if original_type in ["global_function_def", "member_function_def"]:
+                        if current_full_name in self.call_graph:
+                            called_funcs = sorted(
+                                list(self.call_graph[current_full_name])
+                            )
+                            if called_funcs:
+                                calls_str = ", ".join(called_funcs)
+                                extra_info += f" {colorama.Fore.LIGHTBLACK_EX}调用:{colorama.Fore.RED} [{calls_str}]{default_color}"
+                                logging.debug(f"    Calls: {calls_str}")
 
                     if original_type == "macro_constant" and "value" in info:
-                        extra_info = f" {colorama.Fore.LIGHTBLACK_EX}值:{default_color} {info['value']}"
+                        extra_info += f" {colorama.Fore.LIGHTBLACK_EX}值:{default_color} {info['value']}"
                         logging.debug(f"    Location: {loc}, Value: {info['value']}")
                     elif (
                         original_type in ["global_variable", "member_variable"]
                         and "var_type" in info
                     ):
-                        extra_info = f" {colorama.Fore.LIGHTBLACK_EX}类型:{default_color} {info['var_type']}"
+                        extra_info += f" {colorama.Fore.LIGHTBLACK_EX}类型:{default_color} {info['var_type']}"
                         logging.debug(f"    Location: {loc}, Type: {info['var_type']}")
                     elif (
                         original_type
@@ -1043,14 +983,15 @@ class CppSymbolScanner:
                         rt = info["return_type"]
                         params = info["parameters"]
                         if rt == "<constructor>" or rt == "<destructor>":
-                            extra_info = f" {colorama.Fore.LIGHTBLACK_EX}类型:{default_color} {rt} {colorama.Fore.LIGHTBLACK_EX}参数:{default_color} {params}"
+                            extra_info += f" {colorama.Fore.LIGHTBLACK_EX}类型:{default_color} {rt} {colorama.Fore.LIGHTBLACK_EX}参数:{default_color} {params}"
                         else:
-                            extra_info = f" {colorama.Fore.LIGHTBLACK_EX}返回:{default_color} {rt} {colorama.Fore.LIGHTBLACK_EX}参数:{default_color} {params}"
+                            extra_info += f" {colorama.Fore.LIGHTBLACK_EX}返回:{default_color} {rt} {colorama.Fore.LIGHTBLACK_EX}参数:{default_color} {params}"
                         logging.debug(
                             f"    Location: {loc}, Return: {rt}, Params: {params}"
                         )
                     else:
-                        logging.debug(f"    Location: {loc}")
+                        if not extra_info:
+                            logging.debug(f"    Location: {loc}")
 
                     try:
                         file_part, line_part = loc.rsplit(":", 1)
