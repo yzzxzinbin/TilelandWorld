@@ -157,7 +157,7 @@ class CallGraphAnalyzer:
             depth (int, optional): 当前递归深度，用于缩进。默认为 0。
             max_depth (int, optional): 最大递归深度，防止无限循环。默认为 20。
         """
-        indent = "  " * depth
+        indent = "    " * depth
         location_info = self.symbol_lookup.get(start_function_full_name, {}).get(
             "location", "[Location Unknown]"
         )

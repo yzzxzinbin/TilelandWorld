@@ -283,11 +283,92 @@ class CppSymbolScanner:
                 self.state.pending_lines.clear()
             return
 
+        # 如果在多行括号模式，追加当前行并检查是否完成
+        if self.state.in_multiline_paren:
+            self.state.add_to_multiline_paren(stripped_line)
+
+            # 分析当前行以更新括号计数
+            self.state.reset_line_state()
+            prev_char = None
+            for char in stripped_line:
+                self.state.process_character(char, prev_char)
+                prev_char = char
+
+            # 检查括号是否平衡
+            if self.state.has_balanced_parens() or stripped_line.endswith(";"):
+                # 括号平衡或遇到语句结束符，处理完整的多行内容
+                combined_content = self.state.get_multiline_paren_content()
+                self.state.exit_multiline_paren_mode()
+
+                logging.debug(
+                    f"Processing combined multiline content: '{combined_content}'"
+                )
+
+                # 基于当前状态选择合适的模式，与非多行处理保持一致
+                patterns_to_check = {}
+                current_state_for_match = self.state.current_state
+                if current_state_for_match == ParserState.FUNCTION_DEF:
+                    # 在函数体内，应该仅使用函数体内的模式和嵌套类等模式
+                    patterns_to_check = {
+                        k: v
+                        for k, v in self.class_patterns.items()
+                        if k
+                        in [
+                            "nested_class",
+                            "nested_struct",
+                            "nested_enum",
+                            "nested_union",
+                        ]
+                    }
+                    patterns_to_check.update(self.function_body_patterns)
+                elif current_state_for_match == ParserState.GLOBAL:
+                    patterns_to_check.update(self.global_patterns)
+                    patterns_to_check.update(self.out_of_class_patterns)
+                elif current_state_for_match == ParserState.NAMESPACE:
+                    patterns_to_check.update(self.global_patterns)
+                    patterns_to_check.update(self.out_of_class_patterns)
+                elif current_state_for_match == ParserState.CLASS:
+                    patterns_to_check.update(self.class_patterns)
+
+                # 使用合并内容进行模式匹配
+                match_found = False
+                for pattern_type, pattern in patterns_to_check.items():
+                    match = pattern.search(combined_content)
+                    if match:
+                        logging.info(
+                            f"MATCHED in multiline content {pattern_type}: '{match.group(0)}'"
+                        )
+                        self._process_match(
+                            pattern_type, match, line_num, file_path, combined_content
+                        )
+                        match_found = True
+                        break
+
+                return
+            else:
+                # 括号仍未平衡，继续收集后续行
+                return
+
         self.state.reset_line_state()
+        self.state.start_line_tracking()  # 开始跟踪行位置
+
         prev_char = None
         for char in stripped_line:
+            self.state.advance_position()  # 更新位置
             self.state.process_character(char, prev_char)
             prev_char = char
+
+        # 检查是否存在非行首的未闭合括号
+        if (
+            self.state.unclosed_paren_count > 0
+            and "(" in stripped_line
+            and not stripped_line.lstrip().startswith("(")
+        ):
+            logging.debug(
+                f"Detected non-leading unclosed parentheses in line: '{stripped_line}'"
+            )
+            self.state.enter_multiline_paren_mode(stripped_line)
+            return
 
         # 检查是否在多行注释中
         if self.state.was_in_multiline_comment_this_line:
@@ -631,33 +712,45 @@ class CppSymbolScanner:
                     prefix = line_content[:start_index].strip()
                     logging.debug(f"Prefix before function call: '{prefix}'")
 
-                    # 关键改进：检查前缀是否是单个标识符（变量类型）
-                    # 这种情况通常表示 "类型 变量名()" 的声明模式
-                    if re.match(r"^[a-zA-Z_]\w*$", prefix):
+                    # 特殊处理：如果前缀是return关键字，则始终视为有效函数调用
+                    if prefix == "return":
                         logging.debug(
-                            f"Detected simple variable type '{prefix}' before function call, likely a variable declaration"
+                            f"Detected 'return' keyword before function call - marking as valid function call"
                         )
-                        valid_match = False
-
-                    # 检查更复杂的类型声明模式
-                    elif re.search(r"\b[a-zA-Z_]\w*(?:\s*[*&])?\s*$", prefix):
-                        logging.debug(
-                            f"Detected complex variable type pattern in '{prefix}', likely a variable declaration"
-                        )
-                        valid_match = False
-
-                    # 检查是否有多个单词，最后一个可能是类型名
-                    words_before = re.findall(r"\b[a-zA-Z_]\w*\b", prefix)
-                    if len(words_before) >= 1:
-                        logging.debug(
-                            f"Found potential type identifier '{words_before[-1]}' before function call"
-                        )
-                        # 如果前缀只是单独的一个标识符，几乎肯定是变量声明
-                        if len(words_before) == 1 and prefix == words_before[0]:
+                        valid_match = True
+                    else:
+                        # 关键改进：检查前缀是否是单个标识符（变量类型）
+                        # 这种情况通常表示 "类型 变量名()" 的声明模式
+                        if re.match(r"^[a-zA-Z_]\w*$", prefix):
                             logging.debug(
-                                f"Single identifier '{prefix}' before function-like pattern, marking as invalid function call"
+                                f"Detected simple variable type '{prefix}' before function call, likely a variable declaration"
                             )
                             valid_match = False
+
+                        # 检查更复杂的类型声明模式
+                        elif re.search(r"\b[a-zA-Z_]\w*(?:\s*[*&])?\s*$", prefix):
+                            logging.debug(
+                                f"Detected complex variable type pattern in '{prefix}', likely a variable declaration"
+                            )
+                            valid_match = False
+
+                        # 检查是否有多个单词，最后一个可能是类型名
+                        words_before = re.findall(r"\b[a-zA-Z_]\w*\b", prefix)
+                        if len(words_before) >= 1:
+                            logging.debug(
+                                f"Found potential type identifier '{words_before[-1]}' before function call"
+                            )
+                            # 如果前缀只是单独的一个标识符，几乎肯定是变量声明
+                            # 但要排除"return"关键字的情况
+                            if (
+                                len(words_before) == 1
+                                and prefix == words_before[0]
+                                and words_before[0] != "return"
+                            ):
+                                logging.debug(
+                                    f"Single identifier '{prefix}' before function-like pattern, marking as invalid function call"
+                                )
+                                valid_match = False
 
                 if valid_match:
                     # 捕获组 1 是完整路径+函数名

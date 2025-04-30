@@ -40,6 +40,12 @@ class ParserState:
         # 当前定义的函数名 (用于关联调用)
         self.current_defining_function_full_name = None
 
+        # 添加括号跟踪计数和多行括号模式标志
+        self.unclosed_paren_count = 0  # 未闭合的圆括号数量
+        self.in_multiline_paren = False  # 是否处于多行括号模式
+        self.multiline_paren_content = []  # 收集多行括号内容
+        self.line_start_pos = 0  # 当前行在处理时的起始位置
+
     def push_state(self, new_state, scope_name=None):
         """进入新状态"""
         self.state_stack.append(self.current_state)
@@ -145,9 +151,14 @@ class ParserState:
         # 小括号跟踪
         elif char == "(":
             self.paren_stack.append("(")
+            # 更新未闭合圆括号计数
+            self.unclosed_paren_count += 1
         elif char == ")":
             if self.paren_stack:
                 self.paren_stack.pop()
+                # 更新未闭合圆括号计数
+                if self.unclosed_paren_count > 0:
+                    self.unclosed_paren_count -= 1
 
         # 尖括号跟踪 (用于模板)
         elif char == "<":
@@ -166,6 +177,7 @@ class ParserState:
         """在处理新行时重置行内状态"""
         self.in_comment = False
         self.was_in_multiline_comment_this_line = False  # 重置标志位
+        self.line_start_pos = 0  # 重置行起始位置
         # 注意：不重置多行注释状态，因为它可能跨行
 
     def is_clean_for_matching(self):
@@ -184,8 +196,53 @@ class ParserState:
         scope.extend(self.class_stack)
         return scope
 
+    def start_line_tracking(self):
+        """标记处理新行的开始，重置行位置计数"""
+        self.line_start_pos = 0
+
+    def advance_position(self):
+        """前进一个字符位置"""
+        self.line_start_pos += 1
+
+    def is_start_of_line(self):
+        """检查当前是否在行的开始位置（考虑空白字符）"""
+        return self.line_start_pos == 0
+
+    def has_balanced_parens(self):
+        """检查括号是否平衡"""
+        return self.unclosed_paren_count == 0
+
+    def enter_multiline_paren_mode(self, line):
+        """进入多行括号模式"""
+        self.in_multiline_paren = True
+        self.multiline_paren_content = [line]
+        logging.debug(f"Entering multiline paren mode with line: '{line}'")
+
+    def add_to_multiline_paren(self, line):
+        """添加行到多行括号内容"""
+        self.multiline_paren_content.append(line)
+        logging.debug(f"Adding to multiline paren: '{line}'")
+
+    def get_multiline_paren_content(self):
+        """获取合并的多行括号内容"""
+        combined = " ".join(self.multiline_paren_content)
+        logging.debug(f"Combined multiline paren content: '{combined}'")
+        return combined
+
+    def exit_multiline_paren_mode(self):
+        """退出多行括号模式"""
+        self.in_multiline_paren = False
+        content = self.multiline_paren_content.copy()
+        self.multiline_paren_content = []
+        logging.debug("Exiting multiline paren mode")
+        return content
+
     def reset(self):
         """重置状态机"""
         self.__init__()
         # 确保新属性也被重置
         self.current_defining_function_full_name = None
+        self.unclosed_paren_count = 0
+        self.in_multiline_paren = False
+        self.multiline_paren_content = []
+        self.line_start_pos = 0
