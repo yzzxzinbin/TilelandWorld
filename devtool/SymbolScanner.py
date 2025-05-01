@@ -680,6 +680,12 @@ class CppSymbolScanner:
 
         # --- End Helper ---
 
+        # --- 获取相对路径，用于生成唯一键 ---
+        try:
+            relative_path = os.path.relpath(file_path)
+        except ValueError:
+            relative_path = file_path
+
         # 处理匹配结果
         if pattern_type == "namespace":
             # ... (rest of the processing logic remains unchanged) ...
@@ -715,30 +721,22 @@ class CppSymbolScanner:
         elif pattern_type == "member_function_def":
             func_name = match.group(2)
             # 计算完整名称用于状态和记录
-            full_func_name = calculate_full_name(func_name, "member_function_def")
-            self._record_symbol(
-                "member_function_def", func_name, line_num, file_path
-            )  # 记录时用基本名
-            self.state.push_state(
-                ParserState.FUNCTION_DEF, full_func_name
-            )  # 状态传递完整名
+            unique_key = f"{relative_path}::{full_func_name}"
+            self._record_symbol("member_function_def", func_name, line_num, file_path)
+            self.state.push_state(ParserState.FUNCTION_DEF, unique_key)  # 传递唯一键
         elif pattern_type == "out_of_class_member_def":
             qualifier = match.group(2).rstrip("::")
             func_name = match.group(3)
             # 计算完整名称用于状态和记录
-            full_func_name = calculate_full_name(
-                func_name, "member_function_def", qualifier=qualifier
-            )
+            unique_key = f"{relative_path}::{full_func_name}"
             self._record_symbol(
-                "member_function_def",  # Record as member_function_def
+                "member_function_def",
                 func_name,
                 line_num,
                 file_path,
                 qualifier=qualifier,
-            )  # 记录时用基本名
-            self.state.push_state(
-                ParserState.FUNCTION_DEF, full_func_name
-            )  # 状态传递完整名
+            )
+            self.state.push_state(ParserState.FUNCTION_DEF, unique_key)  # 传递唯一键
         elif pattern_type == "global_function_def":
             func_name = match.group(2)
             qualifier = None
@@ -756,12 +754,11 @@ class CppSymbolScanner:
             full_func_name = calculate_full_name(
                 func_name, record_type, qualifier=qualifier
             )
+            unique_key = f"{relative_path}::{full_func_name}"
             self._record_symbol(
                 record_type, func_name, line_num, file_path, qualifier=qualifier
-            )  # 记录时用基本名
-            self.state.push_state(
-                ParserState.FUNCTION_DEF, full_func_name
-            )  # 状态传递完整名
+            )
+            self.state.push_state(ParserState.FUNCTION_DEF, unique_key)  # 传递唯一键
         elif pattern_type in ["enum", "nested_enum"]:
             enum_name = match.group(1)
             self._record_symbol("enum", enum_name, line_num, file_path)
@@ -1063,6 +1060,82 @@ class CppSymbolScanner:
         location = f"{relative_path}:{line_num}"
         symbol_info = {"location": location}
 
+        # --- 计算完整名称和唯一键 ---
+        components = []
+        current_namespace_stack = list(self.state.namespace_stack)
+        current_class_stack = list(self.state.class_stack)
+        current_namespace_stack = [
+            ns for ns in current_namespace_stack if ns != "<anonymous>"
+        ]
+        qualifier = kwargs.get("qualifier")
+
+        # ... (logic for building components based on symbol_type remains the same) ...
+        if symbol_type in (
+            "member_function_def",
+            "member_function_decl",
+            "member_variable",
+            "nested_class",
+            "nested_struct",
+            "nested_enum",
+            "nested_union",
+        ):
+            if qualifier:
+                qualifier_parts = qualifier.split("::")
+                if not qualifier.startswith("::"):
+                    components.extend(current_namespace_stack)
+                components.extend(qualifier_parts)
+            elif current_class_stack:
+                components.extend(current_namespace_stack)
+                components.extend(current_class_stack)
+            else:
+                components.extend(current_namespace_stack)
+        elif symbol_type in ("class", "struct", "enum", "union"):
+            components.extend(current_namespace_stack)
+            if len(current_class_stack) > 0:
+                components.extend(
+                    current_class_stack[:-1]
+                )  # Corrected: extend, not append
+        elif symbol_type == "namespace":
+            if len(current_namespace_stack) > 0:
+                components.extend(
+                    current_namespace_stack[:-1]
+                )  # Corrected: extend, not append
+        elif symbol_type == "function_call":
+            # For function calls, 'name' is the called string, full_name is not needed for the key here
+            pass
+        else:  # Global functions, variables, macros
+            components.extend(current_namespace_stack)
+
+        # Construct full name (used for display and potentially lookup)
+        full_name_parts = components + [name]
+        full_name_parts = [part for part in full_name_parts if part]
+        full_name = "::".join(full_name_parts)
+
+        # --- 新增：为函数定义创建唯一键 ---
+        unique_key = full_name  # Default to full_name for non-function-defs
+        if symbol_type in ["global_function_def", "member_function_def"]:
+            unique_key = f"{relative_path}::{full_name}"
+            symbol_info["unique_key"] = unique_key  # Store unique key for definitions
+            logging.debug(f"Generated unique key for function definition: {unique_key}")
+        # --- 结束新增 ---
+
+        logging.info(
+            f"Recorded symbol: Full Name='{full_name}', Unique Key='{unique_key if 'unique_key' in symbol_info else 'N/A'}', Type='{symbol_type}', Line={line_num}"
+        )
+
+        # --- 函数调用关联 ---
+        # 使用状态机中存储的唯一键 (defining_func_unique_key)
+        if (
+            symbol_type == "function_call"
+            and self.state.current_defining_function_full_name  # This now holds the unique_key
+        ):
+            defining_func_unique_key = self.state.current_defining_function_full_name
+            # 使用 unique_key 作为 call_graph 的键
+            self.call_graph[defining_func_unique_key].add(
+                name
+            )  # 'name' is the called string
+            logging.debug(f"Call recorded: '{defining_func_unique_key}' calls '{name}'")
+
         # 添加额外信息
         kwargs.pop("qualifier", None)  # 已使用，不需要再保存
         symbol_info.update(kwargs)
@@ -1204,18 +1277,21 @@ class CppSymbolScanner:
                 for info in sorted_occurrences:
                     loc = info["location"]
                     extra_info = ""
-                    current_full_name = info.get("full_name", "")
+                    # current_full_name = info.get("full_name", "") # Keep this for potential use
+                    unique_key = info.get("unique_key")  # Get the stored unique key
 
                     # 添加调用列表到函数定义
                     if original_type in ["global_function_def", "member_function_def"]:
-                        if current_full_name in self.call_graph:
-                            called_funcs = sorted(
-                                list(self.call_graph[current_full_name])
-                            )
-                            if called_funcs:
-                                calls_str = ", ".join(called_funcs)
+                        if (
+                            unique_key and unique_key in self.call_graph
+                        ):  # Check if unique_key exists and is in call_graph
+                            calls = sorted(list(self.call_graph[unique_key]))
+                            if calls:
+                                calls_str = ", ".join(calls)
                                 extra_info += f" {colorama.Fore.LIGHTBLACK_EX}调用:{colorama.Fore.RED} [{calls_str}]{default_color}"
-                                logging.debug(f"    Calls: {calls_str}")
+                                logging.debug(
+                                    f"    Calls for {unique_key}: {calls_str}"
+                                )
 
                     if original_type == "macro_constant" and "value" in info:
                         extra_info += f" {colorama.Fore.LIGHTBLACK_EX}值:{default_color} {info['value']}"
