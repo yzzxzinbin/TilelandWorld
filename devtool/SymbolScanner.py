@@ -637,7 +637,7 @@ class CppSymbolScanner:
 
         # --- Helper to calculate full name based on current state ---
         def calculate_full_name(base_name, symbol_type_for_scope, qualifier=None):
-            # ... (helper function remains unchanged) ...
+            # ... (implementation unchanged) ...
             components = []
             current_namespace_stack = list(self.state.namespace_stack)
             current_class_stack = list(self.state.class_stack)
@@ -685,10 +685,11 @@ class CppSymbolScanner:
             relative_path = os.path.relpath(file_path)
         except ValueError:
             relative_path = file_path
+        # --- 结束 ---
 
         # 处理匹配结果
         if pattern_type == "namespace":
-            # ... (rest of the processing logic remains unchanged) ...
+            # ... (namespace logic remains the same) ...
             ns_name_match = match.group(1)
             ns_name = ns_name_match if ns_name_match else "<anonymous>"
             # 计算完整名称用于记录
@@ -708,6 +709,7 @@ class CppSymbolScanner:
             "nested_class",
             "nested_struct",
         ]:
+            # ... (class/struct logic remains the same) ...
             class_name = match.group(1)
             actual_type = "struct" if "struct" in pattern_type else "class"
             # 计算完整名称用于状态和记录
@@ -717,18 +719,27 @@ class CppSymbolScanner:
                 actual_type, class_name, line_num, file_path
             )  # 记录时用基本名
         elif pattern_type == "access_modifier":
+            # ... (access modifier logic remains the same) ...
             self.state.current_access = match.group(1)
         elif pattern_type == "member_function_def":
             func_name = match.group(2)
-            # 计算完整名称用于状态和记录
-            unique_key = f"{relative_path}::{full_func_name}"
+            # --- 修正顺序 ---
+            full_func_name = calculate_full_name(
+                func_name, "member_function_def"
+            )  # 先计算
+            unique_key = f"{relative_path}::{full_func_name}"  # 再使用
+            # --- 结束修正 ---
             self._record_symbol("member_function_def", func_name, line_num, file_path)
             self.state.push_state(ParserState.FUNCTION_DEF, unique_key)  # 传递唯一键
         elif pattern_type == "out_of_class_member_def":
             qualifier = match.group(2).rstrip("::")
             func_name = match.group(3)
-            # 计算完整名称用于状态和记录
-            unique_key = f"{relative_path}::{full_func_name}"
+            # --- 修正顺序 ---
+            full_func_name = calculate_full_name(
+                func_name, "member_function_def", qualifier=qualifier
+            )  # 先计算
+            unique_key = f"{relative_path}::{full_func_name}"  # 再使用
+            # --- 结束修正 ---
             self._record_symbol(
                 "member_function_def",
                 func_name,
@@ -738,7 +749,7 @@ class CppSymbolScanner:
             )
             self.state.push_state(ParserState.FUNCTION_DEF, unique_key)  # 传递唯一键
         elif pattern_type == "global_function_def":
-            func_name = match.group(2)
+            func_name = match.group(2)  # Corrected group index based on regex
             qualifier = None
             record_type = "global_function_def"
             if "::" in func_name:
@@ -747,87 +758,71 @@ class CppSymbolScanner:
                 )
                 parts = func_name.split("::")
                 qualifier = "::".join(parts[:-1])
-                func_name = parts[-1]  # 更新 func_name 为基本名
-                record_type = "member_function_def"  # 记录类型改为成员函数
+                func_name = parts[-1]
+                record_type = "member_function_def"
 
-            # 计算完整名称用于状态和记录
+            # --- 修正顺序 ---
             full_func_name = calculate_full_name(
                 func_name, record_type, qualifier=qualifier
-            )
-            unique_key = f"{relative_path}::{full_func_name}"
+            )  # 先计算
+            unique_key = f"{relative_path}::{full_func_name}"  # 再使用
+            # --- 结束修正 ---
             self._record_symbol(
                 record_type, func_name, line_num, file_path, qualifier=qualifier
             )
             self.state.push_state(ParserState.FUNCTION_DEF, unique_key)  # 传递唯一键
         elif pattern_type in ["enum", "nested_enum"]:
+            # ... (enum logic remains the same) ...
             enum_name = match.group(1)
             self._record_symbol("enum", enum_name, line_num, file_path)
         elif pattern_type in ["union", "nested_union"]:
+            # ... (union logic remains the same) ...
             union_name = match.group(1)
-            # 计算完整名称用于状态
             full_union_name = calculate_full_name(union_name, "union")
             self._record_symbol("union", union_name, line_num, file_path)
-            self.state.push_state(ParserState.CLASS, union_name)  # 状态栈用基本名
+            self.state.push_state(ParserState.CLASS, union_name)
         elif pattern_type == "function_call":
+            # ... (function call logic remains the same) ...
             try:
-                # 检查整行的上下文，判断是否是变量声明而非函数调用
-                # 使用原始的 line_content 进行检查
                 full_match_text = match.group(0)
-                # 查找位置时也使用原始 line_content
                 start_index = line_content.find(full_match_text)
 
-                if (
-                    start_index == -1
-                ):  # 如果找不到准确的位置，尝试不区分大小写搜索或直接使用match.start()
+                if start_index == -1:
                     logging.warning(
                         f"Could not locate match '{full_match_text}' in line '{line_content}', using regex match position"
                     )
                     start_index = match.start()
 
-                # 详细记录上下文信息，用于调试
                 logging.debug(
                     f"Function call match: '{full_match_text}' at position {start_index} in '{line_content}'"
                 )
 
-                # 后处理：检查匹配项前面的上下文，避免误匹配声明类型的情况
                 valid_match = True
-
-                # 检查前缀，判断是否是变量声明 (使用原始 line_content)
                 if start_index > 0:
-                    # 获取匹配前的所有内容
                     prefix = line_content[:start_index].strip()
                     logging.debug(f"Prefix before function call: '{prefix}'")
 
-                    # 特殊处理：如果前缀是return关键字，则始终视为有效函数调用
                     if prefix == "return":
                         logging.debug(
                             f"Detected 'return' keyword before function call - marking as valid function call"
                         )
                         valid_match = True
                     else:
-                        # 关键改进：检查前缀是否是单个标识符（变量类型）
-                        # 这种情况通常表示 "类型 变量名()" 的声明模式
                         if re.match(r"^[a-zA-Z_]\w*$", prefix):
                             logging.debug(
                                 f"Detected simple variable type '{prefix}' before function call, likely a variable declaration"
                             )
                             valid_match = False
-
-                        # 检查更复杂的类型声明模式
                         elif re.search(r"\b[a-zA-Z_]\w*(?:\s*[*&])?\s*$", prefix):
                             logging.debug(
                                 f"Detected complex variable type pattern in '{prefix}', likely a variable declaration"
                             )
                             valid_match = False
-
-                        # 检查是否有多个单词，最后一个可能是类型名
                         words_before = re.findall(r"\b[a-zA-Z_]\w*\b", prefix)
                         if len(words_before) >= 1:
                             logging.debug(
                                 f"Found potential type identifier '{words_before[-1]}' before function call"
                             )
-                            # 如果前缀只是单独的一个标识符，几乎肯定是变量声明
-                            # 但要排除"return"关键字的情况
                             if (
                                 len(words_before) == 1
                                 and prefix == words_before[0]
@@ -839,14 +834,11 @@ class CppSymbolScanner:
                                 valid_match = False
 
                 if valid_match:
-                    # 捕获组 1 是完整路径+函数名
                     called_func_string = match.group(1)
                     base_func_name = match.group(2) if len(match.groups()) > 1 else None
                     logging.debug(
                         f"Valid function call: '{called_func_string}', base name: '{base_func_name}'"
                     )
-
-                    # 记录函数调用
                     self._record_symbol(
                         "function_call", called_func_string, line_num, file_path
                     )
@@ -863,6 +855,7 @@ class CppSymbolScanner:
                     f"Error processing function call match: {str(e)}", exc_info=True
                 )
         else:  # 处理其他声明和简单匹配
+            # ... (logic for other types remains the same) ...
             symbol_name = None
             kwargs = {}
             try:
@@ -881,7 +874,6 @@ class CppSymbolScanner:
                     parameters = match.group(3).strip()
 
                     if pattern_type == "member_function_decl":
-                        # ... (constructor/destructor logic remains the same) ...
                         current_class_name = (
                             self.state.class_stack[-1]
                             if self.state.class_stack
@@ -906,14 +898,13 @@ class CppSymbolScanner:
                     kwargs = {"var_type": var_type}
 
                 if symbol_name:
-                    # 对于非函数调用，直接记录
                     self._record_symbol(
                         pattern_type, symbol_name, line_num, file_path, **kwargs
                     )
 
             except IndexError:
                 logging.error(
-                    f"IndexError extracting groups for {pattern_type}. Match groups: {match.groups()}. Regex: {self.all_patterns[pattern_type].pattern}"
+                    f"IndexError extracting groups for {pattern_type}. Match groups: {match.groups()}. Regex: {self.all_patterns.get(pattern_type, 'N/A')}"  # Safer access
                 )
             except Exception as e:
                 logging.error(
