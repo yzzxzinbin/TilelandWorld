@@ -5,3 +5,5 @@
 /res
 /bin
 GetStart.md
+/devtool/__pycache__
+*.log

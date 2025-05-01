@@ -267,6 +267,49 @@ class CppSymbolScanner:
             print(f"处理文件 {file_path} 时出错: {str(e)}")
         logging.info(f"Finished scan for file: {file_path}")
 
+    def _strip_string_literals(self, line: str) -> str:
+        """
+        将字符串和字符字面量的内容替换为空格，保留引号，处理转义。
+        """
+        stripped_chars = list(line)
+        in_double_quotes = False
+        in_single_quotes = False
+        escaped = False
+
+        for i, char in enumerate(stripped_chars):
+            if escaped:
+                # 如果前一个字符是反斜杠，则当前字符被转义，重置 escaped 标志
+                escaped = False
+                if in_double_quotes or in_single_quotes:
+                    # 在字符串/字符内部，转义字符本身也替换为空格
+                    stripped_chars[i] = " "
+                continue  # 跳过转义字符的处理逻辑
+
+            if char == "\\":
+                # 遇到反斜杠，设置 escaped 标志
+                escaped = True
+                if in_double_quotes or in_single_quotes:
+                    # 在字符串/字符内部，反斜杠本身替换为空格
+                    stripped_chars[i] = " "
+                continue  # 跳过后续处理
+
+            if char == '"' and not in_single_quotes:
+                in_double_quotes = not in_double_quotes
+                continue  # 保留引号本身
+
+            if char == "'" and not in_double_quotes:
+                in_single_quotes = not in_single_quotes
+                continue  # 保留引号本身
+
+            if in_double_quotes or in_single_quotes:
+                # 如果在字符串或字符字面量内部（且不是引号或转义符），替换为空格
+                stripped_chars[i] = " "
+
+        result = "".join(stripped_chars)
+        if result != line:
+            logging.debug(f"Stripped string literals: '{line}' -> '{result}'")
+        return result
+
     def _process_line(self, line: str, line_num: int, file_path: str):
         """处理单行代码，基于状态机逻辑"""
         stripped_line = line.strip()
@@ -330,14 +373,32 @@ class CppSymbolScanner:
                 elif current_state_for_match == ParserState.CLASS:
                     patterns_to_check.update(self.class_patterns)
 
-                # 使用合并内容进行模式匹配
+                # 使用移除字符串后的内容进行模式匹配
                 match_found = False
                 for pattern_type, pattern in patterns_to_check.items():
-                    match = pattern.search(combined_content)
+                    # --- 新增：仅在函数定义状态下匹配函数调用时移除字符串 ---
+                    content_to_search = combined_content  # 默认使用原始合并内容
+                    if (
+                        current_state_for_match == ParserState.FUNCTION_DEF
+                        and pattern_type == "function_call"
+                    ):
+                        content_to_search = self._strip_string_literals(
+                            combined_content
+                        )
+                        logging.debug(
+                            f"Stripped content for function call match (multiline): '{content_to_search}'"
+                        )
+                    # --- 结束新增 ---
+
+                    # 使用 content_to_search 进行搜索
+                    match = pattern.search(
+                        content_to_search
+                    )  # 修改：使用 content_to_search
                     if match:
                         logging.info(
-                            f"MATCHED in multiline content {pattern_type}: '{match.group(0)}'"
+                            f"MATCHED in multiline content {pattern_type}: '{match.group(0)}' (from {'stripped' if content_to_search != combined_content else 'original'} content)"
                         )
+                        # 传递原始 combined_content 给 _process_match
                         self._process_match(
                             pattern_type, match, line_num, file_path, combined_content
                         )
@@ -430,14 +491,19 @@ class CppSymbolScanner:
                 }
 
                 for pattern_type, pattern in relevant_patterns.items():
-                    match = pattern.search(combined_content)
+                    # --- 修改：使用原始 combined_content 进行搜索 ---
+                    # 注意：这里主要匹配定义，通常不需要移除字符串
+                    content_to_search = combined_content
+                    match = pattern.search(content_to_search)
+                    # --- 结束修改 ---
                     if match and (
                         match.group(0).rstrip().endswith("{")
                         or match.group(0).rstrip().endswith("};")
                     ):
                         logging.info(
-                            f"MATCHED COMBINED {pattern_type}: '{match.group(0)}'"
+                            f"MATCHED COMBINED {pattern_type}: '{match.group(0)}' (from original content)"
                         )
+                        # 传递原始 combined_content 给 _process_match
                         self._process_match(
                             pattern_type, match, line_num, file_path, combined_content
                         )
@@ -457,7 +523,7 @@ class CppSymbolScanner:
             else:
                 logging.debug(f"Appending to pending lines: '{stripped_line}'")
                 self.state.pending_lines.append(stripped_line)
-                processed_by_multiline = True
+                processed_by_multiline = True  # 标记为已处理，避免后续单行匹配
 
         if not processed_by_multiline:
             patterns_to_check = {}
@@ -480,9 +546,27 @@ class CppSymbolScanner:
                 patterns_to_check.update(self.class_patterns)
 
             for pattern_type, pattern in patterns_to_check.items():
-                match = pattern.search(stripped_line)
+                # --- 新增：仅在函数定义状态下匹配函数调用时移除字符串 ---
+                content_to_search = stripped_line  # 默认使用原始行内容
+                if (
+                    current_state_for_match == ParserState.FUNCTION_DEF
+                    and pattern_type == "function_call"
+                ):
+                    content_to_search = self._strip_string_literals(stripped_line)
+                    logging.debug(
+                        f"Stripped content for function call match (single): '{content_to_search}'"
+                    )
+                # --- 结束新增 ---
+
+                # 使用 content_to_search 进行搜索
+                match = pattern.search(
+                    content_to_search
+                )  # 修改：使用 content_to_search
                 if match:
-                    logging.info(f"MATCHED {pattern_type}: '{match.group(0)}'")
+                    logging.info(
+                        f"MATCHED {pattern_type}: '{match.group(0)}' (from {'stripped' if content_to_search != stripped_line else 'original'} line)"
+                    )
+                    # 传递原始 stripped_line 给 _process_match
                     self._process_match(
                         pattern_type, match, line_num, file_path, stripped_line
                     )
@@ -529,8 +613,8 @@ class CppSymbolScanner:
             and not processed_by_multiline
             and matched_pattern_type
             in ["global_function_def", "member_function_def", "out_of_class_member_def"]
-            and "{" in stripped_line
-            and "}" in stripped_line
+            and "{" in stripped_line  # Check original line for braces
+            and "}" in stripped_line  # Check original line for braces
             and stripped_line.rfind("}") > stripped_line.rfind("{")
         ):
             is_inline_func_def_this_line = True
@@ -549,9 +633,11 @@ class CppSymbolScanner:
         self, pattern_type: str, match, line_num: int, file_path: str, line_content: str
     ):
         """Helper function to process a regex match and update state."""
+        # 注意：此函数接收的是原始的 line_content，而不是移除字符串后的内容
 
         # --- Helper to calculate full name based on current state ---
         def calculate_full_name(base_name, symbol_type_for_scope, qualifier=None):
+            # ... (helper function remains unchanged) ...
             components = []
             current_namespace_stack = list(self.state.namespace_stack)
             current_class_stack = list(self.state.class_stack)
@@ -596,6 +682,7 @@ class CppSymbolScanner:
 
         # 处理匹配结果
         if pattern_type == "namespace":
+            # ... (rest of the processing logic remains unchanged) ...
             ns_name_match = match.group(1)
             ns_name = ns_name_match if ns_name_match else "<anonymous>"
             # 计算完整名称用于记录
@@ -687,7 +774,9 @@ class CppSymbolScanner:
         elif pattern_type == "function_call":
             try:
                 # 检查整行的上下文，判断是否是变量声明而非函数调用
+                # 使用原始的 line_content 进行检查
                 full_match_text = match.group(0)
+                # 查找位置时也使用原始 line_content
                 start_index = line_content.find(full_match_text)
 
                 if (
@@ -706,7 +795,7 @@ class CppSymbolScanner:
                 # 后处理：检查匹配项前面的上下文，避免误匹配声明类型的情况
                 valid_match = True
 
-                # 检查前缀，判断是否是变量声明
+                # 检查前缀，判断是否是变量声明 (使用原始 line_content)
                 if start_index > 0:
                     # 获取匹配前的所有内容
                     prefix = line_content[:start_index].strip()
