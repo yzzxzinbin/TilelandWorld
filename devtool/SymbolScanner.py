@@ -312,42 +312,60 @@ class CppSymbolScanner:
 
     def _process_line(self, line: str, line_num: int, file_path: str):
         """处理单行代码，基于状态机逻辑"""
-        stripped_line = line.strip()
+        # --- 新增：移除 // 注释 ---
+        line_no_comment = line.split("//", 1)[0]
+        # --- 结束新增 ---
+
+        # --- 修改：基于移除注释后的行进行 strip ---
+        stripped_line = line_no_comment.strip()
+        # --- 结束修改 ---
+
         logging.debug(f"--- Processing Line {line_num} ({file_path}) ---")
-        logging.debug(f"Raw Stripped: '{stripped_line}'")
+        # --- 修改：记录移除注释后的行 ---
+        logging.debug(f"Original line: '{line}'")
+        logging.debug(f"Line without // comment: '{line_no_comment}'")
+        logging.debug(f"Stripped line (after // removal): '{stripped_line}'")
+        # --- 结束修改 ---
         logging.debug(
             f"State: Current={self.state.current_state}, NS={self.state.namespace_stack}, Class={self.state.class_stack}, Braces={len(self.state.brace_stack)}, Pending Lines={len(self.state.pending_lines)}"
         )
 
         if not stripped_line:
-            logging.debug("Line is empty, skipping.")
+            logging.debug(
+                "Line is empty after comment removal and stripping, skipping."
+            )
             if self.state.pending_lines:
                 logging.debug("Empty line encountered, clearing pending lines.")
                 self.state.pending_lines.clear()
             return
 
         # 如果在多行括号模式，追加当前行并检查是否完成
+        # 注意：多行括号模式下，注释移除已在上面完成，这里使用 stripped_line
         if self.state.in_multiline_paren:
-            self.state.add_to_multiline_paren(stripped_line)
+            self.state.add_to_multiline_paren(
+                stripped_line
+            )  # 使用移除注释和strip后的行
 
-            # 分析当前行以更新括号计数
+            # 分析当前行以更新括号计数 (使用 stripped_line)
             self.state.reset_line_state()
             prev_char = None
-            for char in stripped_line:
+            for char in stripped_line:  # 使用 stripped_line
                 self.state.process_character(char, prev_char)
                 prev_char = char
 
-            # 检查括号是否平衡
+            # 检查括号是否平衡 (使用 stripped_line)
             if self.state.has_balanced_parens() or stripped_line.endswith(";"):
                 # 括号平衡或遇到语句结束符，处理完整的多行内容
-                combined_content = self.state.get_multiline_paren_content()
+                combined_content = (
+                    self.state.get_multiline_paren_content()
+                )  # 获取的是已处理过的行
                 self.state.exit_multiline_paren_mode()
 
                 logging.debug(
-                    f"Processing combined multiline content: '{combined_content}'"
+                    f"Processing combined multiline content (comments removed per line): '{combined_content}'"
                 )
 
-                # 基于当前状态选择合适的模式，与非多行处理保持一致
+                # ... (后续的多行内容匹配逻辑保持不变，因为 combined_content 已处理) ...
                 patterns_to_check = {}
                 current_state_for_match = self.state.current_state
                 if current_state_for_match == ParserState.FUNCTION_DEF:
@@ -390,36 +408,34 @@ class CppSymbolScanner:
                         )
                     # --- 结束新增 ---
 
-                    # 使用 content_to_search 进行搜索
-                    match = pattern.search(
-                        content_to_search
-                    )  # 修改：使用 content_to_search
+                    match = pattern.search(content_to_search)
                     if match:
                         logging.info(
                             f"MATCHED in multiline content {pattern_type}: '{match.group(0)}' (from {'stripped' if content_to_search != combined_content else 'original'} content)"
                         )
-                        # 传递原始 combined_content 给 _process_match
+                        # 传递原始 combined_content 给 _process_match (注意：这里的 combined_content 是每行移除 // 注释后的组合)
                         self._process_match(
                             pattern_type, match, line_num, file_path, combined_content
                         )
                         match_found = True
                         break
-
                 return
             else:
                 # 括号仍未平衡，继续收集后续行
                 return
 
+        # --- 状态机处理字符 (使用 stripped_line) ---
         self.state.reset_line_state()
         self.state.start_line_tracking()  # 开始跟踪行位置
 
         prev_char = None
-        for char in stripped_line:
-            self.state.advance_position()  # 更新位置
+        for char in stripped_line:  # 使用 stripped_line
+            self.state.advance_position()
             self.state.process_character(char, prev_char)
             prev_char = char
+        # --- 结束状态机处理 ---
 
-        # 检查是否存在非行首的未闭合括号
+        # 检查是否存在非行首的未闭合括号 (使用 stripped_line)
         if (
             self.state.unclosed_paren_count > 0
             and "(" in stripped_line
@@ -428,10 +444,10 @@ class CppSymbolScanner:
             logging.debug(
                 f"Detected non-leading unclosed parentheses in line: '{stripped_line}'"
             )
-            self.state.enter_multiline_paren_mode(stripped_line)
+            self.state.enter_multiline_paren_mode(stripped_line)  # 使用 stripped_line
             return
 
-        # 检查是否在多行注释中
+        # 检查是否在多行注释中 (这部分逻辑不变，因为它处理 /* */)
         if self.state.was_in_multiline_comment_this_line:
             logging.debug(
                 "Line was part of a multi-line comment, skipping pattern/pending logic."
@@ -441,12 +457,14 @@ class CppSymbolScanner:
                 self.state.pending_lines.clear()
             return
 
+        # 检查是否适合匹配 (这部分逻辑不变)
         if not self.state.is_clean_for_matching():
             logging.debug(
                 "Not clean for matching (in comment/string), skipping pattern checks."
             )
             if self.state.pending_lines and (
-                stripped_line.endswith(";") or stripped_line.endswith("}")
+                stripped_line.endswith(";")
+                or stripped_line.endswith("}")  # 使用 stripped_line
             ):
                 logging.debug(
                     "Line ends with ';' or '}', clearing pending lines (even in comment/string)."
@@ -458,13 +476,16 @@ class CppSymbolScanner:
         processed_by_multiline = False
         matched_pattern_type = None
 
+        # 处理 pending lines (使用 stripped_line)
         if self.state.pending_lines:
-            if stripped_line.startswith("{"):
+            if stripped_line.startswith("{"):  # 使用 stripped_line
+                # 注意：pending_lines 里的内容也是之前处理过的 stripped_line
                 combined_content = (
                     " ".join(self.state.pending_lines) + " " + stripped_line
                 )
                 logging.debug(f"Attempting combined match: '{combined_content}'")
 
+                # ... (combined content 匹配逻辑不变，因为 combined_content 已处理) ...
                 definition_pattern_types = [
                     "namespace",
                     "class",
@@ -491,11 +512,9 @@ class CppSymbolScanner:
                 }
 
                 for pattern_type, pattern in relevant_patterns.items():
-                    # --- 修改：使用原始 combined_content 进行搜索 ---
                     # 注意：这里主要匹配定义，通常不需要移除字符串
                     content_to_search = combined_content
                     match = pattern.search(content_to_search)
-                    # --- 结束修改 ---
                     if match and (
                         match.group(0).rstrip().endswith("{")
                         or match.group(0).rstrip().endswith("};")
@@ -503,7 +522,7 @@ class CppSymbolScanner:
                         logging.info(
                             f"MATCHED COMBINED {pattern_type}: '{match.group(0)}' (from original content)"
                         )
-                        # 传递原始 combined_content 给 _process_match
+                        # 传递 combined_content 给 _process_match
                         self._process_match(
                             pattern_type, match, line_num, file_path, combined_content
                         )
@@ -517,17 +536,23 @@ class CppSymbolScanner:
                     logging.debug("Combined match failed, clearing pending lines.")
                     self.state.pending_lines.clear()
 
-            elif stripped_line.endswith(";") or stripped_line.endswith("}"):
+            elif stripped_line.endswith(";") or stripped_line.endswith(
+                "}"
+            ):  # 使用 stripped_line
                 logging.debug("Line ends with ';' or '}', clearing pending lines.")
                 self.state.pending_lines.clear()
             else:
-                logging.debug(f"Appending to pending lines: '{stripped_line}'")
+                logging.debug(
+                    f"Appending to pending lines: '{stripped_line}'"
+                )  # 使用 stripped_line
                 self.state.pending_lines.append(stripped_line)
                 processed_by_multiline = True  # 标记为已处理，避免后续单行匹配
 
+        # 单行匹配 (使用 stripped_line)
         if not processed_by_multiline:
             patterns_to_check = {}
             current_state_for_match = self.state.current_state
+            # ... (选择 patterns_to_check 的逻辑不变) ...
             if current_state_for_match == ParserState.FUNCTION_DEF:
                 patterns_to_check = {
                     k: v
@@ -546,22 +571,19 @@ class CppSymbolScanner:
                 patterns_to_check.update(self.class_patterns)
 
             for pattern_type, pattern in patterns_to_check.items():
-                # --- 新增：仅在函数定义状态下匹配函数调用时移除字符串 ---
-                content_to_search = stripped_line  # 默认使用原始行内容
+                content_to_search = stripped_line  # 默认使用 stripped_line
                 if (
                     current_state_for_match == ParserState.FUNCTION_DEF
                     and pattern_type == "function_call"
                 ):
-                    content_to_search = self._strip_string_literals(stripped_line)
+                    content_to_search = self._strip_string_literals(
+                        stripped_line
+                    )  # 对 stripped_line 再移除字符串
                     logging.debug(
                         f"Stripped content for function call match (single): '{content_to_search}'"
                     )
-                # --- 结束新增 ---
 
-                # 使用 content_to_search 进行搜索
-                match = pattern.search(
-                    content_to_search
-                )  # 修改：使用 content_to_search
+                match = pattern.search(content_to_search)
                 if match:
                     logging.info(
                         f"MATCHED {pattern_type}: '{match.group(0)}' (from {'stripped' if content_to_search != stripped_line else 'original'} line)"
@@ -572,6 +594,7 @@ class CppSymbolScanner:
                     )
                     match_found = True
                     matched_pattern_type = pattern_type
+                    # ... (后续逻辑不变) ...
                     if pattern_type in [
                         "namespace",
                         "class",
@@ -589,16 +612,20 @@ class CppSymbolScanner:
                             self.state.pending_lines.clear()
                     break
 
+            # 处理未匹配和 pending lines (使用 stripped_line)
             if not match_found:
                 if (
-                    not stripped_line.endswith("{")
-                    and not stripped_line.endswith(";")
+                    not stripped_line.endswith("{")  # 使用 stripped_line
+                    and not stripped_line.endswith(";")  # 使用 stripped_line
                     and not re.fullmatch(
-                        r"(public|protected|private)\s*:", stripped_line
+                        r"(public|protected|private)\s*:",
+                        stripped_line,  # 使用 stripped_line
                     )
-                    and not stripped_line.startswith("#")
+                    and not stripped_line.startswith("#")  # 使用 stripped_line
                 ):
-                    logging.debug(f"Starting pending lines: '{stripped_line}'")
+                    logging.debug(
+                        f"Starting pending lines: '{stripped_line}'"
+                    )  # 使用 stripped_line
                     self.state.pending_lines = [stripped_line]
                 else:
                     if self.state.pending_lines:
@@ -607,18 +634,21 @@ class CppSymbolScanner:
                         )
                         self.state.pending_lines.clear()
 
+        # 处理内联函数定义 (使用 stripped_line)
         is_inline_func_def_this_line = False
         if (
             match_found
             and not processed_by_multiline
             and matched_pattern_type
             in ["global_function_def", "member_function_def", "out_of_class_member_def"]
-            and "{" in stripped_line  # Check original line for braces
-            and "}" in stripped_line  # Check original line for braces
-            and stripped_line.rfind("}") > stripped_line.rfind("{")
+            and "{" in stripped_line  # Check stripped_line for braces
+            and "}" in stripped_line  # Check stripped_line for braces
+            and stripped_line.rfind("}")
+            > stripped_line.rfind("{")  # 使用 stripped_line
         ):
             is_inline_func_def_this_line = True
 
+        # ... (内联函数状态弹出逻辑不变) ...
         if (
             is_inline_func_def_this_line
             and self.state.current_state == ParserState.FUNCTION_DEF
@@ -758,8 +788,8 @@ class CppSymbolScanner:
                 )
                 parts = func_name.split("::")
                 qualifier = "::".join(parts[:-1])
-                func_name = parts[-1]
-                record_type = "member_function_def"
+                func_name = parts[-1]  # 更新 func_name 为基本名
+                record_type = "member_function_def"  # 记录类型改为成员函数
 
             # --- 修正顺序 ---
             full_func_name = calculate_full_name(
@@ -778,13 +808,17 @@ class CppSymbolScanner:
         elif pattern_type in ["union", "nested_union"]:
             # ... (union logic remains the same) ...
             union_name = match.group(1)
+            # 计算完整名称用于状态
             full_union_name = calculate_full_name(union_name, "union")
             self._record_symbol("union", union_name, line_num, file_path)
-            self.state.push_state(ParserState.CLASS, union_name)
+            self.state.push_state(ParserState.CLASS, union_name)  # 状态栈用基本名
         elif pattern_type == "function_call":
             # ... (function call logic remains the same) ...
             try:
+                # 检查整行的上下文，判断是否是变量声明而非函数调用
+                # 使用原始的 line_content 进行检查
                 full_match_text = match.group(0)
+                # 查找位置时也使用原始 line_content
                 start_index = line_content.find(full_match_text)
 
                 if start_index == -1:
@@ -793,36 +827,50 @@ class CppSymbolScanner:
                     )
                     start_index = match.start()
 
+                # 详细记录上下文信息，用于调试
                 logging.debug(
                     f"Function call match: '{full_match_text}' at position {start_index} in '{line_content}'"
                 )
 
+                # 后处理：检查匹配项前面的上下文，避免误匹配声明类型的情况
                 valid_match = True
+
+                # 检查前缀，判断是否是变量声明 (使用原始 line_content)
                 if start_index > 0:
+                    # 获取匹配前的所有内容
                     prefix = line_content[:start_index].strip()
                     logging.debug(f"Prefix before function call: '{prefix}'")
 
+                    # 特殊处理：如果前缀是return关键字，则始终视为有效函数调用
                     if prefix == "return":
                         logging.debug(
                             f"Detected 'return' keyword before function call - marking as valid function call"
                         )
                         valid_match = True
                     else:
+                        # 关键改进：检查前缀是否是单个标识符（变量类型）
+                        # 这种情况通常表示 "类型 变量名()" 的声明模式
                         if re.match(r"^[a-zA-Z_]\w*$", prefix):
                             logging.debug(
                                 f"Detected simple variable type '{prefix}' before function call, likely a variable declaration"
                             )
                             valid_match = False
+
+                        # 检查更复杂的类型声明模式
                         elif re.search(r"\b[a-zA-Z_]\w*(?:\s*[*&])?\s*$", prefix):
                             logging.debug(
                                 f"Detected complex variable type pattern in '{prefix}', likely a variable declaration"
                             )
                             valid_match = False
+
+                        # 检查是否有多个单词，最后一个可能是类型名
                         words_before = re.findall(r"\b[a-zA-Z_]\w*\b", prefix)
                         if len(words_before) >= 1:
                             logging.debug(
                                 f"Found potential type identifier '{words_before[-1]}' before function call"
                             )
+                            # 如果前缀只是单独的一个标识符，几乎肯定是变量声明
+                            # 但要排除"return"关键字的情况
                             if (
                                 len(words_before) == 1
                                 and prefix == words_before[0]
@@ -834,11 +882,14 @@ class CppSymbolScanner:
                                 valid_match = False
 
                 if valid_match:
+                    # 捕获组 1 是完整路径+函数名
                     called_func_string = match.group(1)
                     base_func_name = match.group(2) if len(match.groups()) > 1 else None
                     logging.debug(
                         f"Valid function call: '{called_func_string}', base name: '{base_func_name}'"
                     )
+
+                    # 记录函数调用
                     self._record_symbol(
                         "function_call", called_func_string, line_num, file_path
                     )
@@ -874,6 +925,7 @@ class CppSymbolScanner:
                     parameters = match.group(3).strip()
 
                     if pattern_type == "member_function_decl":
+                        # ... (constructor/destructor logic remains the same) ...
                         current_class_name = (
                             self.state.class_stack[-1]
                             if self.state.class_stack
@@ -898,6 +950,7 @@ class CppSymbolScanner:
                     kwargs = {"var_type": var_type}
 
                 if symbol_name:
+                    # 对于非函数调用，直接记录
                     self._record_symbol(
                         pattern_type, symbol_name, line_num, file_path, **kwargs
                     )
