@@ -2,54 +2,66 @@
 #include "Constants.h"
 #include "MapGenInfrastructure/FlatTerrainGenerator.h"
 #include "Utils/Logger.h" // <-- 包含 Logger
-#include <stdexcept> // For exceptions
-#include <utility> // For std::move
+#include <stdexcept>      // For exceptions
+#include <utility>        // For std::move
 
-namespace TilelandWorld {
+namespace TilelandWorld
+{
 
     // 修改构造函数实现
-    Map::Map(std::unique_ptr<TerrainGenerator> generator) {
-        if (generator) {
+    Map::Map(std::unique_ptr<TerrainGenerator> generator)
+    {
+        if (generator)
+        {
             terrainGenerator = std::move(generator);
-        } else {
+        }
+        else
+        {
             // 如果没有提供生成器，创建一个默认的（例如 FlatTerrainGenerator）
             terrainGenerator = std::make_unique<FlatTerrainGenerator>(0); // 地面高度为 0
         }
     }
 
     // --- 坐标转换实现 ---
-    ChunkCoord Map::mapToChunkCoords(int wx, int wy, int wz) {
+    ChunkCoord Map::mapToChunkCoords(int wx, int wy, int wz)
+    {
         return {
             floorDiv(wx, CHUNK_WIDTH),
             floorDiv(wy, CHUNK_HEIGHT),
-            floorDiv(wz, CHUNK_DEPTH)
-        };
+            floorDiv(wz, CHUNK_DEPTH)};
     }
 
-    void Map::mapToLocalCoords(int wx, int wy, int wz, int& lx, int& ly, int& lz) {
+    void Map::mapToLocalCoords(int wx, int wy, int wz, int &lx, int &ly, int &lz)
+    {
         lx = floorMod(wx, CHUNK_WIDTH);
         ly = floorMod(wy, CHUNK_HEIGHT);
         lz = floorMod(wz, CHUNK_DEPTH);
     }
 
     // --- 区块管理实现 ---
-    Chunk* Map::getOrLoadChunk(int cx, int cy, int cz) {
+    Chunk *Map::getOrLoadChunk(int cx, int cy, int cz)
+    {
         ChunkCoord coord = {cx, cy, cz};
         auto it = loadedChunks.find(coord);
-        if (it != loadedChunks.end()) {
+        if (it != loadedChunks.end())
+        {
             return it->second.get(); // 区块已加载，返回指针
-        } else {
+        }
+        else
+        {
             // 区块未加载，创建新区块
             auto newChunk = std::make_unique<Chunk>(cx, cy, cz);
-            Chunk* chunkPtr = newChunk.get(); // 获取原始指针
+            Chunk *chunkPtr = newChunk.get(); // 获取原始指针
 
             // *** 使用地形生成器填充新区块 ***
-            if (terrainGenerator) {
+            if (terrainGenerator)
+            {
                 terrainGenerator->generateChunk(*newChunk);
-            } else {
+            }
+            else
+            {
                 // 使用日志记录警告
-                LOG_WARNING("No terrain generator available for chunk ("
-                          + std::to_string(cx) + "," + std::to_string(cy) + "," + std::to_string(cz) + ")");
+                LOG_WARNING("No terrain generator available for chunk (" + std::to_string(cx) + "," + std::to_string(cy) + "," + std::to_string(cz) + ")");
             }
 
             loadedChunks.emplace(coord, std::move(newChunk)); // 插入新区块
@@ -57,22 +69,28 @@ namespace TilelandWorld {
         }
     }
 
-    const Chunk* Map::getChunk(int cx, int cy, int cz) const {
+    const Chunk *Map::getChunk(int cx, int cy, int cz) const
+    {
         ChunkCoord coord = {cx, cy, cz};
         auto it = loadedChunks.find(coord);
-        if (it != loadedChunks.end()) {
+        if (it != loadedChunks.end())
+        {
             return it->second.get();
-        } else {
+        }
+        else
+        {
             return nullptr; // 区块未加载
         }
     }
 
     // --- Tile 访问实现 ---
-    Tile& Map::getTile(int wx, int wy, int wz) {
+    Tile &Map::getTile(int wx, int wy, int wz)
+    {
         ChunkCoord chunkCoord = mapToChunkCoords(wx, wy, wz);
-        Chunk* chunk = getOrLoadChunk(chunkCoord.cx, chunkCoord.cy, chunkCoord.cz);
+        Chunk *chunk = getOrLoadChunk(chunkCoord.cx, chunkCoord.cy, chunkCoord.cz);
 
-        if (!chunk) {
+        if (!chunk)
+        {
             // 如果 getOrLoadChunk 返回 nullptr (未来可能发生)，则抛出异常
             throw std::runtime_error("Failed to get or load chunk for world coordinates.");
         }
@@ -82,11 +100,13 @@ namespace TilelandWorld {
         return chunk->getLocalTile(lx, ly, lz); // 可能因无效局部坐标抛出 out_of_range
     }
 
-    const Tile& Map::getTile(int wx, int wy, int wz) const {
+    const Tile &Map::getTile(int wx, int wy, int wz) const
+    {
         ChunkCoord chunkCoord = mapToChunkCoords(wx, wy, wz);
-        const Chunk* chunk = getChunk(chunkCoord.cx, chunkCoord.cy, chunkCoord.cz); // 只获取已加载的
+        const Chunk *chunk = getChunk(chunkCoord.cx, chunkCoord.cy, chunkCoord.cz); // 只获取已加载的
 
-        if (!chunk) {
+        if (!chunk)
+        {
             // 如果只读访问时区块未加载，我们不能创建它。
             // 这里可以选择：
             // 1. 抛出异常
@@ -103,16 +123,18 @@ namespace TilelandWorld {
         return chunk->getLocalTile(lx, ly, lz);
     }
 
-    void Map::setTile(int wx, int wy, int wz, const Tile& tile) {
+    void Map::setTile(int wx, int wy, int wz, const Tile &tile)
+    {
         // 获取 Tile 的可修改引用，然后赋值
         getTile(wx, wy, wz) = tile;
     }
 
-     void Map::setTileTerrain(int wx, int wy, int wz, TerrainType terrainType) {
+    void Map::setTileTerrain(int wx, int wy, int wz, TerrainType terrainType)
+    {
         // 获取 Tile 的可修改引用，然后修改其地形类型
         // 注意：这不会自动更新 Tile 的其他属性（如通行性、移动成本）
         // 可能需要一个更复杂的 Tile::setTerrain 方法来处理这个
-        Tile& targetTile = getTile(wx, wy, wz);
+        Tile &targetTile = getTile(wx, wy, wz);
         targetTile.terrain = terrainType;
         // TODO: Consider updating other tile properties based on the new terrain type
         // const auto& props = getTerrainProperties(terrainType);
@@ -121,7 +143,19 @@ namespace TilelandWorld {
         // targetTile.movementCost = props.defaultMovementCost;
         // 可以添加日志记录地形变化
         // LOG_INFO("Set terrain at (" + std::to_string(wx) + "," + std::to_string(wy) + "," + std::to_string(wz) + ") to " + std::to_string(static_cast<int>(terrainType)));
-     }
+    }
 
+    void Map::setTerrainGenerator(std::unique_ptr<TerrainGenerator> generator)
+    {
+        if (generator)
+        {
+            terrainGenerator = std::move(generator);
+            LOG_INFO("Map terrain generator updated.");
+        }
+        else
+        {
+            LOG_WARNING("Attempted to set a null terrain generator. Keeping the existing one.");
+        }
+    }
 
 } // namespace TilelandWorld

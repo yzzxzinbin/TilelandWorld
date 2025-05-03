@@ -49,6 +49,8 @@ namespace TilelandWorld {
         LoadedChunksConstIterator end() const { return loadedChunks.cend(); }
         size_t getLoadedChunkCount() const { return loadedChunks.size(); }
 
+        void setTerrainGenerator(std::unique_ptr<TerrainGenerator> generator);
+
     private:
         // 存储已加载的区块，使用区块坐标作为键，是MAP层的核心
         std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> loadedChunks;
