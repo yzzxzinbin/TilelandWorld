@@ -129,7 +129,7 @@ int main() {
 
 
     // 初始化日志记录器
-    if (!TilelandWorld::Logger::getInstance().initialize("persistence_test.log")) {
+    if (!TilelandWorld::Logger::getInstance().initialize("FNMapGenTest.log")) {
         // 如果日志初始化失败，仍然尝试运行，但打印错误到 stderr
         std::cerr << "Failed to initialize logger!" << std::endl;
         // return 1; // 或者根据需要决定是否终止

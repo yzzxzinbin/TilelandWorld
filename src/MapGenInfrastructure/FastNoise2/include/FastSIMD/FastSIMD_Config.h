@@ -18,9 +18,9 @@
 
 #define FASTSIMD_COMPILE_SSE    (FASTSIMD_x86 & false) // Not supported
 #define FASTSIMD_COMPILE_SSE2   (FASTSIMD_x86 & true )
-#define FASTSIMD_COMPILE_SSE3   (FASTSIMD_x86 & false )
-#define FASTSIMD_COMPILE_SSSE3  (FASTSIMD_x86 & false )
-#define FASTSIMD_COMPILE_SSE41  (FASTSIMD_x86 & false )
+#define FASTSIMD_COMPILE_SSE3   (FASTSIMD_x86 & false)
+#define FASTSIMD_COMPILE_SSSE3  (FASTSIMD_x86 & false)
+#define FASTSIMD_COMPILE_SSE41  (FASTSIMD_x86 & true)
 #define FASTSIMD_COMPILE_SSE42  (FASTSIMD_x86 & true )
 #define FASTSIMD_COMPILE_AVX    (FASTSIMD_x86 & false) // Not supported
 #define FASTSIMD_COMPILE_AVX2   (FASTSIMD_x86 & false )

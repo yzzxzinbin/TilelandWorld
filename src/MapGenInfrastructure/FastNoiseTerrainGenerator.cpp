@@ -56,9 +56,9 @@ namespace TilelandWorld
         {
             // --- Specify target SIMD level ---
             // *** Try forcing SSE4.1 (Level 4) ***
-            // You could also try FastSIMD::Level_SSE2 (Level 2) if SSE4.1 fails
+            // You could also try FastSIMD::Level_SSE2 (Level 4) if SSE4.1 fails
 
-            LOG_INFO("Requesting FastNoise nodes with SIMD level: SSE4.1 (4)");
+            LOG_INFO("Requesting FastNoise nodes with SIMD level: SSE4.1 (32)");
 
             // --- Create Base Noise Node ---
             FastNoise::SmartNode<> baseNoiseNode;
@@ -231,7 +231,7 @@ namespace TilelandWorld
         if (detectedLevel != expectedLevel)
         {
             // Log potentially non-fatal mismatch if constructor fallback occurred
-            LOG_WARNING("SIMD level mismatch detected at runtime! Expected SSE4.1(4), got: " + std::to_string(detectedLevel));
+            LOG_WARNING("SIMD level mismatch detected at runtime!  got: " + std::to_string(detectedLevel));
             // If the level is lower (e.g., Scalar fallback), maybe allow it?
             // If it's higher (shouldn't happen), it's an error.
             // For now, let's just log and continue, assuming the constructor handled fallbacks.
