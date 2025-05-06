@@ -42,7 +42,7 @@ void clearScreen()
 void moveCursor(int row, int col)
 {
     // ANSI escape code CSI[<row>;<col>H
-    std::cout << "\x1b[" << row << ";" << col << "H" << std::flush;
+    std::cout << "\x1b[" << row << ";" << col << "H";
 }
 
 void hideCursor()
@@ -232,12 +232,13 @@ bool displayFileInfo(const std::string &filepath)
 }
 
 // --- TUI Viewer ---
+// --- TUI Viewer ---
 void runTuiViewer(Map &map)
 {
     // 关闭IO同步以提高性能
     std::ios::sync_with_stdio(false);
     std::cout.tie(nullptr);
-    // std::cin.tie(nullptr); // cin is not used in the loop
+    std::cin.tie(nullptr); // cin is not used in the loop
 
     clearScreen();
     hideCursor();
@@ -292,6 +293,8 @@ void runTuiViewer(Map &map)
     // Variables to track key state for layer changes (prevent rapid changes)
     bool leftArrowPressedLastFrame = false;
     bool rightArrowPressedLastFrame = false;
+
+    std::stringstream frameBuffer; // Use a stringstream to build the frame
 
     while (running)
     {
@@ -365,8 +368,10 @@ void runTuiViewer(Map &map)
 
         if (needsRedraw && running)
         { // Only redraw if needed and not quitting
+            frameBuffer.str(""); // Clear the buffer for the new frame
+
             // --- Draw Layer Selector ---
-            moveCursor(layerBarRow, 1);
+            frameBuffer << "\x1b[" << layerBarRow << ";1H"; // Move cursor using escape code in buffer
             std::string layerText = "Layer (<-/->): ";
             std::stringstream ssLayers;
             int displayCount = 0;
@@ -394,15 +399,17 @@ void runTuiViewer(Map &map)
                 displayCount++;
             }
             layerText += ssLayers.str();
-            std::cout << layerText << std::string(80 - layerText.length(), ' '); // Pad
+            frameBuffer << layerText << std::string(80 - layerText.length(), ' '); // Pad
 
             // --- Draw Axes ---
+            // Y-axis
             for (int i = 0; i < viewHeight; ++i)
-            { // Y-axis
-                moveCursor(mapRowStart + i, 1);
-                std::cout << std::setw(3) << (viewY + i);
+            {
+                frameBuffer << "\x1b[" << (mapRowStart + i) << ";1H"; // Move cursor
+                frameBuffer << std::setw(3) << (viewY + i);
             }
-            moveCursor(mapRowStart - 1, mapColStart); // X-axis
+            // X-axis
+            frameBuffer << "\x1b[" << (mapRowStart - 1) << ";" << mapColStart << "H"; // Move cursor
             std::stringstream ssXAxis;
             for (int i = 0; i < viewWidth; ++i)
             {
@@ -410,12 +417,13 @@ void runTuiViewer(Map &map)
                 int xDisplay = (xCoord % 100 + 100) % 100; // Positive modulo 100
                 ssXAxis << std::setw(2) << std::setfill('0') << xDisplay;
             }
-            std::cout << ssXAxis.str() << std::setfill(' '); // Reset fill
+            frameBuffer << ssXAxis.str() << std::setfill(' ');
 
             // --- Draw Map View ---
             for (int y = 0; y < viewHeight; ++y)
             {
-                moveCursor(mapRowStart + y, mapColStart);
+                // Move cursor to the beginning of the map line *once* per line
+                frameBuffer << "\x1b[" << (mapRowStart + y) << ";" << mapColStart << "H";
                 for (int x = 0; x < viewWidth; ++x)
                 {
                     int wx = viewX + x;
@@ -425,36 +433,31 @@ void runTuiViewer(Map &map)
                     try
                     {
                         const Tile &tile = map.getTile(wx, wy, wz);
-                        std::cout << formatTileForTerminal(tile);
+                        // Append tile string directly to buffer, no individual cout
+                        frameBuffer << formatTileForTerminal(tile);
                     }
-                    catch (const std::out_of_range &oor)
-                    {
-                        std::cout << "\x1b[41mOR\x1b[0m";
-                    }
-                    catch (const std::runtime_error &rte)
-                    {
-                        std::cout << "\x1b[41mRE\x1b[0m";
-                    }
-                    catch (const std::exception &e)
-                    {
-                        std::cout << "\x1b[41mEX\x1b[0m";
-                    }
+                    catch (const std::out_of_range &oor) { frameBuffer << "\x1b[41mOR\x1b[0m"; }
+                    catch (const std::runtime_error &rte) { frameBuffer << "\x1b[41mRE\x1b[0m"; }
+                    catch (const std::exception &e) { frameBuffer << "\x1b[41mEX\x1b[0m"; }
                 }
             }
 
             // --- Draw Info ---
-            moveCursor(infoRow, 1);
+            frameBuffer << "\x1b[" << infoRow << ";1H"; // Move cursor
             std::string infoText = "Coords: (X=" + std::to_string(viewX) +
                                    ", Y=" + std::to_string(viewY) +
                                    ", Z=" + std::to_string(currentZ) +
                                    ")  |  WASD: Move, <-/->: Change Layer, Q: Quit";
-            std::cout << infoText << std::string(80 - infoText.length(), ' '); // Pad
+            frameBuffer << infoText << std::string(80 - infoText.length(), ' '); // Pad
+
+            // --- Output the entire frame buffer at once ---
+            std::cout << frameBuffer.str() << std::flush; // Single output + flush
 
             needsRedraw = false; // Redraw finished
         } // End if(needsRedraw && running)
 
         // --- Add a small delay to prevent high CPU usage and overly fast movement ---
-        Sleep(0); // ~60 updates per second max
+        // Sleep(0); // Yield CPU time, prevents 100% usage
 
     } // End while(running)
 
