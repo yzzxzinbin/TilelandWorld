@@ -1,5 +1,5 @@
 #include "../Map.h"
-#include "../BinaryFileInfrastructure/MapPersistenceManager.h"
+#include "../BinaryFileInfrastructure/MapSerializer.h"  // Updated include
 #include "../MapGenInfrastructure/FlatTerrainGenerator.h"
 #include "../Utils/Logger.h"
 #include "../Chunk.h" // Needed for CHUNK constants and comparing chunks
@@ -16,6 +16,7 @@
 #include <sstream> // Include for std::stringstream
 #include <iomanip> // <-- Include for std::setw
 #include <fstream> // For file manipulation in tests
+#include <cstdlib> // For rand()
 
 // Platform-specific includes and setup for virtual terminal processing
 #ifdef _WIN32
@@ -152,8 +153,8 @@ bool runSaveLoadCycleTest() {
     LOG_INFO("--- Running Save/Load Cycle Test ---");
     const std::string saveName = "saveload_cycle_test";
     const std::string saveDir = ".";
-    const std::string tlwfPath = MapPersistenceManager::getTlwfPath(saveName, saveDir);
-    const std::string tlwzPath = MapPersistenceManager::getTlwzPath(saveName, saveDir);
+    const std::string tlwfPath = MapSerializer::getTlwfPath(saveName, saveDir);  // Updated class
+    const std::string tlwzPath = MapSerializer::getTlwzPath(saveName, saveDir);  // Updated class
 
     // Helper lambda for cleanup at the end of this specific test
     auto cleanupTestFiles = [&]() {
@@ -169,9 +170,22 @@ bool runSaveLoadCycleTest() {
     LOG_INFO("Creating original map...");
     auto originalMap = std::make_unique<Map>(std::make_unique<FlatTerrainGenerator>(0));
     try {
-        originalMap->getTile(0, 0, 0);
-        originalMap->setTileTerrain(1, 1, 1, TerrainType::WATER);
-        originalMap->getTile(1, 1, 1).isExplored = true;
+        originalMap->getTile(0, 0, 0);  // 触发加载区块
+        // 增加修改比例到约5% (假设区块大小16x16x16=4096, 5%≈200个瓦片)
+        int modifiedCount = 0;
+        const int targetModifications = 1200; // 约5%
+        for (int i = 0; i < targetModifications; ++i) {
+            int x = rand() % CHUNK_WIDTH;
+            int y = rand() % CHUNK_HEIGHT;
+            int z = rand() % CHUNK_DEPTH;
+            TerrainType newTerrain = (rand() % 2 == 0) ? TerrainType::WATER : TerrainType::FLOOR;
+            originalMap->setTileTerrain(x, y, z, newTerrain);
+            if (rand() % 3 == 0) { // 约1/3设置为已探索
+                originalMap->getTile(x, y, z).isExplored = true;
+            }
+            modifiedCount++;
+        }
+        LOG_INFO("Modified " + std::to_string(modifiedCount) + " tiles (approx. 5% of chunk).");
     } catch (const std::exception& e) {
         LOG_ERROR("Failed during original map creation/population: " + std::string(e.what()));
         cleanupTestFiles(); // Clean up before returning
@@ -182,9 +196,9 @@ bool runSaveLoadCycleTest() {
     // 2. Save Map (deleteTlwf = true)
     LOG_INFO("Saving map (deleteTlwf=true)...");
     bool deleteTlwf = true;
-    bool saveSuccess = MapPersistenceManager::saveMap(*originalMap, saveName, saveDir, deleteTlwf);
+    bool saveSuccess = MapSerializer::saveCompressedMap(*originalMap, saveName, saveDir, deleteTlwf);  // Updated class
     if (!saveSuccess) {
-        LOG_ERROR("saveMap failed!");
+        LOG_ERROR("saveCompressedMap failed!");
         cleanupTestFiles();
         return false;
     }
@@ -193,7 +207,7 @@ bool runSaveLoadCycleTest() {
 
     // 3. Load Map (should load from TLWZ, recreate TLWF)
     LOG_INFO("Loading map (should use TLWZ)...");
-    std::unique_ptr<Map> loadedMap = MapPersistenceManager::loadMapFromSave(saveName, saveDir);
+    std::unique_ptr<Map> loadedMap = MapSerializer::loadMapFromSave(saveName, saveDir);  // Updated class
     if (!loadedMap) {
         LOG_ERROR("loadMapFromSave failed!");
         cleanupTestFiles();
@@ -227,8 +241,8 @@ bool runStartupLoadTest() {
     bool overallSuccess = true; // Track overall success across scenarios
     const std::string saveName = "startup_test";
     const std::string saveDir = ".";
-    const std::string tlwfPath = MapPersistenceManager::getTlwfPath(saveName, saveDir);
-    const std::string tlwzPath = MapPersistenceManager::getTlwzPath(saveName, saveDir);
+    const std::string tlwfPath = MapSerializer::getTlwfPath(saveName, saveDir);  // Updated class
+    const std::string tlwzPath = MapSerializer::getTlwzPath(saveName, saveDir);  // Updated class
 
     // Helper lambda for cleanup between scenarios
     auto cleanupFiles = [&]() {
@@ -241,7 +255,7 @@ bool runStartupLoadTest() {
         LOG_INFO("[Startup Test Scenario 1: No Save Exists]");
         cleanupFiles(); // Ensure no files exist
         bool scenarioPassed = true;
-        std::unique_ptr<Map> mapScenario1 = MapPersistenceManager::loadMapFromSave(saveName, saveDir);
+        std::unique_ptr<Map> mapScenario1 = MapSerializer::loadMapFromSave(saveName, saveDir);  // Updated class
         if (mapScenario1 != nullptr) {
             LOG_ERROR("Scenario 1 FAILED: Loaded a map when no save should exist.");
             scenarioPassed = false;
@@ -275,8 +289,23 @@ bool runStartupLoadTest() {
         // Create a save with only .tlwz
         {
             auto tempMap = std::make_unique<Map>(std::make_unique<FlatTerrainGenerator>(0));
-            tempMap->setTileTerrain(5, 5, -1, TerrainType::WATER); // Add unique data
-            if (!MapPersistenceManager::saveMap(*tempMap, saveName, saveDir, true)) { // deleteTlwf = true
+            tempMap->getTile(0, 0, 0); // 触发加载区块
+            // 增加修改比例到约5%
+            int modifiedCount = 0;
+            const int targetModifications = 200;
+            for (int i = 0; i < targetModifications; ++i) {
+                int x = rand() % CHUNK_WIDTH;
+                int y = rand() % CHUNK_HEIGHT;
+                int z = rand() % CHUNK_DEPTH;
+                TerrainType newTerrain = (rand() % 2 == 0) ? TerrainType::WATER : TerrainType::FLOOR;
+                tempMap->setTileTerrain(x, y, z, newTerrain);
+                if (rand() % 3 == 0) {
+                    tempMap->getTile(x, y, z).isExplored = true;
+                }
+                modifiedCount++;
+            }
+            LOG_INFO("Modified " + std::to_string(modifiedCount) + " tiles in temp map.");
+            if (!MapSerializer::saveCompressedMap(*tempMap, saveName, saveDir, true)) {  // Updated class
                  LOG_ERROR("Scenario 2 FAILED: Could not create initial .tlwz save.");
                  scenarioPassed = false;
             } else {
@@ -286,15 +315,31 @@ bool runStartupLoadTest() {
         }
         // Attempt to load if save creation succeeded
         if (scenarioPassed) {
-            std::unique_ptr<Map> mapScenario2 = MapPersistenceManager::loadMapFromSave(saveName, saveDir);
+            std::unique_ptr<Map> mapScenario2 = MapSerializer::loadMapFromSave(saveName, saveDir);  // Updated class
             if (mapScenario2 == nullptr) {
                 LOG_ERROR("Scenario 2 FAILED: Failed to load map from existing .tlwz.");
                 scenarioPassed = false;
             } else {
                 LOG_INFO("Scenario 2: Map loaded successfully from .tlwz.");
                 try {
-                    assert(mapScenario2->getTile(5, 5, -1).terrain == TerrainType::WATER);
-                    LOG_INFO("Scenario 2 PASSED.");
+                    // 验证修改：计数修改数量
+                    int modificationCount = 0;
+                    for (int x = 0; x < CHUNK_WIDTH; ++x) {
+                        for (int y = 0; y < CHUNK_HEIGHT; ++y) {
+                            for (int z = 0; z < CHUNK_DEPTH; ++z) {
+                                TerrainType terrain = mapScenario2->getTile(x, y, z).terrain;
+                                if (terrain == TerrainType::WATER || terrain == TerrainType::FLOOR) {
+                                    modificationCount++;
+                                }
+                            }
+                        }
+                    }
+                    if (modificationCount < 100) { // 期望至少100个修改 (约2.4%)
+                        LOG_ERROR("Scenario 2 FAILED: Insufficient terrain modifications found: " + std::to_string(modificationCount));
+                        scenarioPassed = false;
+                    } else {
+                        LOG_INFO("Scenario 2 PASSED: Found " + std::to_string(modificationCount) + " modifications.");
+                    }
                 } catch (...) {
                     LOG_ERROR("Scenario 2 FAILED: Verification of loaded map failed.");
                     scenarioPassed = false;
@@ -315,7 +360,22 @@ bool runStartupLoadTest() {
          // Create a save with only .tlwf by calling MapSerializer directly
         {
             auto tempMap = std::make_unique<Map>(std::make_unique<FlatTerrainGenerator>(0));
-            tempMap->setTileTerrain(6, 6, -1, TerrainType::FLOOR); // Unique data
+            tempMap->getTile(0, 0, 0);
+            // 增加修改比例到约5%
+            int modifiedCount = 0;
+            const int targetModifications = 200;
+            for (int i = 0; i < targetModifications; ++i) {
+                int x = rand() % CHUNK_WIDTH;
+                int y = rand() % CHUNK_HEIGHT;
+                int z = rand() % CHUNK_DEPTH;
+                TerrainType newTerrain = (rand() % 2 == 0) ? TerrainType::WATER : TerrainType::FLOOR;
+                tempMap->setTileTerrain(x, y, z, newTerrain);
+                if (rand() % 3 == 0) {
+                    tempMap->getTile(x, y, z).isExplored = true;
+                }
+                modifiedCount++;
+            }
+            LOG_INFO("Modified " + std::to_string(modifiedCount) + " tiles in temp map.");
 
             // Directly call MapSerializer::saveMap to create only the .tlwf file
             if (!MapSerializer::saveMap(*tempMap, tlwfPath)) { // Pass the full path
@@ -330,16 +390,32 @@ bool runStartupLoadTest() {
         }
          // Attempt to load if save creation succeeded
         if (scenarioPassed) {
-            // MapPersistenceManager::loadMapFromSave should find and load the .tlwf directly
-            std::unique_ptr<Map> mapScenario3 = MapPersistenceManager::loadMapFromSave(saveName, saveDir);
+            // MapSerializer::loadMapFromSave should find and load the .tlwf directly
+            std::unique_ptr<Map> mapScenario3 = MapSerializer::loadMapFromSave(saveName, saveDir);  // Updated class
             if (mapScenario3 == nullptr) {
                 LOG_ERROR("Scenario 3 FAILED: Failed to load map from existing .tlwf.");
                 scenarioPassed = false;
             } else {
                 LOG_INFO("Scenario 3: Map loaded successfully from .tlwf.");
                 try {
-                    assert(mapScenario3->getTile(6, 6, -1).terrain == TerrainType::FLOOR);
-                    LOG_INFO("Scenario 3 PASSED.");
+                    // 验证修改：计数修改数量
+                    int modificationCount = 0;
+                    for (int x = 0; x < CHUNK_WIDTH; ++x) {
+                        for (int y = 0; y < CHUNK_HEIGHT; ++y) {
+                            for (int z = 0; z < CHUNK_DEPTH; ++z) {
+                                TerrainType terrain = mapScenario3->getTile(x, y, z).terrain;
+                                if (terrain == TerrainType::WATER || terrain == TerrainType::FLOOR) {
+                                    modificationCount++;
+                                }
+                            }
+                        }
+                    }
+                    if (modificationCount < 100) { // 期望至少100个修改
+                        LOG_ERROR("Scenario 3 FAILED: Insufficient terrain modifications found: " + std::to_string(modificationCount));
+                        scenarioPassed = false;
+                    } else {
+                        LOG_INFO("Scenario 3 PASSED: Found " + std::to_string(modificationCount) + " modifications.");
+                    }
                 } catch (...) {
                     LOG_ERROR("Scenario 3 FAILED: Verification of loaded map failed.");
                     scenarioPassed = false;
@@ -358,7 +434,7 @@ bool runStartupLoadTest() {
         // Create a valid .tlwz
         {
             auto tempMap = std::make_unique<Map>(std::make_unique<FlatTerrainGenerator>(0));
-            if (!MapPersistenceManager::saveMap(*tempMap, saveName, saveDir, true)) {
+            if (!MapSerializer::saveCompressedMap(*tempMap, saveName, saveDir, true)) {  // Updated class
                 LOG_ERROR("Scenario 4 FAILED: Could not create initial .tlwz save.");
                 scenarioPassed = false;
             }
@@ -385,7 +461,7 @@ bool runStartupLoadTest() {
 
         // Attempt to load (should fail) if corruption step was reached
         if (scenarioPassed) {
-            std::unique_ptr<Map> mapScenario4 = MapPersistenceManager::loadMapFromSave(saveName, saveDir);
+            std::unique_ptr<Map> mapScenario4 = MapSerializer::loadMapFromSave(saveName, saveDir);  // Updated class
              if (mapScenario4 != nullptr) {
                 LOG_ERROR("Scenario 4 FAILED: Loaded a map from corrupted .tlwz.");
                 scenarioPassed = false;

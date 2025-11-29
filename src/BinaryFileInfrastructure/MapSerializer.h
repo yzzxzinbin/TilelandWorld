@@ -22,6 +22,16 @@ namespace TilelandWorld {
         // 返回 unique_ptr<Map>，如果加载失败则返回 nullptr
         static std::unique_ptr<Map> loadMap(const std::string& filepath);
 
+        // 保存压缩地图数据到 .tlwz 文件
+        static bool saveCompressedMap(const Map& map, const std::string& saveName, const std::string& directory = ".", bool deleteTlwfAfterwards = true);
+
+        // 从存档加载地图（自动处理 .tlwf 或 .tlwz）
+        static std::unique_ptr<Map> loadMapFromSave(const std::string& saveName, const std::string& directory = ".");
+
+        // 获取 .tlwf 和 .tlwz 的完整路径
+        static std::string getTlwfPath(const std::string& saveName, const std::string& directory);
+        static std::string getTlwzPath(const std::string& saveName, const std::string& directory);
+
     private:
         // 内部辅助函数
         static bool writeHeader(BinaryWriter& writer, FileHeader& header);
@@ -34,6 +44,9 @@ namespace TilelandWorld {
         // 实现索引的写入和读取
         static bool writeIndex(BinaryWriter& writer, const std::vector<ChunkIndexEntry>& index);
         static void readIndex(BinaryReader& reader, std::vector<ChunkIndexEntry>& index);
+
+        // 压缩加载辅助函数
+        static std::unique_ptr<Map> loadFromCompressedFile(const std::string& tlwzPath, const std::string& tlwfPath);
     };
 
 } // namespace TilelandWorld
