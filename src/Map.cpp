@@ -53,37 +53,53 @@ namespace TilelandWorld
         }
         else
         {
-            // 区块未加载，创建新区块
-            auto newChunk = std::make_unique<Chunk>(cx, cy, cz);
-            Chunk *chunkPtr = newChunk.get(); // 获取原始指针
-
-            // *** 使用地形生成器填充新区块 ***
-            if (terrainGenerator)
-            {
-                #ifdef _WIN32
-                LARGE_INTEGER freq, start, end;
-                QueryPerformanceFrequency(&freq);
-                QueryPerformanceCounter(&start);
-                #endif
-
-                terrainGenerator->generateChunk(*newChunk);
-
-                #ifdef _WIN32
-                QueryPerformanceCounter(&end);
-                double elapsedMs = (double)(end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart;
-                // 记录生成时间，帮助诊断卡顿
-                LOG_INFO("Generated Chunk (" + std::to_string(cx) + "," + std::to_string(cy) + "," + std::to_string(cz) + 
-                         ") in " + std::to_string(elapsedMs) + " ms.");
-                #endif
-            }
-            else
-            {
-                // 使用日志记录警告
-                LOG_WARNING("No terrain generator available for chunk (" + std::to_string(cx) + "," + std::to_string(cy) + "," + std::to_string(cz) + ")");
-            }
-
-            loadedChunks.emplace(coord, std::move(newChunk)); // 插入新区块
+            // 复用 createChunkIsolated 逻辑，但这里是在同步调用中
+            auto newChunk = createChunkIsolated(cx, cy, cz);
+            Chunk *chunkPtr = newChunk.get();
+            addChunk(std::move(newChunk));
             return chunkPtr;
+        }
+    }
+
+    // 新增：独立生成区块 (不加锁，不修改 Map 状态)
+    std::unique_ptr<Chunk> Map::createChunkIsolated(int cx, int cy, int cz) const
+    {
+        auto newChunk = std::make_unique<Chunk>(cx, cy, cz);
+
+        // *** 使用地形生成器填充新区块 ***
+        if (terrainGenerator)
+        {
+            #ifdef _WIN32
+            LARGE_INTEGER freq, start, end;
+            QueryPerformanceFrequency(&freq);
+            QueryPerformanceCounter(&start);
+            #endif
+
+            terrainGenerator->generateChunk(*newChunk);
+
+            #ifdef _WIN32
+            QueryPerformanceCounter(&end);
+            double elapsedMs = (double)(end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart;
+            // 记录生成时间
+            LOG_INFO("Generated Chunk (" + std::to_string(cx) + "," + std::to_string(cy) + "," + std::to_string(cz) + 
+                        ") in " + std::to_string(elapsedMs) + " ms.");
+            #endif
+        }
+        
+        return newChunk;
+    }
+
+    // 新增：将区块加入地图
+    void Map::addChunk(std::unique_ptr<Chunk> chunk)
+    {
+        if (!chunk) return;
+        ChunkCoord coord = {chunk->getChunkX(), chunk->getChunkY(), chunk->getChunkZ()};
+        
+        // 再次检查是否存在 (防止多线程竞争)
+        if (loadedChunks.find(coord) == loadedChunks.end()) {
+            loadedChunks.emplace(coord, std::move(chunk));
+        } else {
+            LOG_WARNING("Attempted to add existing chunk (" + std::to_string(coord.cx) + "," + std::to_string(coord.cy) + "," + std::to_string(coord.cz) + ")");
         }
     }
 

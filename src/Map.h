@@ -41,6 +41,13 @@ namespace TilelandWorld {
         void setTile(int wx, int wy, int wz, const Tile& tile);
         void setTileTerrain(int wx, int wy, int wz, TerrainType terrainType);
 
+        // --- 优化接口：分离生成与插入 ---
+        // 生成一个区块但不加入地图管理 (用于多线程/异步生成，避免长时间占用锁)
+        std::unique_ptr<Chunk> createChunkIsolated(int cx, int cy, int cz) const;
+        
+        // 将已生成的区块加入地图
+        void addChunk(std::unique_ptr<Chunk> chunk);
+
         // --- Iteration over loaded chunks ---
         // Provide const iterators to allow reading loaded chunk data without exposing the map itself.
         using LoadedChunksConstIterator = std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash>::const_iterator;

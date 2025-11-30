@@ -28,7 +28,7 @@ namespace TilelandWorld {
         // 隐藏光标
         std::cout << "\x1b[?25l" << std::flush;
         
-        // 初始预加载 (此时尚未启动渲染线程，无需加锁，可以多加载一些)
+        //初始预加载 (此时尚未启动渲染线程，无需加锁，可以多加载一些)
         {
             // 临时扩大预加载范围或循环多次以确保初始画面完整
             int minCx = floorDiv(viewX, CHUNK_WIDTH);
@@ -78,20 +78,8 @@ namespace TilelandWorld {
             }
 
             // 检查并预加载新区域
-            // 注意：preloadChunks 内部会修改 map，所以需要加锁
-            // 但为了避免长时间阻塞渲染线程，我们只在确实需要加载时才持有锁
-            // 或者在 preloadChunks 内部精细化锁的粒度。
-            // 这里为了简单安全，我们在调用 preloadChunks 时加锁。
-            {
-                // 使用 try_lock 或者直接 lock。
-                // 渲染线程只在 copyMapData 时持有锁，时间很短。
-                // 预加载可能会触发地形生成，时间较长。
-                // 如果生成时间过长，渲染线程会卡顿。
-                // 理想情况下，地形生成也应该在后台线程池中进行，这里只负责调度。
-                // 鉴于目前架构，我们直接加锁。
-                std::lock_guard<std::mutex> lock(mapMutex);
-                preloadChunks();
-            }
+            // 修改：不再在外部加锁，而是让 preloadChunks 内部进行细粒度锁管理
+            preloadChunks();
 
             // 逻辑线程休眠，避免空转占用 CPU
             #ifdef _WIN32
@@ -137,7 +125,7 @@ namespace TilelandWorld {
     }
 
     void TuiChunkController::preloadChunks() {
-        // 注意：调用此函数前必须锁定 mapMutex
+        // 优化后的预加载逻辑：细粒度锁 + 限制每帧生成数量
         
         int minCx = floorDiv(viewX, CHUNK_WIDTH);
         int maxCx = floorDiv(viewX + viewWidth, CHUNK_WIDTH);
@@ -146,21 +134,42 @@ namespace TilelandWorld {
         int cz = floorDiv(currentZ, CHUNK_DEPTH);
 
         int preloadRadius = 1;
-        int chunksLoadedThisFrame = 0;
-        const int MAX_CHUNKS_PER_FRAME = 1; // 限制每帧生成的区块数量，防止卡顿
+        int chunksGeneratedThisFrame = 0;
+        const int MAX_CHUNKS_PER_FRAME = 1; // 限制每帧生成的区块数量
 
         for (int cx = minCx - preloadRadius; cx <= maxCx + preloadRadius; ++cx) {
             for (int cy = minCy - preloadRadius; cy <= maxCy + preloadRadius; ++cy) {
                 for (int zOffset = -1; zOffset <= 1; ++zOffset) {
-                     // 检查区块是否已加载，如果未加载则加载
-                     // 使用 getChunk (const) 检查是否存在，避免 getOrLoadChunk 直接触发生成
-                     if (map.getChunk(cx, cy, cz + zOffset) == nullptr) {
-                         map.getOrLoadChunk(cx, cy, cz + zOffset);
-                         chunksLoadedThisFrame++;
-                         if (chunksLoadedThisFrame >= MAX_CHUNKS_PER_FRAME) {
-                             return; // 达到本帧限额，释放锁，让渲染线程有机会运行
-                         }
-                     }
+                    
+                    int targetCz = cz + zOffset;
+                    bool exists = false;
+
+                    // 1. 快速检查：持有锁检查区块是否存在
+                    {
+                        std::lock_guard<std::mutex> lock(mapMutex);
+                        if (map.getChunk(cx, cy, targetCz) != nullptr) {
+                            exists = true;
+                        }
+                    }
+
+                    if (exists) continue;
+
+                    // 2. 慢速生成：释放锁后生成区块 (耗时 ~6ms，此时渲染线程可以工作)
+                    auto newChunk = map.createChunkIsolated(cx, cy, targetCz);
+
+                    // 3. 快速插入：再次持有锁将区块加入地图
+                    {
+                        std::lock_guard<std::mutex> lock(mapMutex);
+                        // 双重检查，防止在生成期间已被其他线程添加 (虽然当前逻辑是单生成线程)
+                        if (map.getChunk(cx, cy, targetCz) == nullptr) {
+                            map.addChunk(std::move(newChunk));
+                        }
+                    }
+
+                    chunksGeneratedThisFrame++;
+                    if (chunksGeneratedThisFrame >= MAX_CHUNKS_PER_FRAME) {
+                        return; // 达到本帧限额，退出
+                    }
                 }
             }
         }

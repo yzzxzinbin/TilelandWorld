@@ -24,7 +24,8 @@ namespace TilelandWorld {
 
     class TuiRenderer {
     public:
-        TuiRenderer(Map& map, std::mutex& mapMutex);
+        // 修改构造函数接受 const Map&，强制只读访问
+        TuiRenderer(const Map& map, std::mutex& mapMutex);
         ~TuiRenderer();
 
         // 启动渲染线程
@@ -36,7 +37,7 @@ namespace TilelandWorld {
         void updateViewState(int x, int y, int z, int w, int h, size_t modifiedCount);
 
     private:
-        Map& map;
+        const Map& map; // 修改为 const 引用，确保调用 const 版本的 getTile
         std::mutex& mapMutex; // 引用控制器的互斥锁，用于保护 Map 读取
 
         std::thread renderThread;

@@ -13,7 +13,8 @@
 
 namespace TilelandWorld {
 
-    TuiRenderer::TuiRenderer(Map& mapRef, std::mutex& mutexRef) 
+    // 修改构造函数实现，接受 const Map&
+    TuiRenderer::TuiRenderer(const Map& mapRef, std::mutex& mutexRef) 
         : map(mapRef), mapMutex(mutexRef), running(false) {
         // 初始化默认视图状态
         currentViewState = {0, 0, 0, 64, 48, 0};
