@@ -157,7 +157,7 @@ namespace TilelandWorld {
     }
 
     // --- saveMap / loadMap 实现 ---
-    bool MapSerializer::saveMap(const Map& map, const std::string& filepath) {
+    bool MapSerializer::saveMap(const Map& map, const std::string& filepath, const std::unordered_set<ChunkCoord, ChunkCoordHash>* modifiedChunks) {
         try {
             BinaryWriter writer(filepath);
 
@@ -173,9 +173,17 @@ namespace TilelandWorld {
 
             header.dataOffset = writer.tell();
             std::vector<ChunkIndexEntry> index;
-            index.reserve(map.loadedChunks.size());
+            // 预估大小，如果过滤则可能小于 loadedChunks.size()
+            index.reserve(modifiedChunks ? modifiedChunks->size() : map.loadedChunks.size());
 
             for (const auto& pair : map.loadedChunks) {
+                // 4. "只保存修改区块"逻辑：查找修改表，跳过不需要保存的项目
+                if (modifiedChunks != nullptr) {
+                    if (modifiedChunks->find(pair.first) == modifiedChunks->end()) {
+                        continue; // 该区块未被修改，跳过保存
+                    }
+                }
+
                 const Chunk& chunk = *pair.second;
                 ChunkIndexEntry entry = {};
                 entry.cx = chunk.getChunkX();

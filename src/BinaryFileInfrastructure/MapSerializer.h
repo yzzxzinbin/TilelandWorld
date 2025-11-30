@@ -10,13 +10,15 @@
 #include <string>
 #include <vector>
 #include <memory> // For std::unique_ptr
+#include <unordered_set> // For std::unordered_set
 
 namespace TilelandWorld {
 
     class MapSerializer {
     public:
         // 保存地图数据到文件
-        static bool saveMap(const Map& map, const std::string& filepath);
+        // modifiedChunks: 可选参数。如果提供，则只保存集合中存在的区块 (用于增量保存或只保存修改过的部分)。
+        static bool saveMap(const Map& map, const std::string& filepath, const std::unordered_set<ChunkCoord, ChunkCoordHash>* modifiedChunks = nullptr);
 
         // 从文件加载地图数据
         // 返回 unique_ptr<Map>，如果加载失败则返回 nullptr

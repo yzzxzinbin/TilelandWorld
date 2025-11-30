@@ -50,8 +50,7 @@ namespace TilelandWorld
         {
             LOG_INFO("  Fractal Modifier: None");
         }
-
-        const FastSIMD::eLevel targetLevel = FastSIMD::Level_SSE42;
+        
         try
         {
             // --- Specify target SIMD level ---
@@ -227,8 +226,7 @@ namespace TilelandWorld
         FastSIMD::eLevel detectedLevel = noiseSource->GetSIMDLevel();
         LOG_INFO("Runtime SIMD level: " + std::to_string(detectedLevel));
         // *** Check against the requested SSE4.1 level ***
-        const FastSIMD::eLevel expectedLevel = FastSIMD::Level_SSE42;
-        if (detectedLevel != expectedLevel)
+        if (detectedLevel != targetLevel)
         {
             // Log potentially non-fatal mismatch if constructor fallback occurred
             LOG_WARNING("SIMD level mismatch detected at runtime!  got: " + std::to_string(detectedLevel));

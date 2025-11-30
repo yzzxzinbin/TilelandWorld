@@ -55,6 +55,7 @@ namespace TilelandWorld {
     private:
         int seed;
         float frequency;
+        const FastSIMD::eLevel targetLevel = FastSIMD::Level_SSE41;
         // 可以添加更多配置参数，如阈值等
 
         // FastNoise 节点智能指针

@@ -5,6 +5,10 @@
 #include <stdexcept>      // For exceptions
 #include <utility>        // For std::move
 
+#ifdef _WIN32
+#include <windows.h> // For QueryPerformanceCounter
+#endif
+
 namespace TilelandWorld
 {
 
@@ -56,7 +60,21 @@ namespace TilelandWorld
             // *** 使用地形生成器填充新区块 ***
             if (terrainGenerator)
             {
+                #ifdef _WIN32
+                LARGE_INTEGER freq, start, end;
+                QueryPerformanceFrequency(&freq);
+                QueryPerformanceCounter(&start);
+                #endif
+
                 terrainGenerator->generateChunk(*newChunk);
+
+                #ifdef _WIN32
+                QueryPerformanceCounter(&end);
+                double elapsedMs = (double)(end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart;
+                // 记录生成时间，帮助诊断卡顿
+                LOG_INFO("Generated Chunk (" + std::to_string(cx) + "," + std::to_string(cy) + "," + std::to_string(cz) + 
+                         ") in " + std::to_string(elapsedMs) + " ms.");
+                #endif
             }
             else
             {
