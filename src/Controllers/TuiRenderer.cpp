@@ -67,7 +67,7 @@ namespace TilelandWorld {
         QueryPerformanceCounter(&nowLI);
         lastFpsTime = nowLI.QuadPart;
 
-        const int targetFPS = 480;
+        const int targetFPS = 61;
         const double targetFrameTime = 1000.0 / targetFPS; // 毫秒
         #endif
 

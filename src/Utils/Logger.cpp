@@ -25,7 +25,7 @@ namespace TilelandWorld {
         }
         initialized = true;
         // 写入一条初始化消息，但不通过 log() 函数以避免死锁
-        logFile << "[" << getCurrentTimestamp() << "] [" << levelToString(LogLevel::INFO) << "] " << "Logger initialized. Log file: " + filename << std::endl;
+        logFile << "[" << getCurrentTimestamp() << "] [" << levelToString(LogLevel::LOG_INFO) << "] " << "Logger initialized. Log file: " + filename << std::endl;
         return true;
     }
 
@@ -33,7 +33,7 @@ namespace TilelandWorld {
         std::lock_guard<std::mutex> lock(logMutex);
         if (initialized && logFile.is_open()) {
             // 写入一条关闭消息，但不通过 log() 函数以避免死锁
-            logFile << "[" << getCurrentTimestamp() << "] [" << levelToString(LogLevel::INFO) << "] " << "Logger shutting down." << std::endl;
+            logFile << "[" << getCurrentTimestamp() << "] [" << levelToString(LogLevel::LOG_INFO) << "] " << "Logger shutting down." << std::endl;
             logFile.close();
             initialized = false;
         }
@@ -50,9 +50,9 @@ namespace TilelandWorld {
 
     std::string Logger::levelToString(LogLevel level) {
         switch (level) {
-            case LogLevel::INFO:    return "INFO";
-            case LogLevel::WARNING: return "WARN"; // 使用 WARN 缩写
-            case LogLevel::ERROR:   return "ERROR";
+            case LogLevel::LOG_INFO:    return "INFO";
+            case LogLevel::LOG_WARNING: return "WARN"; // 使用 WARN 缩写
+            case LogLevel::LOG_ERROR:   return "ERROR";
             default:                return "?????";
         }
     }
@@ -68,15 +68,15 @@ namespace TilelandWorld {
     }
 
     void Logger::logInfo(const std::string& message) {
-        log(LogLevel::INFO, message);
+        log(LogLevel::LOG_INFO, message);
     }
 
     void Logger::logWarning(const std::string& message) {
-        log(LogLevel::WARNING, message);
+        log(LogLevel::LOG_WARNING, message);
     }
 
     void Logger::logError(const std::string& message) {
-        log(LogLevel::ERROR, message);
+        log(LogLevel::LOG_ERROR, message);
     }
 
 } // namespace TilelandWorld

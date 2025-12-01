@@ -11,9 +11,9 @@
 namespace TilelandWorld {
 
     enum class LogLevel {
-        INFO,
-        WARNING,
-        ERROR
+        LOG_INFO,
+        LOG_WARNING,
+        LOG_ERROR
     };
 
     class Logger {

@@ -5,11 +5,13 @@
 #include "../Map.h"
 #include "../Coordinates.h"
 #include "TuiRenderer.h" 
-#include "../MapGenInfrastructure/ChunkGeneratorPool.h" // 引入线程池
+#include "../MapGenInfrastructure/ChunkGeneratorPool.h"
+#include "../Utils/TaskSystem.h" // 引入 TaskSystem
 #include <unordered_set>
 #include <string>
 #include <mutex> 
 #include <memory>
+#include <windows.h> // 引入 QueryPerformanceCounter
 
 namespace TilelandWorld {
 
@@ -40,11 +42,10 @@ namespace TilelandWorld {
         // 追踪正在生成中的区块，避免重复请求
         std::unordered_set<ChunkCoord, ChunkCoordHash> pendingChunks;
 
-        // 渲染器实例
-        std::unique_ptr<TuiRenderer> renderer;
-        
-        // 区块生成线程池
-        std::unique_ptr<ChunkGeneratorPool> generatorPool;
+        // 核心组件
+        std::unique_ptr<TaskSystem> taskSystem; // 通用任务系统
+        std::unique_ptr<ChunkGeneratorPool> generatorPool; // 区块生成管理器
+        std::unique_ptr<TuiRenderer> renderer; // 渲染器
 
         // 视图状态
         int viewX = 0;
@@ -54,6 +55,9 @@ namespace TilelandWorld {
         int viewHeight = 48;
         bool running = true;
         
+        // TPS 控制
+        const double targetTps = 60.0;
+
         // 输入状态追踪
         bool leftArrowPressedLastFrame = false;
         bool rightArrowPressedLastFrame = false;

@@ -4,48 +4,43 @@
 
 #include "../Map.h"
 #include "../Chunk.h"
+#include "../Utils/TaskSystem.h" // 引入通用任务系统
 #include <vector>
-#include <queue>
-#include <thread>
 #include <mutex>
-#include <condition_variable>
-#include <atomic>
 #include <memory>
 
 namespace TilelandWorld {
 
+    /**
+     * @brief 区块生成任务管理器。
+     * 
+     * 它不再拥有自己的线程，而是将生成请求打包成任务提交给全局 TaskSystem。
+     * 它负责收集生成好的区块结果。
+     */
     class ChunkGeneratorPool {
     public:
-        // 构造函数：启动指定数量的工作线程 (默认: 硬件并发数 - 1)
-        ChunkGeneratorPool(const Map& map, int threadCount = -1);
-        ~ChunkGeneratorPool();
+        // 构造函数：需要传入 Map 和 TaskSystem
+        ChunkGeneratorPool(const Map& map, TaskSystem& taskSystem);
+        ~ChunkGeneratorPool() = default;
 
-        // 请求生成一个区块 (非阻塞)
+        // 请求生成一个区块 (提交到 TaskSystem)
         void requestChunk(int cx, int cy, int cz);
 
-        // 获取所有已完成的区块 (非阻塞，一次性取走所有)
+        // 获取所有已完成的区块
         std::vector<std::unique_ptr<Chunk>> getFinishedChunks();
 
-        // 获取当前待处理的请求数量 (用于调试/监控)
-        size_t getPendingCount() const;
+        // 获取当前待处理的请求数量 (注意：这里只能统计 TaskSystem 中尚未被取走的任务，比较困难，
+        // 简化为不提供或仅提供本地计数，这里暂时移除 getPendingCount 以简化，
+        // 因为实际 pending 状态由 Controller 的 pendingChunks 集合管理)
+        // size_t getPendingCount() const; 
 
     private:
-        const Map& map; // 引用 Map 以调用 createChunkIsolated
-        std::vector<std::thread> workers;
-        std::atomic<bool> running{true};
-
-        // 请求队列
-        struct Request { int cx, cy, cz; };
-        std::queue<Request> requestQueue;
-        mutable std::mutex requestMutex;
-        std::condition_variable requestCv;
+        const Map& map;
+        TaskSystem& taskSystem; // 引用全局任务系统
 
         // 完成队列
         std::vector<std::unique_ptr<Chunk>> finishedQueue;
         mutable std::mutex finishedMutex;
-
-        // 工作线程函数
-        void workerThread();
     };
 
 } // namespace TilelandWorld
