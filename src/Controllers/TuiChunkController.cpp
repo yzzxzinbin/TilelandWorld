@@ -85,6 +85,14 @@ namespace TilelandWorld {
         QueryPerformanceFrequency(&frequency);
         double pcFreq = double(frequency.QuadPart) / 1000.0; // ms
         double targetFrameTime = 1000.0 / targetTps;
+
+        // 新增：TPS 计算初始化
+        LARGE_INTEGER tpsFreqLI;
+        QueryPerformanceFrequency(&tpsFreqLI);
+        tpsFrequency = tpsFreqLI.QuadPart;
+        LARGE_INTEGER nowLI;
+        QueryPerformanceCounter(&nowLI);
+        lastTpsTime = nowLI.QuadPart;
         #endif
 
         while (running) {
@@ -112,7 +120,7 @@ namespace TilelandWorld {
 
             // 同步渲染器
             if (renderer) {
-                renderer->updateViewState(viewX, viewY, currentZ, viewWidth, viewHeight, modifiedChunks.size());
+                renderer->updateViewState(viewX, viewY, currentZ, viewWidth, viewHeight, modifiedChunks.size(), currentTps); // 传递 currentTps
             }
 
             // 请求预加载
@@ -131,6 +139,17 @@ namespace TilelandWorld {
                 if (sleepTime > 0) {
                     Sleep(sleepTime); 
                 }
+            }
+
+            // 新增：TPS 计算逻辑
+            tickCount++;
+            QueryPerformanceCounter(&nowLI);
+            long long now = nowLI.QuadPart;
+            double elapsedSeconds = (double)(now - lastTpsTime) / tpsFrequency;
+            if (elapsedSeconds >= 1.0) {
+                currentTps = tickCount / elapsedSeconds;
+                tickCount = 0;
+                lastTpsTime = now;
             }
             #else
             // 非 Windows 简单回退

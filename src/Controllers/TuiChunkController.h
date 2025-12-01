@@ -56,7 +56,13 @@ namespace TilelandWorld {
         bool running = true;
         
         // TPS 控制
-        const double targetTps = 60.0;
+        const double targetTps = 60.9;
+
+        // 新增：TPS 计算变量
+        double currentTps = 0.0;
+        int tickCount = 0;
+        long long lastTpsTime = 0;
+        long long tpsFrequency = 0;
 
         // 输入状态追踪
         bool leftArrowPressedLastFrame = false;

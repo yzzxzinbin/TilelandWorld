@@ -20,6 +20,7 @@ namespace TilelandWorld {
         int width;
         int height;
         size_t modifiedChunkCount; // 用于UI显示
+        double tps; // 新增：实时 TPS 值
     };
 
     class TuiRenderer {
@@ -34,7 +35,7 @@ namespace TilelandWorld {
         void stop();
 
         // 更新视图参数 (由逻辑线程调用)
-        void updateViewState(int x, int y, int z, int w, int h, size_t modifiedCount);
+        void updateViewState(int x, int y, int z, int w, int h, size_t modifiedCount, double tps);
 
     private:
         const Map& map; // 修改为 const 引用，确保调用 const 版本的 getTile

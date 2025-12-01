@@ -18,7 +18,7 @@ namespace TilelandWorld
         : map(mapRef), mapMutex(mutexRef), running(false)
     {
         // 初始化默认视图状态
-        currentViewState = {0, 0, 0, 64, 48, 0};
+        currentViewState = {0, 0, 0, 64, 48, 0, 0.0}; // 新增 tps 初始化为 0.0
         std::ios::sync_with_stdio(false); // 关闭同步以提高性能
 
         // 预留一定的缓存空间，避免频繁 resize
@@ -70,7 +70,7 @@ namespace TilelandWorld
         }
     }
 
-    void TuiRenderer::updateViewState(int x, int y, int z, int w, int h, size_t modifiedCount)
+    void TuiRenderer::updateViewState(int x, int y, int z, int w, int h, size_t modifiedCount, double tps)
     {
         std::lock_guard<std::mutex> lock(viewStateMutex);
         currentViewState.viewX = x;
@@ -79,6 +79,7 @@ namespace TilelandWorld
         currentViewState.width = w;
         currentViewState.height = h;
         currentViewState.modifiedChunkCount = modifiedCount;
+        currentViewState.tps = tps; // 新增：设置 TPS
     }
 
     void TuiRenderer::renderLoop()
@@ -271,6 +272,11 @@ namespace TilelandWorld
         // 简单的 float 转 string，避免 stringstream
         std::string fpsStr = std::to_string(currentFps);
         outputBuffer.append(fpsStr.substr(0, fpsStr.find('.') + 2)); // 保留一位小数
+
+        // 新增：显示 TPS
+        outputBuffer.append(" | TPS: ");
+        std::string tpsStr = std::to_string(state.tps);
+        outputBuffer.append(tpsStr.substr(0, tpsStr.find('.') + 2)); // 保留一位小数
 
         // 一次性输出到控制台，使用 write 避免格式化开销
         std::cout.write(outputBuffer.data(), outputBuffer.size());

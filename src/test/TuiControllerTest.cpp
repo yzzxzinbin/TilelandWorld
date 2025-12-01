@@ -20,11 +20,11 @@ int main() {
         // 使用 FastNoise 生成器以获得有趣的地形
         // 参数: seed, frequency, noiseType, fractalType, octaves, lacunarity, gain
         auto generator = std::make_unique<FastNoiseTerrainGenerator>(
-            12345,      // Seed
-            0.02f,      // Frequency
-            "Perlin",   // Noise Type
+            1337,      // Seed
+            0.025f,      // Frequency
+            "OpenSimplex2",   // Noise Type
             "FBm",      // Fractal Type
-            3,          // Octaves
+            5,          // Octaves
             2.0f,       // Lacunarity
             0.5f        // Gain
         );
