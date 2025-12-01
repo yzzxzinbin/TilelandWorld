@@ -11,36 +11,44 @@
 #pragma comment(lib, "winmm.lib") // 链接多媒体库以使用 timeBeginPeriod
 #endif
 
-namespace TilelandWorld {
+namespace TilelandWorld
+{
 
     // 修改构造函数实现，接受 const Map&
-    TuiRenderer::TuiRenderer(const Map& mapRef, std::mutex& mutexRef) 
-        : map(mapRef), mapMutex(mutexRef), running(false) {
+    TuiRenderer::TuiRenderer(const Map &mapRef, std::mutex &mutexRef)
+        : map(mapRef), mapMutex(mutexRef), running(false)
+    {
         // 初始化默认视图状态
         currentViewState = {0, 0, 0, 64, 48, 0};
         std::ios::sync_with_stdio(false); // 关闭同步以提高性能
-
     }
 
-    TuiRenderer::~TuiRenderer() {
+    TuiRenderer::~TuiRenderer()
+    {
         stop();
     }
 
-    void TuiRenderer::start() {
-        if (running) return;
+    void TuiRenderer::start()
+    {
+        if (running)
+            return;
         running = true;
         renderThread = std::thread(&TuiRenderer::renderLoop, this);
     }
 
-    void TuiRenderer::stop() {
-        if (!running) return;
+    void TuiRenderer::stop()
+    {
+        if (!running)
+            return;
         running = false;
-        if (renderThread.joinable()) {
+        if (renderThread.joinable())
+        {
             renderThread.join();
         }
     }
 
-    void TuiRenderer::updateViewState(int x, int y, int z, int w, int h, size_t modifiedCount) {
+    void TuiRenderer::updateViewState(int x, int y, int z, int w, int h, size_t modifiedCount)
+    {
         std::lock_guard<std::mutex> lock(viewStateMutex);
         currentViewState.viewX = x;
         currentViewState.viewY = y;
@@ -50,11 +58,13 @@ namespace TilelandWorld {
         currentViewState.modifiedChunkCount = modifiedCount;
     }
 
-    void TuiRenderer::renderLoop() {
-        // --- Windows 高精度计时器初始化 ---
-        #ifdef _WIN32
+    void TuiRenderer::renderLoop()
+    {
+// --- Windows 高精度计时器初始化 ---
+#ifdef _WIN32
         TIMECAPS tc;
-        if (timeGetDevCaps(&tc, sizeof(TIMECAPS)) == TIMERR_NOERROR) {
+        if (timeGetDevCaps(&tc, sizeof(TIMECAPS)) == TIMERR_NOERROR)
+        {
             timeBeginPeriod(tc.wPeriodMin);
         }
 
@@ -67,15 +77,20 @@ namespace TilelandWorld {
         QueryPerformanceCounter(&nowLI);
         lastFpsTime = nowLI.QuadPart;
 
-        const int targetFPS = 61;
+        const int targetFPS = 120;
         const double targetFrameTime = 1000.0 / targetFPS; // 毫秒
-        #endif
+#endif
 
-        while (running) {
-            #ifdef _WIN32
+        size_t frameNumber = 0; // 帧序号，从0开始
+
+        while (running)
+        {
+            frameNumber++; // 递增帧序号
+
+#ifdef _WIN32
             LARGE_INTEGER startTick, endTick;
             QueryPerformanceCounter(&startTick);
-            #endif
+#endif
 
             // 1. 获取当前视图状态
             ViewState state;
@@ -90,60 +105,81 @@ namespace TilelandWorld {
             // 3. 渲染输出 (耗时操作，但已不占用 Map 锁)
             drawToConsole(state);
 
-            // --- FPS Calculation ---
-            #ifdef _WIN32
+// --- FPS Calculation ---
+#ifdef _WIN32
             frameCount++;
             QueryPerformanceCounter(&nowLI);
             long long now = nowLI.QuadPart;
             double elapsedSeconds = (double)(now - lastFpsTime) / frequency;
-            if (elapsedSeconds >= 1.0) {
+            if (elapsedSeconds >= 1.0)
+            {
                 currentFps = frameCount / elapsedSeconds;
                 frameCount = 0;
                 lastFpsTime = now;
             }
-            #endif
+#endif
 
-            // 4. 帧率控制
-            #ifdef _WIN32
-            QueryPerformanceCounter(&endTick);
-            double elapsedMs = (endTick.QuadPart - startTick.QuadPart) / pcFreq;
-            
-            if (elapsedMs < targetFrameTime) {
-                DWORD sleepTime = static_cast<DWORD>(targetFrameTime - elapsedMs);
-                if (sleepTime > 0) {
-                    Sleep(sleepTime);
+// 4. 帧率控制
+#ifdef _WIN32
+            double elapsedMs = 0.0;
+            while (elapsedMs < targetFrameTime)
+            {
+                QueryPerformanceCounter(&endTick);
+                double elapsedTick = (endTick.QuadPart - startTick.QuadPart);
+                elapsedMs = (elapsedTick) / pcFreq;
+
+                if (elapsedMs < targetFrameTime)
+                {
+                    DWORD sleepTime = static_cast<DWORD>(targetFrameTime - elapsedMs);
+                    if (sleepTime > 0)
+                    {
+                        Sleep(1);
+                    }
+                }else
+                {
+                    break;
                 }
             }
-            #else
+            // 记录渲染时间日志
+            LOG_INFO("Frame " + std::to_string(frameNumber) + " render time: " + std::to_string(elapsedMs) + " ticks");
+#else
             // 非 Windows 平台的简单回退
             std::this_thread::sleep_for(std::chrono::milliseconds(33));
-            #endif
+#endif
         }
 
-        #ifdef _WIN32
-        if (timeGetDevCaps(&tc, sizeof(TIMECAPS)) == TIMERR_NOERROR) {
+#ifdef _WIN32
+        if (timeGetDevCaps(&tc, sizeof(TIMECAPS)) == TIMERR_NOERROR)
+        {
             timeEndPeriod(tc.wPeriodMin);
         }
-        #endif
+#endif
     }
 
-    void TuiRenderer::copyMapData(const ViewState& state) {
+    void TuiRenderer::copyMapData(const ViewState &state)
+    {
         size_t requiredSize = state.width * state.height;
-        if (tileBuffer.size() != requiredSize) {
+        if (tileBuffer.size() != requiredSize)
+        {
             tileBuffer.resize(requiredSize);
         }
 
         // *** 关键：锁定 Map，快速复制 ***
         std::lock_guard<std::mutex> lock(mapMutex);
-        
-        for (int y = 0; y < state.height; ++y) {
-            for (int x = 0; x < state.width; ++x) {
+
+        for (int y = 0; y < state.height; ++y)
+        {
+            for (int x = 0; x < state.width; ++x)
+            {
                 int wx = state.viewX + x;
                 int wy = state.viewY + y;
-                try {
+                try
+                {
                     // 这里我们复制 Tile 对象的值
                     tileBuffer[y * state.width + x] = map.getTile(wx, wy, state.currentZ);
-                } catch (...) {
+                }
+                catch (...)
+                {
                     // 如果越界或未加载，填充一个默认的空 Tile
                     tileBuffer[y * state.width + x] = Tile(TerrainType::VOIDBLOCK);
                 }
@@ -151,17 +187,20 @@ namespace TilelandWorld {
         }
     }
 
-    void TuiRenderer::drawToConsole(const ViewState& state) {
+    void TuiRenderer::drawToConsole(const ViewState &state)
+    {
         std::stringstream frameBuffer;
-        
+
         // 隐藏光标并重置位置
-        frameBuffer << "\x1b[?25l\x1b[H"; 
+        frameBuffer << "\x1b[?25l\x1b[H";
 
         // 绘制地图区域
-        for (int y = 0; y < state.height; ++y) {
+        for (int y = 0; y < state.height; ++y)
+        {
             frameBuffer << "\x1b[" << (y + 1) << ";1H"; // 移动光标到行首
-            for (int x = 0; x < state.width; ++x) {
-                const Tile& tile = tileBuffer[y * state.width + x];
+            for (int x = 0; x < state.width; ++x)
+            {
+                const Tile &tile = tileBuffer[y * state.width + x];
                 frameBuffer << formatTileForTerminal(tile);
             }
         }
@@ -171,22 +210,24 @@ namespace TilelandWorld {
         frameBuffer << "\x1b[K"; // 清除行
         frameBuffer << "Pos: (" << state.viewX << ", " << state.viewY << ", " << state.currentZ << ")"
                     << " | Modified: " << state.modifiedChunkCount
-                    << " | FPS: " << std::fixed << std::setprecision(1) << currentFps ;
+                    << " | FPS: " << std::fixed << std::setprecision(1) << currentFps;
 
         // 一次性输出到控制台
         std::cout << frameBuffer.str() << std::flush;
     }
 
-    std::string TuiRenderer::formatTileForTerminal(const Tile& tile) {
-        const auto& props = getTerrainProperties(tile.terrain);
-        if (!props.isVisible) return "  \x1b[0m";
-        
+    std::string TuiRenderer::formatTileForTerminal(const Tile &tile)
+    {
+        const auto &props = getTerrainProperties(tile.terrain);
+        if (!props.isVisible)
+            return "  \x1b[0m";
+
         RGBColor fg = tile.getForegroundColor();
         RGBColor bg = tile.getBackgroundColor();
-        
+
         std::string fgCode = "\x1b[38;2;" + std::to_string(fg.r) + ";" + std::to_string(fg.g) + ";" + std::to_string(fg.b) + "m";
         std::string bgCode = "\x1b[48;2;" + std::to_string(bg.r) + ";" + std::to_string(bg.g) + ";" + std::to_string(bg.b) + "m";
-        
+
         return bgCode + fgCode + props.displayChar + props.displayChar + "\x1b[0m";
     }
 
