@@ -20,10 +20,10 @@ namespace TilelandWorld
         // 初始化默认视图状态
         currentViewState = {0, 0, 0, 64, 48, 0};
         std::ios::sync_with_stdio(false); // 关闭同步以提高性能
-        
+
         // 预留一定的缓存空间，避免频繁 resize
         // 假设 TerrainType 不会超过 20 种
-        renderCache.resize(20); 
+        renderCache.resize(20);
     }
 
     TuiRenderer::~TuiRenderer()
@@ -37,11 +37,26 @@ namespace TilelandWorld
             return;
         running = true;
         renderThread = std::thread(&TuiRenderer::renderLoop, this);
+
+// 尝试提高进程优先级
+#ifdef _WIN32
+        HANDLE hProcess = GetCurrentProcess();
+        // 注意：REALTIME_PRIORITY_CLASS 极其危险，可能导致鼠标键盘无响应。
+        // 建议使用 HIGH_PRIORITY_CLASS 用于测试。
+        if (!SetPriorityClass(hProcess, HIGH_PRIORITY_CLASS))
+        {
+            DWORD err = GetLastError();
+            if (err == ERROR_ACCESS_DENIED)
+            {
+                LOG_ERROR("需要管理员权限以设置高优先级");
+            }
+        }else
+        {
+            LOG_INFO("已将进程优先级设置为 HIGH_PRIORITY_CLASS");
+        }
         
-        // 尝试提高渲染线程优先级，减少被系统其他进程抢占导致的偶发卡顿
-        #ifdef _WIN32
-        SetThreadPriority((HANDLE)renderThread.native_handle(), THREAD_PRIORITY_ABOVE_NORMAL);
-        #endif
+        // 移除此处的 SetThreadPriority，移至 renderLoop 内部
+#endif
     }
 
     void TuiRenderer::stop()
@@ -69,6 +84,18 @@ namespace TilelandWorld
     void TuiRenderer::renderLoop()
     {
 #ifdef _WIN32
+        // --- 在线程内部设置自身优先级 ---
+        // GetCurrentThread() 返回的是当前线程的伪句柄，始终有效且权限最高
+        if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST))
+        {
+            DWORD err = GetLastError();
+            LOG_ERROR("设置渲染线程优先级失败: " + std::to_string(err));
+        }
+        else
+        {
+            LOG_INFO("已在线程内部将渲染线程优先级设置为 THREAD_PRIORITY_HIGHEST");
+        }
+
         TIMECAPS tc;
         if (timeGetDevCaps(&tc, sizeof(TIMECAPS)) == TIMERR_NOERROR)
         {
@@ -88,11 +115,11 @@ namespace TilelandWorld
         const double targetFrameTime = 1000.0 / targetFPS; // 毫秒
 #endif
 
-        size_t frameNumber = 0; 
+        size_t frameNumber = 0;
 
         while (running)
         {
-            frameNumber++; 
+            frameNumber++;
 
 #ifdef _WIN32
             LARGE_INTEGER startTick, endTick;
@@ -142,14 +169,16 @@ namespace TilelandWorld
                     {
                         Sleep(0);
                     }
-                }else
+                }
+                else
                 {
                     break;
                 }
             }
             // 仅在超时严重时记录日志，避免日志刷屏影响性能
-            if (elapsedMs > targetFrameTime + 1.0) {
-                 LOG_WARNING("Frame " + std::to_string(frameNumber) + " lag: " + std::to_string(elapsedMs) + " ms");
+            if (elapsedMs > targetFrameTime + 1.0)
+            {
+                LOG_WARNING("Frame " + std::to_string(frameNumber) + " lag: " + std::to_string(elapsedMs) + " ms");
             }
 #else
             std::this_thread::sleep_for(std::chrono::milliseconds(33));
@@ -200,7 +229,8 @@ namespace TilelandWorld
         static std::string outputBuffer;
         outputBuffer.clear();
         size_t estimatedSize = state.width * state.height * 45 + 100;
-        if (outputBuffer.capacity() < estimatedSize) {
+        if (outputBuffer.capacity() < estimatedSize)
+        {
             outputBuffer.reserve(estimatedSize);
         }
 
@@ -227,7 +257,7 @@ namespace TilelandWorld
         outputBuffer.append("\x1b[");
         outputBuffer.append(std::to_string(state.height + 2));
         outputBuffer.append(";1H\x1b[K"); // 移动并清除行
-        
+
         outputBuffer.append("Pos: (");
         outputBuffer.append(std::to_string(state.viewX));
         outputBuffer.append(", ");
@@ -237,7 +267,7 @@ namespace TilelandWorld
         outputBuffer.append(") | Modified: ");
         outputBuffer.append(std::to_string(state.modifiedChunkCount));
         outputBuffer.append(" | FPS: ");
-        
+
         // 简单的 float 转 string，避免 stringstream
         std::string fpsStr = std::to_string(currentFps);
         outputBuffer.append(fpsStr.substr(0, fpsStr.find('.') + 2)); // 保留一位小数
@@ -248,21 +278,25 @@ namespace TilelandWorld
     }
 
     // 核心优化：带缓存的字符串获取
-    const std::string& TuiRenderer::getCachedTileString(const Tile& tile) {
+    const std::string &TuiRenderer::getCachedTileString(const Tile &tile)
+    {
         size_t typeIndex = static_cast<size_t>(tile.terrain);
-        
+
         // 确保第一维足够大
-        if (typeIndex >= renderCache.size()) {
+        if (typeIndex >= renderCache.size())
+        {
             renderCache.resize(typeIndex + 1);
         }
 
-        std::vector<std::string>& lightLevels = renderCache[typeIndex];
+        std::vector<std::string> &lightLevels = renderCache[typeIndex];
 
         // 如果该地形类型的缓存未初始化 (大小不为 256)，则进行初始化
-        if (lightLevels.size() != 256) {
+        if (lightLevels.size() != 256)
+        {
             lightLevels.resize(256);
             // 预计算该地形在所有光照等级下的字符串
-            for (int i = 0; i < 256; ++i) {
+            for (int i = 0; i < 256; ++i)
+            {
                 Tile tempTile = tile;
                 tempTile.lightLevel = static_cast<uint8_t>(i);
                 lightLevels[i] = generateTileString(tempTile);
@@ -290,7 +324,7 @@ namespace TilelandWorld
         res += "\x1b[38;2;";
         res += std::to_string(fg.r) + ";" + std::to_string(fg.g) + ";" + std::to_string(fg.b) + "m";
         res += props.displayChar + props.displayChar + "\x1b[0m";
-        
+
         return res;
     }
 
