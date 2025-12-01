@@ -9,7 +9,7 @@ log_file_path = r"k:\test program\TilelandWorld\build\tui_test.log"  # Assuming 
 csv_file_path = r"k:\test program\TilelandWorld\devtool\render_times.csv"
 
 # Regex pattern to match render time lines
-pattern = re.compile(r"\[INFO\] Frame (\d+) render time: (\d+\.\d+) ticks")
+pattern = re.compile(r"\[WARN\] Frame (\d+) lag: (\d+\.\d+) ms")
 
 
 def extract_render_times():

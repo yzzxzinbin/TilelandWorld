@@ -49,7 +49,11 @@ namespace TilelandWorld {
 
         // 渲染缓冲区 (本地副本)
         std::vector<Tile> tileBuffer;
-        std::vector<std::string> outputBuffer; // 字符缓冲区
+        
+        // --- 优化：渲染缓存 ---
+        // 使用 vector<vector<string>> 作为查找表
+        // 第一维是 (int)TerrainType，第二维是 LightLevel (0-255)
+        std::vector<std::vector<std::string>> renderCache;
 
         // FPS 计算相关
         double currentFps = 0.0;
@@ -63,10 +67,12 @@ namespace TilelandWorld {
         // 内部辅助
         void copyMapData(const ViewState& state);
         void drawToConsole(const ViewState& state);
-        std::string formatTileForTerminal(const Tile& tile);
         
-        // 控制台控制
-        void moveCursor(int row, int col);
+        // 优化：返回引用，避免拷贝
+        const std::string& getCachedTileString(const Tile& tile);
+        
+        // 原始的格式化逻辑，用于生成缓存
+        std::string generateTileString(const Tile& tile);
     };
 
 } // namespace TilelandWorld

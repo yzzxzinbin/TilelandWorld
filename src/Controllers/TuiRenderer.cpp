@@ -14,13 +14,16 @@
 namespace TilelandWorld
 {
 
-    // 修改构造函数实现，接受 const Map&
     TuiRenderer::TuiRenderer(const Map &mapRef, std::mutex &mutexRef)
         : map(mapRef), mapMutex(mutexRef), running(false)
     {
         // 初始化默认视图状态
         currentViewState = {0, 0, 0, 64, 48, 0};
         std::ios::sync_with_stdio(false); // 关闭同步以提高性能
+        
+        // 预留一定的缓存空间，避免频繁 resize
+        // 假设 TerrainType 不会超过 20 种
+        renderCache.resize(20); 
     }
 
     TuiRenderer::~TuiRenderer()
@@ -34,6 +37,11 @@ namespace TilelandWorld
             return;
         running = true;
         renderThread = std::thread(&TuiRenderer::renderLoop, this);
+        
+        // 尝试提高渲染线程优先级，减少被系统其他进程抢占导致的偶发卡顿
+        #ifdef _WIN32
+        SetThreadPriority((HANDLE)renderThread.native_handle(), THREAD_PRIORITY_ABOVE_NORMAL);
+        #endif
     }
 
     void TuiRenderer::stop()
@@ -60,7 +68,6 @@ namespace TilelandWorld
 
     void TuiRenderer::renderLoop()
     {
-// --- Windows 高精度计时器初始化 ---
 #ifdef _WIN32
         TIMECAPS tc;
         if (timeGetDevCaps(&tc, sizeof(TIMECAPS)) == TIMERR_NOERROR)
@@ -77,15 +84,15 @@ namespace TilelandWorld
         QueryPerformanceCounter(&nowLI);
         lastFpsTime = nowLI.QuadPart;
 
-        const int targetFPS = 120;
+        const int targetFPS = 360;
         const double targetFrameTime = 1000.0 / targetFPS; // 毫秒
 #endif
 
-        size_t frameNumber = 0; // 帧序号，从0开始
+        size_t frameNumber = 0; 
 
         while (running)
         {
-            frameNumber++; // 递增帧序号
+            frameNumber++; 
 
 #ifdef _WIN32
             LARGE_INTEGER startTick, endTick;
@@ -99,10 +106,10 @@ namespace TilelandWorld
                 state = currentViewState;
             }
 
-            // 2. 复制地图数据 (持有 Map 锁的时间应尽可能短)
+            // 2. 复制地图数据
             copyMapData(state);
 
-            // 3. 渲染输出 (耗时操作，但已不占用 Map 锁)
+            // 3. 渲染输出
             drawToConsole(state);
 
 // --- FPS Calculation ---
@@ -133,17 +140,18 @@ namespace TilelandWorld
                     DWORD sleepTime = static_cast<DWORD>(targetFrameTime - elapsedMs);
                     if (sleepTime > 0)
                     {
-                        Sleep(1);
+                        Sleep(0);
                     }
                 }else
                 {
                     break;
                 }
             }
-            // 记录渲染时间日志
-            LOG_INFO("Frame " + std::to_string(frameNumber) + " render time: " + std::to_string(elapsedMs) + " ticks");
+            // 仅在超时严重时记录日志，避免日志刷屏影响性能
+            if (elapsedMs > targetFrameTime + 1.0) {
+                 LOG_WARNING("Frame " + std::to_string(frameNumber) + " lag: " + std::to_string(elapsedMs) + " ms");
+            }
 #else
-            // 非 Windows 平台的简单回退
             std::this_thread::sleep_for(std::chrono::milliseconds(33));
 #endif
         }
@@ -175,12 +183,10 @@ namespace TilelandWorld
                 int wy = state.viewY + y;
                 try
                 {
-                    // 这里我们复制 Tile 对象的值
                     tileBuffer[y * state.width + x] = map.getTile(wx, wy, state.currentZ);
                 }
                 catch (...)
                 {
-                    // 如果越界或未加载，填充一个默认的空 Tile
                     tileBuffer[y * state.width + x] = Tile(TerrainType::VOIDBLOCK);
                 }
             }
@@ -189,34 +195,85 @@ namespace TilelandWorld
 
     void TuiRenderer::drawToConsole(const ViewState &state)
     {
-        std::stringstream frameBuffer;
+        // 优化：使用预分配的 std::string 而不是 stringstream
+        // 估算大小：每个 Tile 约 40 字节 ANSI 码 + 屏幕控制码
+        static std::string outputBuffer;
+        outputBuffer.clear();
+        size_t estimatedSize = state.width * state.height * 45 + 100;
+        if (outputBuffer.capacity() < estimatedSize) {
+            outputBuffer.reserve(estimatedSize);
+        }
 
         // 隐藏光标并重置位置
-        frameBuffer << "\x1b[?25l\x1b[H";
+        outputBuffer.append("\x1b[?25l\x1b[H");
 
         // 绘制地图区域
         for (int y = 0; y < state.height; ++y)
         {
-            frameBuffer << "\x1b[" << (y + 1) << ";1H"; // 移动光标到行首
+            // 移动光标到行首: CSI <n> ; 1 H
+            outputBuffer.append("\x1b[");
+            outputBuffer.append(std::to_string(y + 1));
+            outputBuffer.append(";1H");
+
             for (int x = 0; x < state.width; ++x)
             {
                 const Tile &tile = tileBuffer[y * state.width + x];
-                frameBuffer << formatTileForTerminal(tile);
+                // 使用缓存获取字符串，避免重复计算和分配
+                outputBuffer.append(getCachedTileString(tile));
             }
         }
 
         // 绘制信息栏
-        frameBuffer << "\x1b[" << (state.height + 2) << ";1H";
-        frameBuffer << "\x1b[K"; // 清除行
-        frameBuffer << "Pos: (" << state.viewX << ", " << state.viewY << ", " << state.currentZ << ")"
-                    << " | Modified: " << state.modifiedChunkCount
-                    << " | FPS: " << std::fixed << std::setprecision(1) << currentFps;
+        outputBuffer.append("\x1b[");
+        outputBuffer.append(std::to_string(state.height + 2));
+        outputBuffer.append(";1H\x1b[K"); // 移动并清除行
+        
+        outputBuffer.append("Pos: (");
+        outputBuffer.append(std::to_string(state.viewX));
+        outputBuffer.append(", ");
+        outputBuffer.append(std::to_string(state.viewY));
+        outputBuffer.append(", ");
+        outputBuffer.append(std::to_string(state.currentZ));
+        outputBuffer.append(") | Modified: ");
+        outputBuffer.append(std::to_string(state.modifiedChunkCount));
+        outputBuffer.append(" | FPS: ");
+        
+        // 简单的 float 转 string，避免 stringstream
+        std::string fpsStr = std::to_string(currentFps);
+        outputBuffer.append(fpsStr.substr(0, fpsStr.find('.') + 2)); // 保留一位小数
 
-        // 一次性输出到控制台
-        std::cout << frameBuffer.str() << std::flush;
+        // 一次性输出到控制台，使用 write 避免格式化开销
+        std::cout.write(outputBuffer.data(), outputBuffer.size());
+        std::cout.flush();
     }
 
-    std::string TuiRenderer::formatTileForTerminal(const Tile &tile)
+    // 核心优化：带缓存的字符串获取
+    const std::string& TuiRenderer::getCachedTileString(const Tile& tile) {
+        size_t typeIndex = static_cast<size_t>(tile.terrain);
+        
+        // 确保第一维足够大
+        if (typeIndex >= renderCache.size()) {
+            renderCache.resize(typeIndex + 1);
+        }
+
+        std::vector<std::string>& lightLevels = renderCache[typeIndex];
+
+        // 如果该地形类型的缓存未初始化 (大小不为 256)，则进行初始化
+        if (lightLevels.size() != 256) {
+            lightLevels.resize(256);
+            // 预计算该地形在所有光照等级下的字符串
+            for (int i = 0; i < 256; ++i) {
+                Tile tempTile = tile;
+                tempTile.lightLevel = static_cast<uint8_t>(i);
+                lightLevels[i] = generateTileString(tempTile);
+            }
+        }
+
+        return lightLevels[tile.lightLevel];
+    }
+
+    // 原始的生成逻辑，仅在缓存未命中时调用
+    std::string TuiRenderer::generateTileString(const Tile &tile)
     {
         const auto &props = getTerrainProperties(tile.terrain);
         if (!props.isVisible)
@@ -225,10 +282,16 @@ namespace TilelandWorld
         RGBColor fg = tile.getForegroundColor();
         RGBColor bg = tile.getBackgroundColor();
 
-        std::string fgCode = "\x1b[38;2;" + std::to_string(fg.r) + ";" + std::to_string(fg.g) + ";" + std::to_string(fg.b) + "m";
-        std::string bgCode = "\x1b[48;2;" + std::to_string(bg.r) + ";" + std::to_string(bg.g) + ";" + std::to_string(bg.b) + "m";
-
-        return bgCode + fgCode + props.displayChar + props.displayChar + "\x1b[0m";
+        // 手动拼接，虽然这里慢一点，但只执行一次
+        std::string res;
+        res.reserve(40);
+        res += "\x1b[48;2;";
+        res += std::to_string(bg.r) + ";" + std::to_string(bg.g) + ";" + std::to_string(bg.b) + "m";
+        res += "\x1b[38;2;";
+        res += std::to_string(fg.r) + ";" + std::to_string(fg.g) + ";" + std::to_string(fg.b) + "m";
+        res += props.displayChar + props.displayChar + "\x1b[0m";
+        
+        return res;
     }
 
 }
