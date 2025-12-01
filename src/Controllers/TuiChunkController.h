@@ -4,10 +4,11 @@
 
 #include "../Map.h"
 #include "../Coordinates.h"
-#include "TuiRenderer.h" // 引入渲染器
+#include "TuiRenderer.h" 
+#include "../MapGenInfrastructure/ChunkGeneratorPool.h" // 引入线程池
 #include <unordered_set>
 #include <string>
-#include <mutex> // 引入 mutex
+#include <mutex> 
 #include <memory>
 
 namespace TilelandWorld {
@@ -36,8 +37,14 @@ namespace TilelandWorld {
 
         std::unordered_set<ChunkCoord, ChunkCoordHash> modifiedChunks;
         
+        // 追踪正在生成中的区块，避免重复请求
+        std::unordered_set<ChunkCoord, ChunkCoordHash> pendingChunks;
+
         // 渲染器实例
         std::unique_ptr<TuiRenderer> renderer;
+        
+        // 区块生成线程池
+        std::unique_ptr<ChunkGeneratorPool> generatorPool;
 
         // 视图状态
         int viewX = 0;
@@ -53,7 +60,6 @@ namespace TilelandWorld {
 
         // 内部逻辑
         void handleInput();
-        // render() 已移除，由 TuiRenderer 接管
         
         // 2. 预加载逻辑
         void preloadChunks();

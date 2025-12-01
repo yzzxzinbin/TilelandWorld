@@ -12,8 +12,10 @@
 namespace TilelandWorld {
 
     TuiChunkController::TuiChunkController(Map& mapRef) : map(mapRef) {
-        // 初始化渲染器，传入 map 和 互斥锁
+        // 初始化渲染器
         renderer = std::make_unique<TuiRenderer>(map, mapMutex);
+        // 初始化生成器线程池
+        generatorPool = std::make_unique<ChunkGeneratorPool>(map);
     }
 
     TuiChunkController::~TuiChunkController() {
@@ -28,15 +30,16 @@ namespace TilelandWorld {
         // 隐藏光标
         std::cout << "\x1b[?25l" << std::flush;
         
-        //初始预加载 (此时尚未启动渲染线程，无需加锁，可以多加载一些)
+        // 初始预加载 (同步加载一小部分以避免开局空白)
         {
-            // 临时扩大预加载范围或循环多次以确保初始画面完整
             int minCx = floorDiv(viewX, CHUNK_WIDTH);
             int maxCx = floorDiv(viewX + viewWidth, CHUNK_WIDTH);
             int minCy = floorDiv(viewY, CHUNK_HEIGHT);
             int maxCy = floorDiv(viewY + viewHeight, CHUNK_HEIGHT);
             int cz = floorDiv(currentZ, CHUNK_DEPTH);
-            int preloadRadius = 1;
+            
+            // 初始同步加载半径设小一点
+            int preloadRadius = 0; 
             for (int cx = minCx - preloadRadius; cx <= maxCx + preloadRadius; ++cx) {
                 for (int cy = minCy - preloadRadius; cy <= maxCy + preloadRadius; ++cy) {
                     for (int zOffset = -1; zOffset <= 1; ++zOffset) {
@@ -72,18 +75,34 @@ namespace TilelandWorld {
         while (running) {
             handleInput();
 
-            // 将最新的视图状态同步给渲染器
+            // 1. 批量处理已生成的区块 (集中更新，减少锁竞争)
+            auto newChunks = generatorPool->getFinishedChunks();
+            if (!newChunks.empty()) {
+                std::lock_guard<std::mutex> lock(mapMutex);
+                for (auto& chunk : newChunks) {
+                    ChunkCoord coord = {chunk->getChunkX(), chunk->getChunkY(), chunk->getChunkZ()};
+                    
+                    // 从 pending 集合中移除
+                    pendingChunks.erase(coord);
+
+                    // 再次检查是否已存在 (防止极少数情况下的冲突)
+                    if (map.getChunk(coord.cx, coord.cy, coord.cz) == nullptr) {
+                        map.addChunk(std::move(chunk));
+                    }
+                }
+            }
+
+            // 2. 将最新的视图状态同步给渲染器
             if (renderer) {
                 renderer->updateViewState(viewX, viewY, currentZ, viewWidth, viewHeight, modifiedChunks.size());
             }
 
-            // 检查并预加载新区域
-            // 修改：不再在外部加锁，而是让 preloadChunks 内部进行细粒度锁管理
+            // 3. 检查并请求预加载新区域 (非阻塞)
             preloadChunks();
 
-            // 逻辑线程休眠，避免空转占用 CPU
+            // 逻辑线程休眠
             #ifdef _WIN32
-            Sleep(5); 
+            Sleep(2); 
             #endif
         }
         
@@ -125,7 +144,7 @@ namespace TilelandWorld {
     }
 
     void TuiChunkController::preloadChunks() {
-        // 优化后的预加载逻辑：细粒度锁 + 限制每帧生成数量
+        // 优化后的预加载逻辑：使用线程池异步请求
         
         int minCx = floorDiv(viewX, CHUNK_WIDTH);
         int maxCx = floorDiv(viewX + viewWidth, CHUNK_WIDTH);
@@ -133,43 +152,34 @@ namespace TilelandWorld {
         int maxCy = floorDiv(viewY + viewHeight, CHUNK_HEIGHT);
         int cz = floorDiv(currentZ, CHUNK_DEPTH);
 
-        int preloadRadius = 1;
-        int chunksGeneratedThisFrame = 0;
-        const int MAX_CHUNKS_PER_FRAME = 1; // 限制每帧生成的区块数量
+        int preloadRadius = 1; // 可以适当增加半径，因为现在是异步的
 
         for (int cx = minCx - preloadRadius; cx <= maxCx + preloadRadius; ++cx) {
             for (int cy = minCy - preloadRadius; cy <= maxCy + preloadRadius; ++cy) {
                 for (int zOffset = -1; zOffset <= 1; ++zOffset) {
                     
                     int targetCz = cz + zOffset;
-                    bool exists = false;
+                    ChunkCoord coord = {cx, cy, targetCz};
 
-                    // 1. 快速检查：持有锁检查区块是否存在
+                    // 1. 检查是否已在 pending 列表中
+                    if (pendingChunks.find(coord) != pendingChunks.end()) {
+                        continue;
+                    }
+
+                    // 2. 检查是否已加载 (需要加锁读取，但很快)
+                    bool loaded = false;
                     {
                         std::lock_guard<std::mutex> lock(mapMutex);
                         if (map.getChunk(cx, cy, targetCz) != nullptr) {
-                            exists = true;
+                            loaded = true;
                         }
                     }
 
-                    if (exists) continue;
+                    if (loaded) continue;
 
-                    // 2. 慢速生成：释放锁后生成区块 (耗时 ~6ms，此时渲染线程可以工作)
-                    auto newChunk = map.createChunkIsolated(cx, cy, targetCz);
-
-                    // 3. 快速插入：再次持有锁将区块加入地图
-                    {
-                        std::lock_guard<std::mutex> lock(mapMutex);
-                        // 双重检查，防止在生成期间已被其他线程添加 (虽然当前逻辑是单生成线程)
-                        if (map.getChunk(cx, cy, targetCz) == nullptr) {
-                            map.addChunk(std::move(newChunk));
-                        }
-                    }
-
-                    chunksGeneratedThisFrame++;
-                    if (chunksGeneratedThisFrame >= MAX_CHUNKS_PER_FRAME) {
-                        return; // 达到本帧限额，退出
-                    }
+                    // 3. 发送生成请求
+                    pendingChunks.insert(coord);
+                    generatorPool->requestChunk(cx, cy, targetCz);
                 }
             }
         }
