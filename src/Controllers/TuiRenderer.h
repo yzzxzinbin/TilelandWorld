@@ -4,11 +4,13 @@
 
 #include "../Map.h"
 #include "../Coordinates.h"
+#include "../UI/AnsiTui.h"
 #include <thread>
 #include <atomic>
 #include <mutex>
 #include <vector>
 #include <string>
+#include <memory>
 
 namespace TilelandWorld {
 
@@ -37,6 +39,12 @@ namespace TilelandWorld {
         // 更新视图参数 (由逻辑线程调用)
         void updateViewState(int x, int y, int z, int w, int h, size_t modifiedCount, double tps);
 
+        // 设置可选的 UI 覆盖层（与地图同尺寸网格），alpha 用于背景预混合 [0,1]
+        void setUiLayer(std::shared_ptr<const UI::TuiSurface> layer, double alphaBg = 0.0);
+
+        // 清除 UI 覆盖层
+        void clearUiLayer();
+
     private:
         const Map& map; // 修改为 const 引用，确保调用 const 版本的 getTile
         std::mutex& mapMutex; // 引用控制器的互斥锁，用于保护 Map 读取
@@ -47,6 +55,11 @@ namespace TilelandWorld {
         // 视图状态 (受内部互斥锁保护)
         ViewState currentViewState;
         std::mutex viewStateMutex;
+
+        // UI 覆盖层 (可选)。使用 shared_ptr 便于外部复用/更新。
+        std::shared_ptr<const UI::TuiSurface> uiLayer;
+        double uiLayerAlphaBg = 0.0; // 0 表示不混合
+        std::mutex uiMutex;
 
         // 渲染缓冲区 (本地副本)
         std::vector<Tile> tileBuffer;
@@ -67,7 +80,9 @@ namespace TilelandWorld {
 
         // 内部辅助
         void copyMapData(const ViewState& state);
-        void drawToConsole(const ViewState& state);
+        void drawToConsole(const ViewState& state, std::shared_ptr<const UI::TuiSurface> overlay, double overlayAlpha);
+        std::shared_ptr<UI::TuiSurface> buildStatsOverlay(const ViewState& state) const;
+        static RGBColor blendColor(const RGBColor& top, const RGBColor& bottom, double alpha);
         
         // 优化：返回引用，避免拷贝
         const std::string& getCachedTileString(const Tile& tile);
