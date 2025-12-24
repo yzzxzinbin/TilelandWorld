@@ -17,6 +17,7 @@ struct TuiCell {
     std::string glyph{" "};
     RGBColor fg{255, 255, 255};
     RGBColor bg{0, 0, 0};
+    bool hasBg{false}; // 标记该格子是否显式设置了背景
 };
 
 // 边框样式（使用 ASCII，兼容多数终端）

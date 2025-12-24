@@ -27,6 +27,9 @@ int main() {
         }
         LOG_INFO("Main menu accepted, continuing to map setup.");
 
+        // 清屏：从主界面进入游戏主循环时做一次 ANSI 清屏
+        std::cout << "\x1b[2J\x1b[H" << std::flush;
+
         // 2. 创建地图
         // 使用 FastNoise 生成器以获得有趣的地形
         // 参数: seed, frequency, noiseType, fractalType, octaves, lacunarity, gain

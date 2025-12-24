@@ -43,6 +43,7 @@ void TuiSurface::drawText(int x, int y, const std::string& text, const RGBColor&
                 cell->glyph.assign(1, ch);
                 cell->fg = fg;
                 cell->bg = bg;
+                cell->hasBg = true;
             }
         }
         ++cursorX;
@@ -68,6 +69,7 @@ void TuiSurface::fillRect(int x, int y, int w, int h, const RGBColor& fg, const 
             cell.glyph = glyph.empty() ? " " : glyph.substr(0, 1);
             cell.fg = fg;
             cell.bg = bg;
+            cell.hasBg = true;
         }
     }
 }

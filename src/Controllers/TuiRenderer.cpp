@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <cmath>
 #include <algorithm>
+#include <array>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -14,6 +15,36 @@
 
 namespace TilelandWorld
 {
+
+    namespace {
+        // 预计算 0-255 的字符串，避免循环内重复 std::to_string
+        const std::string& numStr(uint8_t n)
+        {
+            static std::array<std::string, 256> table{};
+            static bool initialized = false;
+            if (!initialized)
+            {
+                for (int i = 0; i < 256; ++i)
+                {
+                    table[static_cast<size_t>(i)] = std::to_string(i);
+                }
+                initialized = true;
+            }
+            return table[n];
+        }
+
+        inline bool isNonBlack(const RGBColor& c)
+        {
+            return (static_cast<int>(c.r) | static_cast<int>(c.g) | static_cast<int>(c.b)) != 0;
+        }
+
+        // 使用整数混合，避免 std::round 与浮点开销；alpha 取值 0-255
+        inline uint8_t blendComp(uint8_t top, uint8_t bottom, uint8_t alpha)
+        {
+            int a = static_cast<int>(alpha);
+            return static_cast<uint8_t>((static_cast<int>(top) * a + static_cast<int>(bottom) * (255 - a) + 127) / 255);
+        }
+    } // namespace
 
     TuiRenderer::TuiRenderer(const Map &mapRef, std::mutex &mutexRef)
         : map(mapRef), mapMutex(mutexRef), running(false)
@@ -266,10 +297,10 @@ namespace TilelandWorld
         }
 
         // 优化：使用预分配的 std::string 而不是 stringstream
-        // 估算大小：每个 Tile 约 40 字节 ANSI 码 + 屏幕控制码
+        // 估算大小：每个 Tile 约 40 字节 ANSI 码 * 2 (槽位) + 屏幕控制码
         static std::string outputBuffer;
         outputBuffer.clear();
-        size_t estimatedSize = state.width * state.height * 45 + 200;
+        size_t estimatedSize = state.width * state.height * 90 + 200;
         if (outputBuffer.capacity() < estimatedSize)
         {
             outputBuffer.reserve(estimatedSize);
@@ -277,6 +308,9 @@ namespace TilelandWorld
 
         // 隐藏光标并重置位置
         outputBuffer.append("\x1b[?25l\x1b[H");
+
+        // 预计算混合系数（0-255 定点）
+        uint8_t overlayAlphaFixed = static_cast<uint8_t>(std::clamp(overlayAlpha, 0.0, 1.0) * 255.0 + 0.5);
 
         // 绘制地图区域
         for (int y = 0; y < state.height; ++y)
@@ -290,58 +324,103 @@ namespace TilelandWorld
             {
                 const Tile &tile = tileBuffer[y * state.width + x];
 
+                // 快速路径：如果无 UI 覆盖，则直接使用缓存字符串
                 if (!useOverlay)
                 {
-                    // 保持高性能路径：直接使用缓存字符串
                     outputBuffer.append(getCachedTileString(tile));
                     continue;
                 }
 
-                // 有叠加层：逐格计算颜色与字形
-                const auto &props = getTerrainProperties(tile.terrain);
-                RGBColor fg = tile.getForegroundColor();
-                RGBColor bg = tile.getBackgroundColor();
-
-                std::string currentGlyph = props.displayChar;
-                if (currentGlyph.empty()) currentGlyph = " ";
-
-                if (x < overlayWidth && y < overlayHeight)
+                // 检测 UI 是否对该格子有实际影响（任一槽位存在字符或非黑背景）
+                bool tileHasOverlay = false;
+                const UI::TuiCell* overlayRow = nullptr;
+                if (y < overlayHeight)
                 {
-                    const UI::TuiCell &cell = overlay->data()[static_cast<size_t>(y) * overlayWidth + x];
-                    
-                    // 1. 处理字符叠加：如果 UI 层有非空格字符，则覆盖地形字符
-                    if (!cell.glyph.empty() && cell.glyph != " ")
+                    overlayRow = &overlay->data()[static_cast<size_t>(y) * overlayWidth];
+                    const UI::TuiCell &c1 = overlayRow[x * 2];
+                    const UI::TuiCell &c2 = overlayRow[x * 2 + 1];
+                    if (c1.hasBg || c2.hasBg || isNonBlack(c1.bg) || isNonBlack(c2.bg) || (!c1.glyph.empty() && c1.glyph != " ") || (!c2.glyph.empty() && c2.glyph != " "))
                     {
-                        currentGlyph = cell.glyph;
-                        fg = cell.fg; // 同时也覆盖前景色
-                    }
-                    
-                    // 2. 处理背景混合：只有当 UI 层背景不是默认黑色时才混合
-                    // 避免 UI 未绘制区域（默认黑）导致地图变暗
-                    if (cell.bg.r != 0 || cell.bg.g != 0 || cell.bg.b != 0)
-                    {
-                        bg = blendColor(cell.bg, bg, overlayAlpha);
+                        tileHasOverlay = true;
                     }
                 }
 
-                // 拼接 ANSI 颜色与双字符输出
-                outputBuffer.append("\x1b[48;2;");
-                outputBuffer.append(std::to_string(bg.r));
-                outputBuffer.push_back(';');
-                outputBuffer.append(std::to_string(bg.g));
-                outputBuffer.push_back(';');
-                outputBuffer.append(std::to_string(bg.b));
-                outputBuffer.append("m\x1b[38;2;");
-                outputBuffer.append(std::to_string(fg.r));
-                outputBuffer.push_back(';');
-                outputBuffer.append(std::to_string(fg.g));
-                outputBuffer.push_back(';');
-                outputBuffer.append(std::to_string(fg.b));
-                outputBuffer.append("m");
-                
-                // 输出两次字符以保持方块感，支持 UTF-8
-                outputBuffer.append(currentGlyph);
-                outputBuffer.append(currentGlyph);
+                if (!tileHasOverlay)
+                {
+                    // 回退到缓存路径，保持最高性能
+                    outputBuffer.append(getCachedTileString(tile));
+                    continue;
+                }
+
+                // 慢速路径：对当前格子两个槽位逐一处理
+                const auto &props = getTerrainProperties(tile.terrain);
+                RGBColor mapFg = tile.getForegroundColor();
+                RGBColor mapBg = tile.getBackgroundColor();
+                std::string mapGlyph = props.displayChar.empty() ? " " : props.displayChar;
+
+                RGBColor lastFg{0, 0, 0};
+                RGBColor lastBg{0, 0, 0};
+                bool colorSet = false;
+
+                for (int slot = 0; slot < 2; ++slot)
+                {
+                    int uiX = x * 2 + slot;
+                    RGBColor finalFg = mapFg;
+                    RGBColor finalBg = mapBg;
+                    std::string finalGlyph = mapGlyph;
+
+                    if (uiX < overlayWidth && y < overlayHeight)
+                    {
+                        const UI::TuiCell &cell = overlayRow[uiX];
+
+                        // 字符覆盖：
+                        // - 非空格字符总是覆盖
+                        // - 若 hasBg 为真，即便是空格也要遮盖地图字符（显示空白背景）
+                        if (!cell.glyph.empty() && cell.glyph != " ")
+                        {
+                            finalGlyph = cell.glyph;
+                            finalFg = cell.fg;
+                        }
+                        else if (cell.hasBg)
+                        {
+                            finalGlyph = " ";
+                            finalFg = cell.fg;
+                        }
+
+                        // 背景混合（仅当 UI 背景非黑）
+                        if ((cell.hasBg || isNonBlack(cell.bg)) && overlayAlphaFixed > 0)
+                        {
+                            finalBg = RGBColor{
+                                blendComp(cell.bg.r, mapBg.r, overlayAlphaFixed),
+                                blendComp(cell.bg.g, mapBg.g, overlayAlphaFixed),
+                                blendComp(cell.bg.b, mapBg.b, overlayAlphaFixed)
+                            };
+                        }
+                    }
+
+                    // 仅当颜色改变时才输出 ANSI 颜色序列
+                    if (!colorSet || finalFg.r != lastFg.r || finalFg.g != lastFg.g || finalFg.b != lastFg.b || finalBg.r != lastBg.r || finalBg.g != lastBg.g || finalBg.b != lastBg.b)
+                    {
+                        outputBuffer.append("\x1b[48;2;");
+                        outputBuffer.append(numStr(finalBg.r));
+                        outputBuffer.push_back(';');
+                        outputBuffer.append(numStr(finalBg.g));
+                        outputBuffer.push_back(';');
+                        outputBuffer.append(numStr(finalBg.b));
+                        outputBuffer.append("m\x1b[38;2;");
+                        outputBuffer.append(numStr(finalFg.r));
+                        outputBuffer.push_back(';');
+                        outputBuffer.append(numStr(finalFg.g));
+                        outputBuffer.push_back(';');
+                        outputBuffer.append(numStr(finalFg.b));
+                        outputBuffer.append("m");
+                        colorSet = true;
+                        lastFg = finalFg;
+                        lastBg = finalBg;
+                    }
+
+                    outputBuffer.append(finalGlyph);
+                }
                 outputBuffer.append("\x1b[0m");
             }
         }
@@ -378,19 +457,21 @@ namespace TilelandWorld
     RGBColor TuiRenderer::blendColor(const RGBColor &top, const RGBColor &bottom, double alpha)
     {
         double a = std::clamp(alpha, 0.0, 1.0);
-        auto blendComp = [a](uint8_t t, uint8_t b) {
-            return static_cast<uint8_t>(std::round(t * a + b * (1.0 - a)));
+        uint8_t af = static_cast<uint8_t>(a * 255.0 + 0.5);
+        return RGBColor{
+            blendComp(top.r, bottom.r, af),
+            blendComp(top.g, bottom.g, af),
+            blendComp(top.b, bottom.b, af)
         };
-        return RGBColor{blendComp(top.r, bottom.r), blendComp(top.g, bottom.g), blendComp(top.b, bottom.b)};
     }
 
     std::shared_ptr<UI::TuiSurface> TuiRenderer::buildStatsOverlay(const ViewState &state) const
     {
-        auto surface = std::make_shared<UI::TuiSurface>(state.width, state.height);
+        // UI 层宽度设为地图宽度的两倍，以支持单字符精度的文本显示
+        auto surface = std::make_shared<UI::TuiSurface>(state.width * 2, state.height);
         RGBColor bg{10, 60, 160};
         RGBColor fg{230, 240, 255};
         int barHeight = 1;
-        surface->fillRect(0, 0, state.width, barHeight, fg, bg, " ");
 
         std::string fpsStr = std::to_string(currentFps);
         fpsStr = fpsStr.substr(0, fpsStr.find('.') + 2);
@@ -398,6 +479,9 @@ namespace TilelandWorld
         tpsStr = tpsStr.substr(0, tpsStr.find('.') + 2);
 
         std::string text = "FPS: " + fpsStr + " | TPS: " + tpsStr + " | Modified: " + std::to_string(state.modifiedChunkCount);
+        // 仅填充与文本长度相匹配的区域，避免整行覆盖
+        int barWidth = std::min(static_cast<int>(surface->getWidth()), static_cast<int>(text.size()) + 4);
+        surface->fillRect(0, 0, barWidth, barHeight, fg, bg, " ");
         surface->drawText(1, 0, text, fg, bg);
         return surface;
     }
