@@ -2,6 +2,7 @@
 #include "../Controllers/TuiChunkController.h"
 #include "../MapGenInfrastructure/FastNoiseTerrainGenerator.h"
 #include "../Utils/Logger.h"
+#include "../UI/MainMenuScreen.h"
 #include <iostream>
 #include <memory>
 
@@ -16,6 +17,16 @@ int main() {
     LOG_INFO("Starting TUI Controller Test...");
 
     try {
+        // 0. 主菜单：在进入游戏循环前给用户一个入口
+        TilelandWorld::UI::MainMenuScreen mainMenu;
+        bool startGame = mainMenu.show();
+        if (!startGame) {
+            LOG_INFO("User exited from main menu.");
+            Logger::getInstance().shutdown();
+            return 0;
+        }
+        LOG_INFO("Main menu accepted, continuing to map setup.");
+
         // 2. 创建地图
         // 使用 FastNoise 生成器以获得有趣的地形
         // 参数: seed, frequency, noiseType, fractalType, octaves, lacunarity, gain

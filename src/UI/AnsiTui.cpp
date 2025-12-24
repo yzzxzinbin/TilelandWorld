@@ -1,0 +1,215 @@
+#include "AnsiTui.h"
+#include <algorithm>
+
+namespace TilelandWorld {
+namespace UI {
+
+namespace {
+    bool sameColor(const RGBColor& a, const RGBColor& b) {
+        return a.r == b.r && a.g == b.g && a.b == b.b;
+    }
+}
+
+TuiSurface::TuiSurface(int width_, int height_) : width(width_), height(height_) {
+    buffer.resize(std::max(1, width) * std::max(1, height));
+}
+
+void TuiSurface::resize(int newWidth, int newHeight) {
+    width = std::max(1, newWidth);
+    height = std::max(1, newHeight);
+    buffer.assign(width * height, TuiCell{});
+}
+
+bool TuiSurface::inBounds(int x, int y) const {
+    return x >= 0 && y >= 0 && x < width && y < height;
+}
+
+TuiCell* TuiSurface::at(int x, int y) {
+    if (!inBounds(x, y)) return nullptr;
+    return &buffer[static_cast<size_t>(y) * width + x];
+}
+
+void TuiSurface::clear(const RGBColor& fg, const RGBColor& bg, const std::string& glyph) {
+    fillRect(0, 0, width, height, fg, bg, glyph);
+}
+
+void TuiSurface::drawText(int x, int y, const std::string& text, const RGBColor& fg, const RGBColor& bg) {
+    if (y < 0 || y >= height) return;
+    int cursorX = x;
+    for (char ch : text) {
+        if (cursorX >= width) break;
+        if (cursorX >= 0) {
+            if (TuiCell* cell = at(cursorX, y)) {
+                cell->glyph.assign(1, ch);
+                cell->fg = fg;
+                cell->bg = bg;
+            }
+        }
+        ++cursorX;
+    }
+}
+
+void TuiSurface::drawCenteredText(int x, int y, int areaWidth, const std::string& text, const RGBColor& fg, const RGBColor& bg) {
+    int safeWidth = std::max(0, areaWidth);
+    int startX = x + std::max(0, (safeWidth - static_cast<int>(text.size())) / 2);
+    drawText(startX, y, text, fg, bg);
+}
+
+void TuiSurface::fillRect(int x, int y, int w, int h, const RGBColor& fg, const RGBColor& bg, const std::string& glyph) {
+    int startX = std::max(0, x);
+    int startY = std::max(0, y);
+    int endX = std::min(width, x + w);
+    int endY = std::min(height, y + h);
+    if (startX >= endX || startY >= endY) return;
+
+    for (int yy = startY; yy < endY; ++yy) {
+        for (int xx = startX; xx < endX; ++xx) {
+            TuiCell& cell = buffer[static_cast<size_t>(yy) * width + xx];
+            cell.glyph = glyph.empty() ? " " : glyph.substr(0, 1);
+            cell.fg = fg;
+            cell.bg = bg;
+        }
+    }
+}
+
+void TuiSurface::drawFrame(int x, int y, int w, int h, const BoxStyle& style, const RGBColor& fg, const RGBColor& bg) {
+    if (w < 2 || h < 2) return;
+    fillRect(x, y, w, h, fg, bg, " ");
+
+    // 顶部和底部
+    for (int xx = 1; xx < w - 1; ++xx) {
+        drawText(x + xx, y, std::string(1, style.horizontal), fg, bg);
+        drawText(x + xx, y + h - 1, std::string(1, style.horizontal), fg, bg);
+    }
+    // 左右
+    for (int yy = 1; yy < h - 1; ++yy) {
+        drawText(x, y + yy, std::string(1, style.vertical), fg, bg);
+        drawText(x + w - 1, y + yy, std::string(1, style.vertical), fg, bg);
+    }
+    // 角
+    drawText(x, y, std::string(1, style.topLeft), fg, bg);
+    drawText(x + w - 1, y, std::string(1, style.topRight), fg, bg);
+    drawText(x, y + h - 1, std::string(1, style.bottomLeft), fg, bg);
+    drawText(x + w - 1, y + h - 1, std::string(1, style.bottomRight), fg, bg);
+}
+
+std::string TuiPainter::buildAnsi(const TuiSurface& surface, bool hideCursor, int originX, int originY) const {
+    const auto& cells = surface.data();
+    std::string output;
+    size_t estimated = static_cast<size_t>(surface.getWidth() * surface.getHeight() * 24) + 64;
+    output.reserve(estimated);
+
+    if (hideCursor) output.append("\x1b[?25l");
+    output.append("\x1b[0m");
+
+    RGBColor currentFg{0, 0, 0};
+    RGBColor currentBg{0, 0, 0};
+    bool hasColor = false;
+
+    for (int y = 0; y < surface.getHeight(); ++y) {
+        output.append("\x1b[");
+        output.append(std::to_string(originY + y));
+        output.append(";");
+        output.append(std::to_string(originX));
+        output.append("H");
+
+        for (int x = 0; x < surface.getWidth(); ++x) {
+            const TuiCell& cell = cells[static_cast<size_t>(y) * surface.getWidth() + x];
+            if (!hasColor || !sameColor(cell.fg, currentFg) || !sameColor(cell.bg, currentBg)) {
+                output.append("\x1b[48;2;");
+                output.append(std::to_string(cell.bg.r));
+                output.push_back(';');
+                output.append(std::to_string(cell.bg.g));
+                output.push_back(';');
+                output.append(std::to_string(cell.bg.b));
+                output.append("m\x1b[38;2;");
+                output.append(std::to_string(cell.fg.r));
+                output.push_back(';');
+                output.append(std::to_string(cell.fg.g));
+                output.push_back(';');
+                output.append(std::to_string(cell.fg.b));
+                output.append("m");
+                currentFg = cell.fg;
+                currentBg = cell.bg;
+                hasColor = true;
+            }
+            output.append(cell.glyph.empty() ? " " : cell.glyph);
+        }
+    }
+
+    output.append("\x1b[0m");
+    return output;
+}
+
+void TuiPainter::present(const TuiSurface& surface, bool hideCursor, int originX, int originY, std::ostream& os) const {
+    std::string data = buildAnsi(surface, hideCursor, originX, originY);
+    os.write(data.data(), static_cast<std::streamsize>(data.size()));
+    os.flush();
+}
+
+void TuiPainter::reset(std::ostream& os) const {
+    os << "\x1b[0m\x1b[?25h" << std::flush;
+}
+
+MenuView::MenuView(std::vector<std::string> items, MenuTheme theme_) : options(std::move(items)), theme(theme_) {
+    if (options.empty()) {
+        options.push_back("Start");
+    }
+    selected = 0;
+}
+
+void MenuView::setTitle(std::string text) {
+    title = std::move(text);
+}
+
+void MenuView::setSubtitle(std::string text) {
+    subtitle = std::move(text);
+}
+
+void MenuView::moveUp() {
+    if (options.empty()) return;
+    if (selected == 0) {
+        selected = options.size() - 1;
+    } else {
+        --selected;
+    }
+}
+
+void MenuView::moveDown() {
+    if (options.empty()) return;
+    selected = (selected + 1) % options.size();
+}
+
+void MenuView::render(TuiSurface& surface, int originX, int originY, int width) {
+    int safeWidth = std::max(20, width);
+    int panelHeight = static_cast<int>(options.size()) + 8;
+    int safeHeight = std::min(surface.getHeight() - originY, panelHeight);
+    if (safeHeight < 6) return;
+
+    int x = std::max(0, originX);
+    int y = std::max(0, originY);
+
+    surface.fillRect(x, y, safeWidth, safeHeight, theme.itemFg, theme.panel, " ");
+    surface.drawFrame(x, y, safeWidth, safeHeight, frame, theme.itemFg, theme.panel);
+
+    surface.drawCenteredText(x, y + 1, safeWidth, title, theme.title, theme.panel);
+    surface.drawCenteredText(x, y + 2, safeWidth, subtitle, theme.subtitle, theme.panel);
+
+    int listStart = y + 4;
+    for (size_t i = 0; i < options.size(); ++i) {
+        bool focus = i == selected;
+        RGBColor fg = focus ? theme.focusFg : theme.itemFg;
+        RGBColor bg = focus ? theme.focusBg : theme.itemBg;
+        std::string marker = focus ? "> " : "  ";
+        surface.drawText(x + 2, listStart + static_cast<int>(i), marker + options[i], fg, bg);
+        int remaining = safeWidth - 4 - static_cast<int>(marker.size() + options[i].size());
+        if (remaining > 0) {
+            surface.fillRect(x + 2 + static_cast<int>(marker.size() + options[i].size()), listStart + static_cast<int>(i), remaining, 1, fg, bg, " ");
+        }
+    }
+
+    surface.drawCenteredText(x, y + safeHeight - 2, safeWidth, "Enter: confirm | Esc: quit", theme.hintFg, theme.panel);
+}
+
+} // namespace UI
+} // namespace TilelandWorld
