@@ -5,6 +5,7 @@
 #include "../Map.h"
 #include "../Coordinates.h"
 #include "TuiRenderer.h" 
+#include "InputController.h"
 #include "../MapGenInfrastructure/ChunkGeneratorPool.h"
 #include "../Utils/TaskSystem.h" // 引入 TaskSystem
 #include <unordered_set>
@@ -46,6 +47,7 @@ namespace TilelandWorld {
         std::unique_ptr<TaskSystem> taskSystem; // 通用任务系统
         std::unique_ptr<ChunkGeneratorPool> generatorPool; // 区块生成管理器
         std::unique_ptr<TuiRenderer> renderer; // 渲染器
+        std::unique_ptr<InputController> inputController; // 输入控制器
 
         // 视图状态
         int viewX = 0;
@@ -54,6 +56,11 @@ namespace TilelandWorld {
         int viewWidth = 64;
         int viewHeight = 48;
         bool running = true;
+
+        // 鼠标叠加层
+        std::shared_ptr<UI::TuiSurface> mouseOverlay;
+        int mouseScreenX = -1;
+        int mouseScreenY = -1;
         
         // TPS 控制
         const double targetTps = 60.9;
@@ -70,6 +77,7 @@ namespace TilelandWorld {
 
         // 内部逻辑
         void handleInput();
+        void rebuildMouseOverlay();
         
         // 2. 预加载逻辑
         void preloadChunks();
