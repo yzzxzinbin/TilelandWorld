@@ -45,6 +45,8 @@ public:
     int getWidth() const { return width; }
     int getHeight() const { return height; }
     const std::vector<TuiCell>& data() const { return buffer; }
+    // 返回可写指针，用于组合叠加层时修改单元格
+    TuiCell* editCell(int x, int y);
 
 private:
     int width;

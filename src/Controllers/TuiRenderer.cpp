@@ -187,16 +187,53 @@ namespace TilelandWorld
             // 2.1 构建叠加层（默认绘制 FPS/TPS 半透明条），允许外部覆盖
             std::shared_ptr<const UI::TuiSurface> overlay;
             double overlayAlpha = 0.0;
+            std::shared_ptr<const UI::TuiSurface> externalOverlay;
             {
                 std::lock_guard<std::mutex> lock(uiMutex);
-                overlay = uiLayer;
+                externalOverlay = uiLayer;
                 overlayAlpha = uiLayerAlphaBg;
             }
-            if (!overlay)
+            auto stats = buildStatsOverlay(state);
+            overlay = stats;
+            double statsAlpha = 0.1;
+
+            if (externalOverlay)
             {
-                auto stats = buildStatsOverlay(state);
-                overlay = stats;
-                overlayAlpha = 0.1; // 10% 背景预混合
+                // 合并：外部 UI 在上，文字优先保留，背景叠加
+                auto merged = std::make_shared<UI::TuiSurface>(*stats);
+                int w = std::min(merged->getWidth(), externalOverlay->getWidth());
+                int h = std::min(merged->getHeight(), externalOverlay->getHeight());
+                for (int y = 0; y < h; ++y)
+                {
+                    for (int x = 0; x < w; ++x)
+                    {
+                        const UI::TuiCell& top = externalOverlay->data()[static_cast<size_t>(y) * w + x];
+                        if (!top.hasBg && (top.glyph.empty() || top.glyph == " ")) continue;
+
+                        if (UI::TuiCell* dst = merged->editCell(x, y))
+                        {
+                            // 非空格字符：直接覆盖
+                            if (!top.glyph.empty() && top.glyph != " ")
+                            {
+                                dst->glyph = top.glyph;
+                                dst->fg = top.fg;
+                            }
+
+                            // 背景：始终覆盖为白背景十字，保留原文字
+                            if (top.hasBg || (!top.glyph.empty() && top.glyph != " "))
+                            {
+                                dst->bg = top.bg;
+                                dst->hasBg = true;
+                            }
+                        }
+                    }
+                }
+                overlay = merged;
+                overlayAlpha = std::max(statsAlpha, overlayAlpha);
+            }
+            else
+            {
+                overlayAlpha = statsAlpha;
             }
 
             // 3. 渲染输出

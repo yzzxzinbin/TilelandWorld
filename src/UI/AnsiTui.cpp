@@ -29,6 +29,10 @@ TuiCell* TuiSurface::at(int x, int y) {
     return &buffer[static_cast<size_t>(y) * width + x];
 }
 
+TuiCell* TuiSurface::editCell(int x, int y) {
+    return at(x, y);
+}
+
 void TuiSurface::clear(const RGBColor& fg, const RGBColor& bg, const std::string& glyph) {
     fillRect(0, 0, width, height, fg, bg, glyph);
 }
