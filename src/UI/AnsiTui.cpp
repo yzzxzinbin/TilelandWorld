@@ -80,23 +80,33 @@ void TuiSurface::fillRect(int x, int y, int w, int h, const RGBColor& fg, const 
 
 void TuiSurface::drawFrame(int x, int y, int w, int h, const BoxStyle& style, const RGBColor& fg, const RGBColor& bg) {
     if (w < 2 || h < 2) return;
+
+    auto setGlyph = [&](int px, int py, const std::string& glyph) {
+        if (TuiCell* cell = at(px, py)) {
+            cell->glyph = glyph.empty() ? " " : glyph;
+            cell->fg = fg;
+            cell->bg = bg;
+            cell->hasBg = true;
+        }
+    };
+
     fillRect(x, y, w, h, fg, bg, " ");
 
     // 顶部和底部
     for (int xx = 1; xx < w - 1; ++xx) {
-        drawText(x + xx, y, std::string(1, style.horizontal), fg, bg);
-        drawText(x + xx, y + h - 1, std::string(1, style.horizontal), fg, bg);
+        setGlyph(x + xx, y, style.horizontal);
+        setGlyph(x + xx, y + h - 1, style.horizontal);
     }
     // 左右
     for (int yy = 1; yy < h - 1; ++yy) {
-        drawText(x, y + yy, std::string(1, style.vertical), fg, bg);
-        drawText(x + w - 1, y + yy, std::string(1, style.vertical), fg, bg);
+        setGlyph(x, y + yy, style.vertical);
+        setGlyph(x + w - 1, y + yy, style.vertical);
     }
     // 角
-    drawText(x, y, std::string(1, style.topLeft), fg, bg);
-    drawText(x + w - 1, y, std::string(1, style.topRight), fg, bg);
-    drawText(x, y + h - 1, std::string(1, style.bottomLeft), fg, bg);
-    drawText(x + w - 1, y + h - 1, std::string(1, style.bottomRight), fg, bg);
+    setGlyph(x, y, style.topLeft);
+    setGlyph(x + w - 1, y, style.topRight);
+    setGlyph(x, y + h - 1, style.bottomLeft);
+    setGlyph(x + w - 1, y + h - 1, style.bottomRight);
 }
 
 std::string TuiPainter::buildAnsi(const TuiSurface& surface, bool hideCursor, int originX, int originY) const {

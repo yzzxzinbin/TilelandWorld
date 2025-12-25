@@ -20,14 +20,14 @@ struct TuiCell {
     bool hasBg{false}; // 标记该格子是否显式设置了背景
 };
 
-// 边框样式（使用 ASCII，兼容多数终端）
+// 边框样式（默认 ASCII；可使用 UTF-8 单线/双线字符）
 struct BoxStyle {
-    char topLeft{'+'};
-    char topRight{'+'};
-    char bottomLeft{'+'};
-    char bottomRight{'+'};
-    char horizontal{'-'};
-    char vertical{'|'};
+    std::string topLeft{"+"};
+    std::string topRight{"+"};
+    std::string bottomLeft{"+"};
+    std::string bottomRight{"+"};
+    std::string horizontal{"-"};
+    std::string vertical{"|"};
 };
 
 // 画布：纯 CPU 缓冲，使用转义序列输出

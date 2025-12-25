@@ -93,9 +93,9 @@ namespace TilelandWorld {
             // ESC sequences
             if (buffer[0] == '\x1b')
             {
-                if (buffer.size() < 2) return; // wait for more
+                if (buffer.size() == 1) return; // wait for possible sequence
                 if (buffer[1] != '[') {
-                    // unsupported ESC
+                    emitKey(InputKey::Escape);
                     buffer.erase(0, 1);
                     continue;
                 }
@@ -169,7 +169,7 @@ namespace TilelandWorld {
         if (mPos == std::string::npos) return false; // incomplete
 
         std::string seq = buffer.substr(3, mPos - 3); // after ESC[
-        size_t pos = 1; // skip '<'
+        size_t pos = 0; // start at b (we already skipped "<")
         int b = 0, x = 0, y = 0;
         if (!parseInt(seq, pos, b)) { buffer.erase(0, mPos + 1); return true; }
         if (pos >= seq.size() || seq[pos] != ';') { buffer.erase(0, mPos + 1); return true; }

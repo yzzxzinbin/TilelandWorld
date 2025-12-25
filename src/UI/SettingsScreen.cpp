@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <conio.h>
 #endif
+#include "DirectoryBrowserScreen.h"
 
 namespace TilelandWorld {
 namespace UI {
@@ -36,7 +37,15 @@ void SettingsScreen::buildItems() {
     items.push_back(Item{"View width", [this](int dir){ working.viewWidth = clampInt(working.viewWidth + dir * 2, 16, 200); }, [this](){ return std::to_string(working.viewWidth); }});
     items.push_back(Item{"View height", [this](int dir){ working.viewHeight = clampInt(working.viewHeight + dir * 2, 16, 120); }, [this](){ return std::to_string(working.viewHeight); }});
 
-    items.push_back(Item{"Save directory", [this](int dir){ (void)dir; painter.reset(); std::cout << "\x1b[2J\x1b[HEnter save directory: "; std::string input; std::getline(std::cin, input); if (!input.empty()) working.saveDirectory = input; }, [this](){ return working.saveDirectory; }});
+    items.push_back(Item{"Save directory", [this](int dir){
+        (void)dir;
+        painter.reset();
+        DirectoryBrowserScreen browser(working.saveDirectory);
+        std::string chosen = browser.show();
+        if (!chosen.empty()) {
+            working.saveDirectory = chosen;
+        }
+    }, [this](){ return working.saveDirectory; }});
 }
 
 bool SettingsScreen::show() {
