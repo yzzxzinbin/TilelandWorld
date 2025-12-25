@@ -17,10 +17,10 @@
 
 namespace TilelandWorld {
 
-    class TuiChunkController {
+    class TuiCoreController {
     public:
-        explicit TuiChunkController(Map& map, const Settings& settings);
-        ~TuiChunkController();
+        explicit TuiCoreController(Map& map, const Settings& settings);
+        ~TuiCoreController();
 
         // 1. 初始化 TUI 环境
         void initialize();

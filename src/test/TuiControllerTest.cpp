@@ -1,5 +1,5 @@
 #include "../Map.h"
-#include "../Controllers/TuiChunkController.h"
+#include "../Controllers/TuiCoreController.h"
 #include "../MapGenInfrastructure/FastNoiseTerrainGenerator.h"
 #include "../Utils/Logger.h"
 #include "../UI/MainMenuScreen.h"
@@ -67,8 +67,8 @@ int main() {
         LOG_INFO("Map created with FastNoiseTerrainGenerator.");
 
         // 3. 创建 TUI 控制器
-        TuiChunkController controller(*map, settings);
-        LOG_INFO("TuiChunkController created.");
+        TuiCoreController controller(*map, settings);
+        LOG_INFO("TuiCoreController created.");
 
         // 4. 初始化控制器 (设置控制台等)
         controller.initialize();

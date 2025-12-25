@@ -1,4 +1,4 @@
-#include "TuiChunkController.h"
+#include "TuiCoreController.h"
 #include "../Constants.h"
 #include "../Utils/Logger.h"
 #include <iostream>
@@ -12,7 +12,7 @@
 
 namespace TilelandWorld {
 
-    TuiChunkController::TuiChunkController(Map& mapRef, const Settings& cfg) : map(mapRef), settings(cfg) {
+    TuiCoreController::TuiCoreController(Map& mapRef, const Settings& cfg) : map(mapRef), settings(cfg) {
         // 1. 初始化通用任务系统
         taskSystem = std::make_unique<TaskSystem>(); // 默认使用 (核心数-1) 个线程
 
@@ -31,7 +31,7 @@ namespace TilelandWorld {
         targetTps = settings.targetTps;
     }
 
-    TuiChunkController::~TuiChunkController() {
+    TuiCoreController::~TuiCoreController() {
         // 析构顺序很重要：
         // 1. 停止渲染器
         if (renderer) renderer->stop();
@@ -46,7 +46,7 @@ namespace TilelandWorld {
         showCursor();
     }
 
-    void TuiChunkController::initialize() {
+    void TuiCoreController::initialize() {
         setupConsole();
         std::cout << "\x1b[?25l" << std::flush;
 
@@ -70,19 +70,19 @@ namespace TilelandWorld {
         }
     }
 
-    void TuiChunkController::markChunkModified(const ChunkCoord& coord) {
+    void TuiCoreController::markChunkModified(const ChunkCoord& coord) {
         modifiedChunks.insert(coord);
     }
 
-    void TuiChunkController::markChunkModified(int cx, int cy, int cz) {
+    void TuiCoreController::markChunkModified(int cx, int cy, int cz) {
         modifiedChunks.insert({cx, cy, cz});
     }
 
-    const std::unordered_set<ChunkCoord, ChunkCoordHash>& TuiChunkController::getModifiedChunks() const {
+    const std::unordered_set<ChunkCoord, ChunkCoordHash>& TuiCoreController::getModifiedChunks() const {
         return modifiedChunks;
     }
 
-    void TuiChunkController::run() {
+    void TuiCoreController::run() {
         std::ios::sync_with_stdio(false);
         std::cout.tie(nullptr);
 
@@ -183,7 +183,7 @@ namespace TilelandWorld {
         #endif
     }
 
-    void TuiChunkController::handleInput() {
+    void TuiCoreController::handleInput() {
         if (!inputController) return;
 
         // 高频按键（WASD/Q/Esc/左右层级切换）在 Windows 下用 GetAsyncKeyState 提升长按采样率
@@ -239,7 +239,7 @@ namespace TilelandWorld {
         }
     }
 
-    void TuiChunkController::rebuildMouseOverlay() {
+    void TuiCoreController::rebuildMouseOverlay() {
         if (!settings.enableMouseCross) {
             mouseOverlay.reset();
             if (renderer) renderer->clearUiLayer();
@@ -271,7 +271,7 @@ namespace TilelandWorld {
         if (renderer) renderer->setUiLayer(mouseOverlay, settings.mouseCrossAlpha);
     }
 
-    void TuiChunkController::preloadChunks() {
+    void TuiCoreController::preloadChunks() {
         int minCx = floorDiv(viewX, CHUNK_WIDTH);
         int maxCx = floorDiv(viewX + viewWidth, CHUNK_WIDTH);
         int minCy = floorDiv(viewY, CHUNK_HEIGHT);
@@ -303,7 +303,7 @@ namespace TilelandWorld {
         }
     }
     
-    void TuiChunkController::setupConsole() {
+    void TuiCoreController::setupConsole() {
         #ifdef _WIN32
         HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
         DWORD dwMode = 0;
@@ -316,7 +316,7 @@ namespace TilelandWorld {
         #endif
     }
     
-    void TuiChunkController::clearScreen() { std::cout << "\x1b[2J\x1b[H" << std::flush; }
-    void TuiChunkController::showCursor() { std::cout << "\x1b[?25h" << std::flush; }
+    void TuiCoreController::clearScreen() { std::cout << "\x1b[2J\x1b[H" << std::flush; }
+    void TuiCoreController::showCursor() { std::cout << "\x1b[?25h" << std::flush; }
 
 }
