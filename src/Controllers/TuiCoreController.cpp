@@ -13,6 +13,9 @@
 namespace TilelandWorld {
 
     TuiCoreController::TuiCoreController(Map& mapRef, const Settings& cfg) : map(mapRef), settings(cfg) {
+        // 确保地形生成器与存档元数据一致。
+        map.setTerrainGenerator(createTerrainGeneratorFromMetadata(map.getWorldMetadata()));
+
         // 1. 初始化通用任务系统
         taskSystem = std::make_unique<TaskSystem>(); // 默认使用 (核心数-1) 个线程
 

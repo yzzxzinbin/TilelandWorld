@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
-#include <random>
+#include <iostream>
 #include <thread>
 #ifdef _WIN32
 #include <windows.h>
@@ -25,35 +25,16 @@ SettingsScreen::SettingsScreen(Settings& settings)
 void SettingsScreen::buildItems() {
     items.clear();
 
-    items.push_back({"Target TPS", [this](int dir){ working.targetTps = clampDouble(working.targetTps + dir * 1.0, 10.0, 240.0); }, [this](){ return std::to_string(working.targetTps); }});
-    items.push_back({"Stats overlay alpha", [this](int dir){ working.statsOverlayAlpha = clampDouble(working.statsOverlayAlpha + dir * 0.05, 0.0, 1.0); }, [this](){ return std::to_string(working.statsOverlayAlpha); }});
-    items.push_back({"Mouse cross alpha", [this](int dir){ working.mouseCrossAlpha = clampDouble(working.mouseCrossAlpha + dir * 0.05, 0.0, 1.0); }, [this](){ return std::to_string(working.mouseCrossAlpha); }});
-    items.push_back({"Show stats overlay", [this](int dir){ (void)dir; working.enableStatsOverlay = !working.enableStatsOverlay; }, [this](){ return working.enableStatsOverlay ? "On" : "Off"; }});
-    items.push_back({"Show mouse cross", [this](int dir){ (void)dir; working.enableMouseCross = !working.enableMouseCross; }, [this](){ return working.enableMouseCross ? "On" : "Off"; }});
+    items.push_back(Item{"Target TPS", [this](int dir){ working.targetTps = clampDouble(working.targetTps + dir * 1.0, 10.0, 240.0); }, [this](){ return std::to_string(working.targetTps); }});
+    items.push_back(Item{"Stats overlay alpha", [this](int dir){ working.statsOverlayAlpha = clampDouble(working.statsOverlayAlpha + dir * 0.05, 0.0, 1.0); }, [this](){ return std::to_string(working.statsOverlayAlpha); }});
+    items.push_back(Item{"Mouse cross alpha", [this](int dir){ working.mouseCrossAlpha = clampDouble(working.mouseCrossAlpha + dir * 0.05, 0.0, 1.0); }, [this](){ return std::to_string(working.mouseCrossAlpha); }});
+    items.push_back(Item{"Show stats overlay", [this](int dir){ (void)dir; working.enableStatsOverlay = !working.enableStatsOverlay; }, [this](){ return working.enableStatsOverlay ? "On" : "Off"; }});
+    items.push_back(Item{"Show mouse cross", [this](int dir){ (void)dir; working.enableMouseCross = !working.enableMouseCross; }, [this](){ return working.enableMouseCross ? "On" : "Off"; }});
 
-    items.push_back({"View width", [this](int dir){ working.viewWidth = clampInt(working.viewWidth + dir * 2, 16, 200); }, [this](){ return std::to_string(working.viewWidth); }});
-    items.push_back({"View height", [this](int dir){ working.viewHeight = clampInt(working.viewHeight + dir * 2, 16, 120); }, [this](){ return std::to_string(working.viewHeight); }});
+    items.push_back(Item{"View width", [this](int dir){ working.viewWidth = clampInt(working.viewWidth + dir * 2, 16, 200); }, [this](){ return std::to_string(working.viewWidth); }});
+    items.push_back(Item{"View height", [this](int dir){ working.viewHeight = clampInt(working.viewHeight + dir * 2, 16, 120); }, [this](){ return std::to_string(working.viewHeight); }});
 
-    static const std::vector<std::string> noiseTypes = {"OpenSimplex2", "Perlin", "Cellular"};
-    static const std::vector<std::string> fractals = {"FBm", "Ridged", "None"};
-
-    items.push_back({"Noise seed", [this](int dir){ working.noiseSeed += dir; }, [this](){ return std::to_string(working.noiseSeed); }});
-    items.push_back({"Noise frequency", [this](int dir){ working.noiseFrequency = clampDouble(working.noiseFrequency + dir * 0.0025, 0.001, 0.2); }, [this](){ std::ostringstream oss; oss << working.noiseFrequency; return oss.str(); }});
-    items.push_back({"Noise type", [this](int dir){
-        auto it = std::find(noiseTypes.begin(), noiseTypes.end(), working.noiseType);
-        int idx = (it == noiseTypes.end()) ? 0 : static_cast<int>(it - noiseTypes.begin());
-        idx = (idx + static_cast<int>(noiseTypes.size()) + dir) % static_cast<int>(noiseTypes.size());
-        working.noiseType = noiseTypes[static_cast<size_t>(idx)];
-    }, [this](){ return working.noiseType; }});
-    items.push_back({"Noise fractal", [this](int dir){
-        auto it = std::find(fractals.begin(), fractals.end(), working.noiseFractal);
-        int idx = (it == fractals.end()) ? 0 : static_cast<int>(it - fractals.begin());
-        idx = (idx + static_cast<int>(fractals.size()) + dir) % static_cast<int>(fractals.size());
-        working.noiseFractal = fractals[static_cast<size_t>(idx)];
-    }, [this](){ return working.noiseFractal; }});
-    items.push_back({"Noise octaves", [this](int dir){ working.noiseOctaves = clampInt(working.noiseOctaves + dir, 1, 10); }, [this](){ return std::to_string(working.noiseOctaves); }});
-    items.push_back({"Noise lacunarity", [this](int dir){ working.noiseLacunarity = clampDouble(working.noiseLacunarity + dir * 0.1, 0.5, 4.0); }, [this](){ std::ostringstream oss; oss << working.noiseLacunarity; return oss.str(); }});
-    items.push_back({"Noise gain", [this](int dir){ working.noiseGain = clampDouble(working.noiseGain + dir * 0.05, 0.05, 2.0); }, [this](){ std::ostringstream oss; oss << working.noiseGain; return oss.str(); }});
+    items.push_back(Item{"Save directory", [this](int dir){ (void)dir; painter.reset(); std::cout << "\x1b[2J\x1b[HEnter save directory: "; std::string input; std::getline(std::cin, input); if (!input.empty()) working.saveDirectory = input; }, [this](){ return working.saveDirectory; }});
 }
 
 bool SettingsScreen::show() {
@@ -91,12 +72,6 @@ bool SettingsScreen::show() {
         } else if (key == 27 || key == 'q' || key == 'Q') { // Esc / Q
             accepted = false;
             running = false;
-        } else if (key == 'r' || key == 'R') {
-            // 快速随机种子
-            std::random_device rd;
-            std::mt19937 gen(rd());
-            std::uniform_int_distribution<int> dist(1, 999999);
-            working.noiseSeed = dist(gen);
         }
     }
 
@@ -126,7 +101,7 @@ void SettingsScreen::renderFrame() {
     surface.fillRect(0, surface.getHeight() - 1, surface.getWidth(), 1, {96, 140, 255}, {96, 140, 255}, " ");
 
     surface.drawText(2, 1, "Settings", {0, 0, 0}, {96, 140, 255});
-    surface.drawText(2, 3, "Arrow/WASD: navigate | Space/Left/Right: adjust | Enter: save | Esc/Q: cancel | R: random seed", {160, 170, 190}, {12, 14, 18});
+    surface.drawText(2, 3, "Arrow/WASD: navigate | Space/Left/Right: adjust | Enter: save | Esc/Q: cancel", {160, 170, 190}, {12, 14, 18});
 
     int startY = 5;
     int labelX = 4;

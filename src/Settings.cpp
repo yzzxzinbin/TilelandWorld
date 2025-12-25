@@ -67,13 +67,7 @@ Settings SettingsManager::load(const std::string& path) {
         maybeSet<int>(key, value, "viewWidth", cfg.viewWidth);
         maybeSet<int>(key, value, "viewHeight", cfg.viewHeight);
 
-        maybeSet<int>(key, value, "noiseSeed", cfg.noiseSeed);
-        maybeSet<double>(key, value, "noiseFrequency", cfg.noiseFrequency);
-        maybeSet<std::string>(key, value, "noiseType", cfg.noiseType);
-        maybeSet<std::string>(key, value, "noiseFractal", cfg.noiseFractal);
-        maybeSet<int>(key, value, "noiseOctaves", cfg.noiseOctaves);
-        maybeSet<double>(key, value, "noiseLacunarity", cfg.noiseLacunarity);
-        maybeSet<double>(key, value, "noiseGain", cfg.noiseGain);
+        maybeSet<std::string>(key, value, "saveDirectory", cfg.saveDirectory);
     }
 
     return cfg;
@@ -93,13 +87,7 @@ bool SettingsManager::save(const Settings& s, const std::string& path) {
     out << "viewWidth=" << s.viewWidth << "\n";
     out << "viewHeight=" << s.viewHeight << "\n";
 
-    out << "noiseSeed=" << s.noiseSeed << "\n";
-    out << "noiseFrequency=" << s.noiseFrequency << "\n";
-    out << "noiseType=" << s.noiseType << "\n";
-    out << "noiseFractal=" << s.noiseFractal << "\n";
-    out << "noiseOctaves=" << s.noiseOctaves << "\n";
-    out << "noiseLacunarity=" << s.noiseLacunarity << "\n";
-    out << "noiseGain=" << s.noiseGain << "\n";
+    out << "saveDirectory=" << s.saveDirectory << "\n";
 
     return true;
 }

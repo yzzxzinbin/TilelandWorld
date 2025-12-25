@@ -3,6 +3,8 @@
 #include "Checksum.h" // Include Checksum header
 #include "../Utils/Logger.h" // <-- 包含 Logger
 #include <iostream> // For std::cout in success messages
+#include "SaveMetadata.h"
+#include "../MapGenInfrastructure/TerrainGeneratorFactory.h"
 #include <vector>
 #include <cstring> // For memcpy in checksum calculation
 #include <stdexcept> // For std::runtime_error
@@ -165,7 +167,7 @@ namespace TilelandWorld {
             header.magicNumber = MAGIC_NUMBER;
             header.versionMajor = FORMAT_VERSION_MAJOR;
             header.versionMinor = FORMAT_VERSION_MINOR;
-
+    header.metadataOffset = 0; // 稍后填充
             if (!writer.seek(0)) return false;
             writer.write(header);
 
@@ -208,6 +210,29 @@ namespace TilelandWorld {
                 return false;
             }
 
+            // 写入元数据块
+            header.metadataOffset = writer.tell();
+            MetadataBlock metaBlock{};
+            const WorldMetadata& meta = map.getWorldMetadata();
+            metaBlock.seed = meta.seed;
+            metaBlock.frequency = meta.frequency;
+            std::memset(metaBlock.noiseType, 0, sizeof(metaBlock.noiseType));
+            std::memset(metaBlock.fractalType, 0, sizeof(metaBlock.fractalType));
+            std::strncpy(metaBlock.noiseType, meta.noiseType.c_str(), sizeof(metaBlock.noiseType) - 1);
+            std::strncpy(metaBlock.fractalType, meta.fractalType.c_str(), sizeof(metaBlock.fractalType) - 1);
+            metaBlock.octaves = meta.octaves;
+            metaBlock.lacunarity = meta.lacunarity;
+            metaBlock.gain = meta.gain;
+
+            writer.write(metaBlock.seed);
+            writer.write(metaBlock.frequency);
+            writer.writeBytes(reinterpret_cast<const char*>(metaBlock.noiseType), sizeof(metaBlock.noiseType));
+            writer.writeBytes(reinterpret_cast<const char*>(metaBlock.fractalType), sizeof(metaBlock.fractalType));
+            writer.write(metaBlock.octaves);
+            writer.write(metaBlock.lacunarity);
+            writer.write(metaBlock.gain);
+            writer.writeBytes(reinterpret_cast<const char*>(metaBlock.reserved), sizeof(metaBlock.reserved));
+
             std::streampos finalPos = writer.tell();
             if (!writer.seek(0)) return false;
             if (!writeHeader(writer, header)) {
@@ -240,7 +265,56 @@ namespace TilelandWorld {
             }
             readIndex(reader, index);
 
+            // 读取元数据（如果存在）
+            WorldMetadata worldMeta{};
+            if (header.metadataOffset != 0 && header.metadataOffset < reader.fileSize()) {
+                if (!reader.seek(header.metadataOffset)) {
+                    throw std::runtime_error("Failed to seek to metadata offset.");
+                }
+
+                MetadataBlock metaBlock{};
+                if (!reader.read(metaBlock.seed)) {
+                    throw std::runtime_error("Failed to read metadata seed.");
+                }
+                if (!reader.read(metaBlock.frequency)) {
+                    throw std::runtime_error("Failed to read metadata frequency.");
+                }
+
+                size_t noiseRead = reader.readBytes(reinterpret_cast<char*>(metaBlock.noiseType), sizeof(metaBlock.noiseType));
+                if (noiseRead != sizeof(metaBlock.noiseType)) {
+                    throw std::runtime_error("Failed to read metadata noiseType.");
+                }
+                size_t fractalRead = reader.readBytes(reinterpret_cast<char*>(metaBlock.fractalType), sizeof(metaBlock.fractalType));
+                if (fractalRead != sizeof(metaBlock.fractalType)) {
+                    throw std::runtime_error("Failed to read metadata fractalType.");
+                }
+
+                if (!reader.read(metaBlock.octaves)) {
+                    throw std::runtime_error("Failed to read metadata octaves.");
+                }
+                if (!reader.read(metaBlock.lacunarity)) {
+                    throw std::runtime_error("Failed to read metadata lacunarity.");
+                }
+                if (!reader.read(metaBlock.gain)) {
+                    throw std::runtime_error("Failed to read metadata gain.");
+                }
+                size_t reservedRead = reader.readBytes(reinterpret_cast<char*>(metaBlock.reserved), sizeof(metaBlock.reserved));
+                if (reservedRead != sizeof(metaBlock.reserved)) {
+                    throw std::runtime_error("Failed to read metadata reserved padding.");
+                }
+
+                worldMeta.seed = metaBlock.seed;
+                worldMeta.frequency = metaBlock.frequency;
+                worldMeta.noiseType = std::string(metaBlock.noiseType);
+                worldMeta.fractalType = std::string(metaBlock.fractalType);
+                worldMeta.octaves = metaBlock.octaves;
+                worldMeta.lacunarity = metaBlock.lacunarity;
+                worldMeta.gain = metaBlock.gain;
+            }
+
             auto map = std::make_unique<Map>();
+            map->setWorldMetadata(worldMeta);
+            map->setTerrainGenerator(createTerrainGeneratorFromMetadata(worldMeta));
 
             for (const auto& entry : index) {
                 if (entry.offset == 0 || entry.offset >= reader.fileSize() || (entry.offset + entry.size) > reader.fileSize()) {

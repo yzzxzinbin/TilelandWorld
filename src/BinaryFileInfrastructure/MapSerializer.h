@@ -7,12 +7,26 @@
 #include "BinaryReader.h"
 #include "FileFormat.h"
 #include "Checksum.h"
+#include "SaveMetadata.h"
 #include <string>
 #include <vector>
 #include <memory> // For std::unique_ptr
 #include <unordered_set> // For std::unordered_set
 
 namespace TilelandWorld {
+
+    // 固定大小的元数据块，便于向后兼容与扩展。
+    struct MetadataBlock
+    {
+        int64_t seed;
+        float frequency;
+        char noiseType[32];
+        char fractalType[32];
+        int32_t octaves;
+        float lacunarity;
+        float gain;
+        uint8_t reserved[32]{}; // 预留空间
+    };
 
     class MapSerializer {
     public:

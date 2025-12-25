@@ -8,6 +8,7 @@
 #include "InputController.h"
 #include "../Settings.h"
 #include "../MapGenInfrastructure/ChunkGeneratorPool.h"
+#include "../MapGenInfrastructure/TerrainGeneratorFactory.h"
 #include "../Utils/TaskSystem.h" // 引入 TaskSystem
 #include <unordered_set>
 #include <string>

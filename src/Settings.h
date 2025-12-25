@@ -20,14 +20,8 @@ struct Settings {
     bool enableStatsOverlay{true};
     bool enableMouseCross{true};
 
-    // Noise generator
-    int noiseSeed{1337};
-    double noiseFrequency{0.025};
-    std::string noiseType{"OpenSimplex2"};
-    std::string noiseFractal{"FBm"};
-    int noiseOctaves{5};
-    double noiseLacunarity{2.0};
-    double noiseGain{0.5};
+    // Saves
+    std::string saveDirectory{"saves"};
 };
 
 class SettingsManager {

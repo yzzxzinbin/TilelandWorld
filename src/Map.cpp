@@ -24,6 +24,8 @@ namespace TilelandWorld
             // 如果没有提供生成器，创建一个默认的（例如 FlatTerrainGenerator）
             terrainGenerator = std::make_unique<FlatTerrainGenerator>(0); // 地面高度为 0
         }
+        // 默认元数据与生成器保持一致（Flat 默认值）。
+        worldMetadata = WorldMetadata{};
     }
 
     // --- 坐标转换实现 ---

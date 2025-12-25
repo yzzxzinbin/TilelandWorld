@@ -5,6 +5,7 @@
 #include "Chunk.h"
 #include "Coordinates.h"
 #include "Tile.h"
+#include "SaveMetadata.h"
 #include "MapGenInfrastructure/TerrainGenerator.h" // 包含生成器基类
 #include <unordered_map>
 #include <memory> // For std::unique_ptr
@@ -58,11 +59,15 @@ namespace TilelandWorld {
 
         void setTerrainGenerator(std::unique_ptr<TerrainGenerator> generator);
 
+        const WorldMetadata& getWorldMetadata() const { return worldMetadata; }
+        void setWorldMetadata(const WorldMetadata& meta) { worldMetadata = meta; }
+
     private:
         // 存储已加载的区块，使用区块坐标作为键，是MAP层的核心
         std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> loadedChunks;
         // 地形生成器
         std::unique_ptr<TerrainGenerator> terrainGenerator;
+        WorldMetadata worldMetadata;
         // (未来可能添加：区块加载器、生成器、卸载逻辑等)
     };
 
