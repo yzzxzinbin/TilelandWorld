@@ -25,11 +25,13 @@ SettingsScreen::SettingsScreen(Settings& settings)
 void SettingsScreen::buildItems() {
     items.clear();
 
+    items.push_back(Item{"FPS limit", [this](int dir){ working.targetFpsLimit = clampDouble(working.targetFpsLimit + dir * 5.0, 30.0, 1440.0); }, [this](){ return std::to_string(static_cast<int>(working.targetFpsLimit)); }});
     items.push_back(Item{"Target TPS", [this](int dir){ working.targetTps = clampDouble(working.targetTps + dir * 1.0, 10.0, 240.0); }, [this](){ return std::to_string(working.targetTps); }});
     items.push_back(Item{"Stats overlay alpha", [this](int dir){ working.statsOverlayAlpha = clampDouble(working.statsOverlayAlpha + dir * 0.05, 0.0, 1.0); }, [this](){ return std::to_string(working.statsOverlayAlpha); }});
     items.push_back(Item{"Mouse cross alpha", [this](int dir){ working.mouseCrossAlpha = clampDouble(working.mouseCrossAlpha + dir * 0.05, 0.0, 1.0); }, [this](){ return std::to_string(working.mouseCrossAlpha); }});
     items.push_back(Item{"Show stats overlay", [this](int dir){ (void)dir; working.enableStatsOverlay = !working.enableStatsOverlay; }, [this](){ return working.enableStatsOverlay ? "On" : "Off"; }});
     items.push_back(Item{"Show mouse cross", [this](int dir){ (void)dir; working.enableMouseCross = !working.enableMouseCross; }, [this](){ return working.enableMouseCross ? "On" : "Off"; }});
+    items.push_back(Item{"Diff-based rendering", [this](int dir){ (void)dir; working.enableDiffRendering = !working.enableDiffRendering; }, [this](){ return working.enableDiffRendering ? "On" : "Off"; }});
 
     items.push_back(Item{"View width", [this](int dir){ working.viewWidth = clampInt(working.viewWidth + dir * 2, 16, 200); }, [this](){ return std::to_string(working.viewWidth); }});
     items.push_back(Item{"View height", [this](int dir){ working.viewHeight = clampInt(working.viewHeight + dir * 2, 16, 120); }, [this](){ return std::to_string(working.viewHeight); }});

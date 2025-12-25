@@ -11,6 +11,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <cstdint>
 
 namespace TilelandWorld {
 
@@ -28,7 +29,7 @@ namespace TilelandWorld {
     class TuiRenderer {
     public:
         // 修改构造函数接受 const Map&，强制只读访问
-        TuiRenderer(const Map& map, std::mutex& mapMutex, double statsAlpha = 0.10, bool enableStats = true);
+        TuiRenderer(const Map& map, std::mutex& mapMutex, double statsAlpha = 0.10, bool enableStats = true, bool enableDiff = false, double fpsLimit = 360.0);
         ~TuiRenderer();
 
         // 启动渲染线程
@@ -63,6 +64,8 @@ namespace TilelandWorld {
 
         double baseStatsAlpha = 0.10;
         bool enableStatsOverlay = true;
+        bool enableDiffOutput = false;
+        double targetFpsCap = 360.0;
 
         // 渲染缓冲区 (本地副本)
         std::vector<Tile> tileBuffer;
@@ -78,12 +81,18 @@ namespace TilelandWorld {
         long long lastFpsTime = 0;
         long long frequency = 0;
 
+        // Diff rendering cache
+        std::vector<std::string> lastFrameLines;
+        std::string lastStatusLine;
+        std::uint64_t lastFrameHash = 0;
+
         // 渲染循环
         void renderLoop();
 
         // 内部辅助
         void copyMapData(const ViewState& state);
         void drawToConsole(const ViewState& state, std::shared_ptr<const UI::TuiSurface> overlay, double overlayAlpha);
+        void drawDiffToConsole(const std::vector<std::string>& lines, const std::string& statusLine);
         std::shared_ptr<UI::TuiSurface> buildStatsOverlay(const ViewState& state) const;
         static RGBColor blendColor(const RGBColor& top, const RGBColor& bottom, double alpha);
         

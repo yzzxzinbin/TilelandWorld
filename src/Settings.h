@@ -8,6 +8,7 @@ namespace TilelandWorld {
 
 struct Settings {
     // Timing / performance
+    double targetFpsLimit{360.0};
     double targetTps{60.0};
     double statsOverlayAlpha{0.10};
 
@@ -19,6 +20,9 @@ struct Settings {
     double mouseCrossAlpha{0.10};
     bool enableStatsOverlay{true};
     bool enableMouseCross{true};
+
+    // Rendering optimizations
+    bool enableDiffRendering{false};
 
     // Saves
     std::string saveDirectory{"saves"};

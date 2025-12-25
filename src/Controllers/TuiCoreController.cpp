@@ -23,7 +23,7 @@ namespace TilelandWorld {
         generatorPool = std::make_unique<ChunkGeneratorPool>(map, *taskSystem);
 
         // 3. 初始化渲染器
-        renderer = std::make_unique<TuiRenderer>(map, mapMutex, settings.statsOverlayAlpha, settings.enableStatsOverlay);
+        renderer = std::make_unique<TuiRenderer>(map, mapMutex, settings.statsOverlayAlpha, settings.enableStatsOverlay, settings.enableDiffRendering, settings.targetFpsLimit);
 
         // 4. 初始化输入控制器
         inputController = std::make_unique<InputController>();

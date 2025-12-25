@@ -58,11 +58,13 @@ Settings SettingsManager::load(const std::string& path) {
         std::string key = trim(line.substr(0, pos));
         std::string value = trim(line.substr(pos + 1));
 
+        maybeSet<double>(key, value, "targetFpsLimit", cfg.targetFpsLimit);
         maybeSet<double>(key, value, "targetTps", cfg.targetTps);
         maybeSet<double>(key, value, "statsOverlayAlpha", cfg.statsOverlayAlpha);
         maybeSet<double>(key, value, "mouseCrossAlpha", cfg.mouseCrossAlpha);
         maybeSet<bool>(key, value, "enableStatsOverlay", cfg.enableStatsOverlay);
         maybeSet<bool>(key, value, "enableMouseCross", cfg.enableMouseCross);
+        maybeSet<bool>(key, value, "enableDiffRendering", cfg.enableDiffRendering);
 
         maybeSet<int>(key, value, "viewWidth", cfg.viewWidth);
         maybeSet<int>(key, value, "viewHeight", cfg.viewHeight);
@@ -78,11 +80,13 @@ bool SettingsManager::save(const Settings& s, const std::string& path) {
     if (!out.is_open()) return false;
 
     out << "# TilelandWorld settings\n";
+    out << "targetFpsLimit=" << s.targetFpsLimit << "\n";
     out << "targetTps=" << s.targetTps << "\n";
     out << "statsOverlayAlpha=" << s.statsOverlayAlpha << "\n";
     out << "mouseCrossAlpha=" << s.mouseCrossAlpha << "\n";
     out << "enableStatsOverlay=" << (s.enableStatsOverlay ? "1" : "0") << "\n";
     out << "enableMouseCross=" << (s.enableMouseCross ? "1" : "0") << "\n";
+    out << "enableDiffRendering=" << (s.enableDiffRendering ? "1" : "0") << "\n";
 
     out << "viewWidth=" << s.viewWidth << "\n";
     out << "viewHeight=" << s.viewHeight << "\n";

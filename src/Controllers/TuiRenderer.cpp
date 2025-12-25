@@ -44,10 +44,32 @@ namespace TilelandWorld
             int a = static_cast<int>(alpha);
             return static_cast<uint8_t>((static_cast<int>(top) * a + static_cast<int>(bottom) * (255 - a) + 127) / 255);
         }
+
+        inline std::uint64_t fnv1aHash(const std::vector<std::string>& lines, const std::string& status)
+        {
+            std::uint64_t h = 1469598103934665603ull;
+            auto mix = [&h](const std::string& s)
+            {
+                for (unsigned char c : s)
+                {
+                    h ^= static_cast<std::uint64_t>(c);
+                    h *= 1099511628211ull;
+                }
+                h ^= 0xFFu; // separator to reduce accidental concatenation collisions
+                h *= 1099511628211ull;
+            };
+
+            for (const auto& line : lines)
+            {
+                mix(line);
+            }
+            mix(status);
+            return h;
+        }
     } // namespace
 
-    TuiRenderer::TuiRenderer(const Map &mapRef, std::mutex &mutexRef, double statsAlpha, bool enableStats)
-        : map(mapRef), mapMutex(mutexRef), running(false), baseStatsAlpha(statsAlpha), enableStatsOverlay(enableStats)
+    TuiRenderer::TuiRenderer(const Map &mapRef, std::mutex &mutexRef, double statsAlpha, bool enableStats, bool enableDiff, double fpsLimit)
+        : map(mapRef), mapMutex(mutexRef), running(false), baseStatsAlpha(statsAlpha), enableStatsOverlay(enableStats), enableDiffOutput(enableDiff), targetFpsCap(fpsLimit)
     {
         // 初始化默认视图状态
         currentViewState = {0, 0, 0, 64, 48, 0, 0.0}; // 新增 tps 初始化为 0.0
@@ -134,14 +156,14 @@ namespace TilelandWorld
 #ifdef _WIN32
         // --- 在线程内部设置自身优先级 ---
         // GetCurrentThread() 返回的是当前线程的伪句柄，始终有效且权限最高
-        if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST))
+        if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL))
         {
             DWORD err = GetLastError();
             LOG_ERROR("设置渲染线程优先级失败: " + std::to_string(err));
         }
         else
         {
-            LOG_INFO("已在线程内部将渲染线程优先级设置为 THREAD_PRIORITY_HIGHEST");
+            LOG_INFO("已在线程内部将渲染线程优先级设置为 THREAD_PRIORITY_ABOVE_NORMAL");
         }
 
         TIMECAPS tc;
@@ -159,8 +181,8 @@ namespace TilelandWorld
         QueryPerformanceCounter(&nowLI);
         lastFpsTime = nowLI.QuadPart;
 
-        const int targetFPS = 360;
-        const double targetFrameTime = 1000.0 / targetFPS; // 毫秒
+        double effectiveFps = std::max(1.0, targetFpsCap);
+        const double targetFrameTime = 1000.0 / effectiveFps; // 毫秒
 #endif
 
         size_t frameNumber = 0;
@@ -278,7 +300,7 @@ namespace TilelandWorld
                     DWORD sleepTime = static_cast<DWORD>(targetFrameTime - elapsedMs);
                     if (sleepTime > 0)
                     {
-                        Sleep(0);
+                        Sleep(sleepTime);
                     }
                 }
                 else
@@ -344,47 +366,80 @@ namespace TilelandWorld
             overlayHeight = overlay->getHeight();
         }
 
-        // 优化：使用预分配的 std::string 而不是 stringstream
-        // 估算大小：每个 Tile 约 40 字节 ANSI 码 * 2 (槽位) + 屏幕控制码
-        static std::string outputBuffer;
-        outputBuffer.clear();
-        size_t estimatedSize = state.width * state.height * 90 + 200;
-        if (outputBuffer.capacity() < estimatedSize)
-        {
-            outputBuffer.reserve(estimatedSize);
-        }
-
-        // 隐藏光标并重置位置
-        outputBuffer.append("\x1b[?25l\x1b[H");
-
         // 预计算混合系数（0-255 定点）
         uint8_t overlayAlphaFixed = static_cast<uint8_t>(std::clamp(overlayAlpha, 0.0, 1.0) * 255.0 + 0.5);
 
-        // 绘制地图区域
+        std::vector<std::string> frameLines(static_cast<size_t>(state.height));
+
         for (int y = 0; y < state.height; ++y)
         {
-            // 移动光标到行首: CSI <n> ; 1 H
-            outputBuffer.append("\x1b[");
-            outputBuffer.append(std::to_string(y + 1));
-            outputBuffer.append(";1H");
+            std::string line;
+            line.append("\x1b[");
+            line.append(std::to_string(y + 1));
+            line.append(";1H");
+
+            // 颜色状态在行级别独立，便于差分输出
+            RGBColor lastFg{0, 0, 0};
+            RGBColor lastBg{0, 0, 0};
+            bool colorSet = false;
+
+            // 缓存行指针，避免重复索引
+            const UI::TuiCell *overlayRow = nullptr;
+            if (useOverlay && y < overlayHeight)
+            {
+                overlayRow = &overlay->data()[static_cast<size_t>(y) * overlayWidth];
+            }
 
             for (int x = 0; x < state.width; ++x)
             {
                 const Tile &tile = tileBuffer[y * state.width + x];
+                const auto &props = getTerrainProperties(tile.terrain);
 
-                // 快速路径：如果无 UI 覆盖，则直接使用缓存字符串
+                RGBColor mapFg = tile.getForegroundColor();
+                RGBColor mapBg = tile.getBackgroundColor();
+                std::string mapGlyph = props.displayChar.empty() ? " " : props.displayChar;
+
+                auto emitGlyph = [&](const RGBColor &fg, const RGBColor &bg, const std::string &glyph)
+                {
+                    if (!colorSet || fg.r != lastFg.r || fg.g != lastFg.g || fg.b != lastFg.b || bg.r != lastBg.r || bg.g != lastBg.g || bg.b != lastBg.b)
+                    {
+                        line.append("\x1b[48;2;");
+                        line.append(numStr(bg.r));
+                        line.push_back(';');
+                        line.append(numStr(bg.g));
+                        line.push_back(';');
+                        line.append(numStr(bg.b));
+                        line.append("m\x1b[38;2;");
+                        line.append(numStr(fg.r));
+                        line.push_back(';');
+                        line.append(numStr(fg.g));
+                        line.push_back(';');
+                        line.append(numStr(fg.b));
+                        line.append("m");
+                        colorSet = true;
+                        lastFg = fg;
+                        lastBg = bg;
+                    }
+                    line.append(glyph);
+                };
+
+                if (!props.isVisible)
+                {
+                    emitGlyph(mapFg, mapBg, "  ");
+                    continue;
+                }
+
                 if (!useOverlay)
                 {
-                    outputBuffer.append(getCachedTileString(tile));
+                    emitGlyph(mapFg, mapBg, mapGlyph);
+                    emitGlyph(mapFg, mapBg, mapGlyph);
                     continue;
                 }
 
                 // 检测 UI 是否对该格子有实际影响（任一槽位存在字符或非黑背景）
                 bool tileHasOverlay = false;
-                const UI::TuiCell* overlayRow = nullptr;
-                if (y < overlayHeight)
+                if (overlayRow)
                 {
-                    overlayRow = &overlay->data()[static_cast<size_t>(y) * overlayWidth];
                     const UI::TuiCell &c1 = overlayRow[x * 2];
                     const UI::TuiCell &c2 = overlayRow[x * 2 + 1];
                     if (c1.hasBg || c2.hasBg || isNonBlack(c1.bg) || isNonBlack(c2.bg) || (!c1.glyph.empty() && c1.glyph != " ") || (!c2.glyph.empty() && c2.glyph != " "))
@@ -395,20 +450,10 @@ namespace TilelandWorld
 
                 if (!tileHasOverlay)
                 {
-                    // 回退到缓存路径，保持最高性能
-                    outputBuffer.append(getCachedTileString(tile));
+                    emitGlyph(mapFg, mapBg, mapGlyph);
+                    emitGlyph(mapFg, mapBg, mapGlyph);
                     continue;
                 }
-
-                // 慢速路径：对当前格子两个槽位逐一处理
-                const auto &props = getTerrainProperties(tile.terrain);
-                RGBColor mapFg = tile.getForegroundColor();
-                RGBColor mapBg = tile.getBackgroundColor();
-                std::string mapGlyph = props.displayChar.empty() ? " " : props.displayChar;
-
-                RGBColor lastFg{0, 0, 0};
-                RGBColor lastBg{0, 0, 0};
-                bool colorSet = false;
 
                 for (int slot = 0; slot < 2; ++slot)
                 {
@@ -417,7 +462,7 @@ namespace TilelandWorld
                     RGBColor finalBg = mapBg;
                     std::string finalGlyph = mapGlyph;
 
-                    if (uiX < overlayWidth && y < overlayHeight)
+                    if (overlayRow && uiX < overlayWidth)
                     {
                         const UI::TuiCell &cell = overlayRow[uiX];
 
@@ -446,60 +491,103 @@ namespace TilelandWorld
                         }
                     }
 
-                    // 仅当颜色改变时才输出 ANSI 颜色序列
-                    if (!colorSet || finalFg.r != lastFg.r || finalFg.g != lastFg.g || finalFg.b != lastFg.b || finalBg.r != lastBg.r || finalBg.g != lastBg.g || finalBg.b != lastBg.b)
-                    {
-                        outputBuffer.append("\x1b[48;2;");
-                        outputBuffer.append(numStr(finalBg.r));
-                        outputBuffer.push_back(';');
-                        outputBuffer.append(numStr(finalBg.g));
-                        outputBuffer.push_back(';');
-                        outputBuffer.append(numStr(finalBg.b));
-                        outputBuffer.append("m\x1b[38;2;");
-                        outputBuffer.append(numStr(finalFg.r));
-                        outputBuffer.push_back(';');
-                        outputBuffer.append(numStr(finalFg.g));
-                        outputBuffer.push_back(';');
-                        outputBuffer.append(numStr(finalFg.b));
-                        outputBuffer.append("m");
-                        colorSet = true;
-                        lastFg = finalFg;
-                        lastBg = finalBg;
-                    }
-
-                    outputBuffer.append(finalGlyph);
+                    emitGlyph(finalFg, finalBg, finalGlyph);
                 }
-                outputBuffer.append("\x1b[0m");
             }
+
+            // 行末统一重置，避免跨行颜色污染
+            line.append("\x1b[0m");
+            frameLines[static_cast<size_t>(y)] = std::move(line);
         }
 
-        // 绘制信息栏（保留原有底部信息行）
-        outputBuffer.append("\x1b[");
-        outputBuffer.append(std::to_string(state.height + 2));
-        outputBuffer.append(";1H\x1b[K"); // 移动并清除行
+        // 底部信息栏
+        std::string statusLine;
+        statusLine.reserve(128);
+        statusLine.append("\x1b[0m");
+        statusLine.append("\x1b[");
+        statusLine.append(std::to_string(state.height + 2));
+        statusLine.append(";1H\x1b[K");
 
-        outputBuffer.append("Pos: (");
-        outputBuffer.append(std::to_string(state.viewX));
-        outputBuffer.append(", ");
-        outputBuffer.append(std::to_string(state.viewY));
-        outputBuffer.append(", ");
-        outputBuffer.append(std::to_string(state.currentZ));
-        outputBuffer.append(") | Modified: ");
-        outputBuffer.append(std::to_string(state.modifiedChunkCount));
-        outputBuffer.append(" | FPS: ");
+        statusLine.append("Pos: (");
+        statusLine.append(std::to_string(state.viewX));
+        statusLine.append(", ");
+        statusLine.append(std::to_string(state.viewY));
+        statusLine.append(", ");
+        statusLine.append(std::to_string(state.currentZ));
+        statusLine.append(") | Modified: ");
+        statusLine.append(std::to_string(state.modifiedChunkCount));
+        statusLine.append(" | FPS: ");
 
         // 简单的 float 转 string，避免 stringstream
         std::string fpsStr = std::to_string(currentFps);
-        outputBuffer.append(fpsStr.substr(0, fpsStr.find('.') + 2)); // 保留一位小数
+        statusLine.append(fpsStr.substr(0, fpsStr.find('.') + 2));
 
-        // 新增：显示 TPS
-        outputBuffer.append(" | TPS: ");
+        statusLine.append(" | TPS: ");
         std::string tpsStr = std::to_string(state.tps);
-        outputBuffer.append(tpsStr.substr(0, tpsStr.find('.') + 2)); // 保留一位小数
+        statusLine.append(tpsStr.substr(0, tpsStr.find('.') + 2));
 
-        // 一次性输出到控制台，使用 write 避免格式化开销
+        if (enableDiffOutput)
+        {
+            std::uint64_t frameHash = fnv1aHash(frameLines, statusLine);
+            if (frameHash == lastFrameHash)
+            {
+                return; // 完全相同的帧，跳过输出
+            }
+
+            drawDiffToConsole(frameLines, statusLine);
+            lastFrameHash = frameHash;
+            return;
+        }
+
+        static std::string outputBuffer;
+        outputBuffer.clear();
+        size_t estimatedSize = state.width * state.height * 70 + 256;
+        if (outputBuffer.capacity() < estimatedSize)
+        {
+            outputBuffer.reserve(estimatedSize);
+        }
+
+        outputBuffer.append("\x1b[?25l");
+        for (const auto &line : frameLines)
+        {
+            outputBuffer.append(line);
+        }
+        outputBuffer.append(statusLine);
+
         std::cout.write(outputBuffer.data(), outputBuffer.size());
         std::cout.flush();
+    }
+
+    void TuiRenderer::drawDiffToConsole(const std::vector<std::string> &lines, const std::string &statusLine)
+    {
+        bool sizeChanged = lastFrameLines.size() != lines.size();
+        if (sizeChanged)
+        {
+            lastFrameLines.assign(lines.size(), "");
+        }
+
+        std::string diffOutput;
+        diffOutput.reserve(lines.size() * 32);
+        diffOutput.append("\x1b[?25l");
+
+        for (size_t i = 0; i < lines.size(); ++i)
+        {
+            if (sizeChanged || lines[i] != lastFrameLines[i])
+            {
+                diffOutput.append(lines[i]);
+            }
+        }
+
+        if (sizeChanged || statusLine != lastStatusLine)
+        {
+            diffOutput.append(statusLine);
+        }
+
+        std::cout.write(diffOutput.data(), diffOutput.size());
+        std::cout.flush();
+
+        lastFrameLines = lines;
+        lastStatusLine = statusLine;
     }
 
     RGBColor TuiRenderer::blendColor(const RGBColor &top, const RGBColor &bottom, double alpha)
@@ -568,7 +656,7 @@ namespace TilelandWorld
     {
         const auto &props = getTerrainProperties(tile.terrain);
         if (!props.isVisible)
-            return "  \x1b[0m";
+            return "  ";
 
         RGBColor fg = tile.getForegroundColor();
         RGBColor bg = tile.getBackgroundColor();
@@ -580,7 +668,7 @@ namespace TilelandWorld
         res += std::to_string(bg.r) + ";" + std::to_string(bg.g) + ";" + std::to_string(bg.b) + "m";
         res += "\x1b[38;2;";
         res += std::to_string(fg.r) + ";" + std::to_string(fg.g) + ";" + std::to_string(fg.b) + "m";
-        res += props.displayChar + props.displayChar + "\x1b[0m";
+        res += props.displayChar + props.displayChar;
 
         return res;
     }
