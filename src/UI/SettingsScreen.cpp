@@ -80,7 +80,7 @@ bool SettingsScreen::show() {
         } else if (key == 13) { // Enter
             accepted = true;
             running = false;
-        } else if (key == 27 || key == 'q' || key == 'Q') { // Esc / Q
+        } else if (key == 'q' || key == 'Q') { // Q to cancel
             accepted = false;
             running = false;
         }
@@ -112,7 +112,7 @@ void SettingsScreen::renderFrame() {
     surface.fillRect(0, surface.getHeight() - 1, surface.getWidth(), 1, {96, 140, 255}, {96, 140, 255}, " ");
 
     surface.drawText(2, 1, "Settings", {0, 0, 0}, {96, 140, 255});
-    surface.drawText(2, 3, "Arrow/WASD: navigate | Space/Left/Right: adjust | Enter: save | Esc/Q: cancel", {160, 170, 190}, {12, 14, 18});
+    surface.drawText(2, 3, "Arrow/WASD: navigate | Space/Left/Right: adjust | Enter: save | Q: cancel", {160, 170, 190}, {12, 14, 18});
 
     int startY = 5;
     int labelX = 4;

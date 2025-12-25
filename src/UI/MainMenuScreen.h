@@ -3,6 +3,7 @@
 #define TILELANDWORLD_UI_MAINMENUSCREEN_H
 
 #include "AnsiTui.h"
+#include "../Controllers/InputController.h"
 
 namespace TilelandWorld {
 namespace UI {
@@ -26,8 +27,16 @@ private:
     size_t selectedIndex{0};
 
     void renderFrame();
-    int pollKey();
+    void handleKey(int key, bool& running, Action& result);
+    void handleMouse(const InputEvent& ev, bool& running, Action& result);
     void ensureAnsiEnabled();
+
+    // 布局缓存用于鼠标命中
+    int lastPanelX{0};
+    int lastPanelY{0};
+    int lastPanelWidth{0};
+    int lastListStart{0};
+    int lastListCount{0};
 };
 
 } // namespace UI

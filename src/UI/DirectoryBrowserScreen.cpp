@@ -73,8 +73,6 @@ std::string DirectoryBrowserScreen::show()
                     handleKey(static_cast<int>(ev.ch), running, result);
                 } else if (ev.key == InputKey::Enter) {
                     handleKey(13, running, result);
-                } else if (ev.key == InputKey::Escape) {
-                    handleKey(27, running, result);
                 }
 
                 // 方向键在 InputController 中是专用枚举，单独处理
@@ -182,7 +180,7 @@ void DirectoryBrowserScreen::renderFrame()
         }
     }
 
-    std::string hint = "Enter/Right: open | Space: choose | Backspace/Left: up | Esc: cancel | Wheel/Click to navigate";
+    std::string hint = "Enter/Right: open | Space: choose | Backspace/Left: up | Q: cancel | Wheel/Click to navigate";
     surface.drawCenteredText(0, surface.getHeight() - 3, surface.getWidth(), hint, theme.hintFg, theme.background);
 }
 
@@ -251,7 +249,7 @@ void DirectoryBrowserScreen::handleKey(int ch, bool& running, std::string& resul
             }
         }
     }
-    else if (ch == 27 || ch == 'q' || ch == 'Q')
+    else if (ch == 'q' || ch == 'Q')
     {
         running = false;
     }
@@ -285,10 +283,13 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
         size_t idx = static_cast<size_t>(scrollOffset + relY);
         if (idx < entries.size())
         {
+            // 悬停高亮
             selected = idx;
-            if (ev.pressed && ev.button == 0)
+            clampSelection();
+
+            if (ev.button == 0 && ev.pressed)
             {
-                // left click selects; second click (same selection) chooses
+                // 单击选中；双击进入目录（或选择当前目录）
                 static size_t lastIdx = static_cast<size_t>(-1);
                 static auto lastTick = std::chrono::steady_clock::now();
                 auto now = std::chrono::steady_clock::now();
@@ -301,18 +302,14 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
                     result = currentPath.string();
                     running = false;
                 }
-                else if (doubleClick)
+                else if (doubleClick && entries[idx].isDir)
                 {
-                    if (entries[idx].isDir)
-                    {
-                        currentPath = entries[idx].fullPath;
-                        selected = 0;
-                        scrollOffset = 0;
-                        refreshEntries();
-                    }
+                    currentPath = entries[idx].fullPath;
+                    selected = 0;
+                    scrollOffset = 0;
+                    refreshEntries();
                 }
             }
-            clampSelection();
         }
     }
 }

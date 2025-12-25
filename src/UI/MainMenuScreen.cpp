@@ -1,9 +1,9 @@
 #include "MainMenuScreen.h"
 #include <algorithm>
 #include <thread>
+#include "../Controllers/InputController.h"
 #ifdef _WIN32
 #include <windows.h>
-#include <conio.h>
 #endif
 
 namespace TilelandWorld {
@@ -12,6 +12,7 @@ namespace UI {
 namespace {
     constexpr int kArrowUp = 0x100 | 72;
     constexpr int kArrowDown = 0x100 | 80;
+    const BoxStyle kModernFrame{"╭", "╮", "╰", "╯", "─", "│"};
 }
 
 MainMenuScreen::MainMenuScreen()
@@ -19,11 +20,15 @@ MainMenuScreen::MainMenuScreen()
       menu({"Start Game", "Settings", "Quit"}, theme) {
     // 重新应用主题，确保菜单使用已初始化的 theme（成员顺序已调整）。
     menu.setTitle("Tileland World");
-    menu.setSubtitle("Minimal ANSI TUI - arrow keys + Enter");
+    menu.setSubtitle("Click or arrows + Enter");
+    menu.setFrameStyle(kModernFrame);
 }
 
 MainMenuScreen::Action MainMenuScreen::show() {
     ensureAnsiEnabled();
+
+    InputController input;
+    input.start();
 
     bool running = true;
     Action result = Action::Quit;
@@ -32,29 +37,38 @@ MainMenuScreen::Action MainMenuScreen::show() {
         renderFrame();
         painter.present(surface, true, 1, 1);
 
-        int key = pollKey();
-        if (key == -1) {
+        auto events = input.pollEvents();
+        if (events.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
             continue;
         }
 
-        if (key == kArrowUp || key == 'w' || key == 'W') {
-            menu.moveUp();
-        } else if (key == kArrowDown || key == 's' || key == 'S') {
-            menu.moveDown();
-        } else if (key == 13) { // Enter
-            selectedIndex = menu.getSelected();
-            if (selectedIndex == 0) result = Action::Start;
-            else if (selectedIndex == 1) result = Action::Settings;
-            else result = Action::Quit;
-            running = false;
-        } else if (key == 27 || key == 'q' || key == 'Q') { // Esc or Q
-            running = false;
-            result = Action::Quit;
+        for (const auto& ev : events) {
+            if (ev.type == InputEvent::Type::Mouse) {
+                handleMouse(ev, running, result);
+            } else if (ev.type == InputEvent::Type::Key) {
+                if (ev.key == InputKey::Character) {
+                    int ch = static_cast<int>(ev.ch);
+                    // 把回车字符也视为 Enter，避免多按一次
+                    if (ch == 13 || ch == '\n' || ch == '\r') {
+                        handleKey(13, running, result);
+                    } else {
+                        handleKey(ch, running, result);
+                    }
+                } else if (ev.key == InputKey::Enter) {
+                    handleKey(13, running, result);
+                } else if (ev.key == InputKey::ArrowUp) {
+                    handleKey(kArrowUp, running, result);
+                } else if (ev.key == InputKey::ArrowDown) {
+                    handleKey(kArrowDown, running, result);
+                }
+            }
+            if (!running) break;
         }
     }
 
     painter.reset();
+    input.stop();
     return result;
 }
 
@@ -79,26 +93,58 @@ void MainMenuScreen::renderFrame() {
     int originX = padding;
     int originY = std::max(2, surface.getHeight() / 5);
 
+    lastPanelX = originX;
+    lastPanelY = originY;
+    lastPanelWidth = panelWidth;
+    lastListStart = originY + 4;
+    lastListCount = static_cast<int>(menu.getItems().size());
+
     menu.render(surface, originX, originY, panelWidth);
 
     // 底部提示
-    surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), "TilelandWorld CLI Prototype", theme.hintFg, theme.background);
+    surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), "Click or Enter to select | Q quits", theme.hintFg, theme.background);
 }
 
-int MainMenuScreen::pollKey() {
-#ifdef _WIN32
-    if (_kbhit()) {
-        int ch = _getch();
-        if (ch == 0 || ch == 224) {
-            int ext = _getch();
-            return 0x100 | ext;
-        }
-        return ch;
+void MainMenuScreen::handleKey(int key, bool& running, Action& result) {
+    if (!running) return;
+    if (key == kArrowUp || key == 'w' || key == 'W') {
+        menu.moveUp();
+    } else if (key == kArrowDown || key == 's' || key == 'S') {
+        menu.moveDown();
+    } else if (key == 13) { // Enter
+        selectedIndex = menu.getSelected();
+        if (selectedIndex == 0) result = Action::Start;
+        else if (selectedIndex == 1) result = Action::Settings;
+        else result = Action::Quit;
+        running = false;
+    } else if (key == 'q' || key == 'Q') {
+        running = false;
+        result = Action::Quit;
     }
-    return -1;
-#else
-    return -1;
-#endif
+}
+
+void MainMenuScreen::handleMouse(const InputEvent& ev, bool& running, Action& result) {
+    if (!running) return;
+    if (ev.wheel != 0) {
+        if (ev.wheel > 0) menu.moveUp(); else menu.moveDown();
+        return;
+    }
+
+    int relY = ev.y - lastListStart;
+    int relX = ev.x - lastPanelX;
+    if (relX < 0 || relX >= lastPanelWidth) return;
+    if (relY < 0 || relY >= lastListCount) return;
+
+    size_t idx = static_cast<size_t>(relY);
+    if (idx < menu.getItems().size()) {
+        // 悬停高亮
+        while (menu.getSelected() < idx) menu.moveDown();
+        while (menu.getSelected() > idx) menu.moveUp();
+
+        if (ev.button == 0 && ev.pressed) {
+            handleKey(13, running, result); // 左键单击激活
+        }
+    }
 }
 
 void MainMenuScreen::ensureAnsiEnabled() {

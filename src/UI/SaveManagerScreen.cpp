@@ -5,9 +5,9 @@
 #include <chrono>
 #include <iostream>
 #include <thread>
+#include "../Controllers/InputController.h"
 #ifdef _WIN32
 #include <windows.h>
-#include <conio.h>
 #endif
 
 namespace TilelandWorld {
@@ -16,15 +16,19 @@ namespace UI {
 namespace {
     constexpr int kArrowUp = 0x100 | 72;
     constexpr int kArrowDown = 0x100 | 80;
+    const BoxStyle kModernFrame{"╭", "╮", "╰", "╯", "─", "│"};
 }
 
 SaveManagerScreen::SaveManagerScreen(std::string saveDirectory)
     : directory(std::move(saveDirectory)), surface(96, 32), menu({}, theme) {
+    menu.setFrameStyle(kModernFrame);
     refreshList();
 }
 
 SaveManagerScreen::Result SaveManagerScreen::show() {
     ensureAnsiEnabled();
+    InputController input;
+    input.start();
     bool running = true;
     Result result{};
 
@@ -32,44 +36,37 @@ SaveManagerScreen::Result SaveManagerScreen::show() {
         renderFrame();
         painter.present(surface, true, 1, 1);
 
-        int key = pollKey();
-        if (key == -1) {
+        auto events = input.pollEvents();
+        if (events.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
             continue;
         }
 
-        if (key == kArrowUp || key == 'w' || key == 'W') {
-            menu.moveUp();
-        } else if (key == kArrowDown || key == 's' || key == 'S') {
-            menu.moveDown();
-        } else if (key == 'r' || key == 'R') {
-            refreshList();
-        } else if (key == 'd' || key == 'D') {
-            if (deleteSelected()) {
-                refreshList();
-            }
-        } else if (key == 13) { // Enter
-            size_t idx = menu.getSelected();
-            if (idx < saves.size()) {
-                result.action = Result::Action::Load;
-                result.saveName = saves[idx];
-                running = false;
-            } else if (idx == saves.size()) { // New
-                result = handleCreateNew();
-                if (result.action != Result::Action::Back) {
-                    running = false;
+        for (const auto& ev : events) {
+            if (ev.type == InputEvent::Type::Mouse) {
+                handleMouse(ev, running, result);
+            } else if (ev.type == InputEvent::Type::Key) {
+                if (ev.key == InputKey::Character) {
+                    int ch = static_cast<int>(ev.ch);
+                    if (ch == 13 || ch == '\n' || ch == '\r') {
+                        handleKey(13, running, result);
+                    } else {
+                        handleKey(ch, running, result);
+                    }
+                } else if (ev.key == InputKey::Enter) {
+                    handleKey(13, running, result);
+                } else if (ev.key == InputKey::ArrowUp) {
+                    handleKey(kArrowUp, running, result);
+                } else if (ev.key == InputKey::ArrowDown) {
+                    handleKey(kArrowDown, running, result);
                 }
-            } else { // Back
-                result.action = Result::Action::Back;
-                running = false;
             }
-        } else if (key == 27 || key == 'q' || key == 'Q') { // Esc / Q
-            result.action = Result::Action::Back;
-            running = false;
+            if (!running) break;
         }
     }
 
     painter.reset();
+    input.stop();
     return result;
 }
 
@@ -92,8 +89,9 @@ void SaveManagerScreen::refreshList() {
     items.push_back("New Save");
     items.push_back("Back");
     menu = MenuView(items, theme);
+    menu.setFrameStyle(kModernFrame);
     menu.setTitle("Save Manager");
-    menu.setSubtitle("Enter=load/new, D=delete, R=refresh, Esc=back");
+    menu.setSubtitle("Enter/click=load | D delete | R refresh | Q back");
 }
 
 void SaveManagerScreen::renderFrame() {
@@ -115,26 +113,75 @@ void SaveManagerScreen::renderFrame() {
     int originX = padding;
     int originY = std::max(2, surface.getHeight() / 6);
 
+    lastPanelX = originX;
+    lastPanelY = originY;
+    lastPanelWidth = panelWidth;
+    lastListStart = originY + 4;
+    lastListCount = static_cast<int>(menu.getItems().size());
+
     menu.render(surface, originX, originY, panelWidth);
 
     std::string dirLabel = "Dir: " + directory;
     surface.drawText(2, surface.getHeight() - 3, dirLabel, theme.hintFg, theme.background);
+    surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), "Click or Enter to open | Q back", theme.hintFg, theme.background);
 }
 
-int SaveManagerScreen::pollKey() {
-#ifdef _WIN32
-    if (_kbhit()) {
-        int ch = _getch();
-        if (ch == 0 || ch == 224) {
-            int ext = _getch();
-            return 0x100 | ext;
+void SaveManagerScreen::handleKey(int key, bool& running, Result& result) {
+    if (!running) return;
+
+    if (key == kArrowUp || key == 'w' || key == 'W') {
+        menu.moveUp();
+    } else if (key == kArrowDown || key == 's' || key == 'S') {
+        menu.moveDown();
+    } else if (key == 'r' || key == 'R') {
+        refreshList();
+    } else if (key == 'd' || key == 'D') {
+        if (deleteSelected()) {
+            refreshList();
         }
-        return ch;
+    } else if (key == 13) { // Enter
+        size_t idx = menu.getSelected();
+        if (idx < saves.size()) {
+            result.action = Result::Action::Load;
+            result.saveName = saves[idx];
+            running = false;
+        } else if (idx == saves.size()) { // New
+            result = handleCreateNew();
+            if (result.action != Result::Action::Back) {
+                running = false;
+            }
+        } else { // Back
+            result.action = Result::Action::Back;
+            running = false;
+        }
+    } else if (key == 'q' || key == 'Q') {
+        result.action = Result::Action::Back;
+        running = false;
     }
-    return -1;
-#else
-    return -1;
-#endif
+}
+
+void SaveManagerScreen::handleMouse(const InputEvent& ev, bool& running, Result& result) {
+    if (!running) return;
+    if (ev.wheel != 0) {
+        if (ev.wheel > 0) menu.moveUp(); else menu.moveDown();
+        return;
+    }
+
+    int relY = ev.y - lastListStart;
+    int relX = ev.x - lastPanelX;
+    if (relX < 0 || relX >= lastPanelWidth) return;
+    if (relY < 0 || relY >= lastListCount) return;
+
+    size_t idx = static_cast<size_t>(relY);
+    if (idx < menu.getItems().size()) {
+        // 悬停高亮
+        while (menu.getSelected() < idx) menu.moveDown();
+        while (menu.getSelected() > idx) menu.moveUp();
+
+        if (ev.button == 0 && ev.pressed) {
+            handleKey(13, running, result); // 左键单击激活
+        }
+    }
 }
 
 void SaveManagerScreen::ensureAnsiEnabled() {

@@ -50,9 +50,18 @@ namespace TilelandWorld {
     {
         if (!running) return;
         running = false;
-#ifdef _WIN32
-        if (hIn != INVALID_HANDLE_VALUE) CancelSynchronousIo(hIn);
-#endif
+    #ifdef _WIN32
+        // Cancel the blocking ReadFile on the reader thread so join() won't wait for another keypress
+        if (readerThread.joinable()) {
+            HANDLE th = reinterpret_cast<HANDLE>(readerThread.native_handle());
+            if (th) {
+                CancelSynchronousIo(th);
+            }
+        }
+        if (hIn != INVALID_HANDLE_VALUE) {
+            CancelIoEx(hIn, nullptr);
+        }
+    #endif
         if (readerThread.joinable()) readerThread.join();
     }
 

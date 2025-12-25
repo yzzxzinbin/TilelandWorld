@@ -86,6 +86,7 @@ public:
 
     void setTitle(std::string text);
     void setSubtitle(std::string text);
+    void setFrameStyle(const BoxStyle& style) { frame = style; }
 
     void moveUp();
     void moveDown();

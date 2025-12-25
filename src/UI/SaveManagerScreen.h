@@ -3,6 +3,7 @@
 #define TILELANDWORLD_UI_SAVEMANAGERSCREEN_H
 
 #include "AnsiTui.h"
+#include "../Controllers/InputController.h"
 #include "../SaveMetadata.h"
 #include <string>
 #include <vector>
@@ -33,9 +34,17 @@ private:
     size_t selectedIndex{0};
     std::vector<std::string> saves;
 
+    // 布局缓存供鼠标命中
+    int lastPanelX{0};
+    int lastPanelY{0};
+    int lastPanelWidth{0};
+    int lastListStart{0};
+    int lastListCount{0};
+
     void refreshList();
     void renderFrame();
-    int pollKey();
+    void handleKey(int key, bool& running, Result& result);
+    void handleMouse(const InputEvent& ev, bool& running, Result& result);
     void ensureAnsiEnabled();
 
     Result handleCreateNew();

@@ -224,7 +224,7 @@ void MenuView::render(TuiSurface& surface, int originX, int originY, int width) 
         }
     }
 
-    surface.drawCenteredText(x, y + safeHeight - 2, safeWidth, "Enter: confirm | Esc: quit", theme.hintFg, theme.panel);
+    surface.drawCenteredText(x, y + safeHeight - 2, safeWidth, "Enter: confirm | Q: quit", theme.hintFg, theme.panel);
 }
 
 } // namespace UI
