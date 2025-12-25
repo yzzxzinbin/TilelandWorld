@@ -28,7 +28,7 @@ namespace TilelandWorld {
     class TuiRenderer {
     public:
         // 修改构造函数接受 const Map&，强制只读访问
-        TuiRenderer(const Map& map, std::mutex& mapMutex);
+        TuiRenderer(const Map& map, std::mutex& mapMutex, double statsAlpha = 0.10, bool enableStats = true);
         ~TuiRenderer();
 
         // 启动渲染线程
@@ -60,6 +60,9 @@ namespace TilelandWorld {
         std::shared_ptr<const UI::TuiSurface> uiLayer;
         double uiLayerAlphaBg = 0.0; // 0 表示不混合
         std::mutex uiMutex;
+
+        double baseStatsAlpha = 0.10;
+        bool enableStatsOverlay = true;
 
         // 渲染缓冲区 (本地副本)
         std::vector<Tile> tileBuffer;

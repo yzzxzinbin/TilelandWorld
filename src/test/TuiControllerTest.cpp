@@ -3,6 +3,8 @@
 #include "../MapGenInfrastructure/FastNoiseTerrainGenerator.h"
 #include "../Utils/Logger.h"
 #include "../UI/MainMenuScreen.h"
+#include "../UI/SettingsScreen.h"
+#include "../Settings.h"
 #include <iostream>
 #include <memory>
 
@@ -17,13 +19,31 @@ int main() {
     LOG_INFO("Starting TUI Controller Test...");
 
     try {
-        // 0. 主菜单：在进入游戏循环前给用户一个入口
-        TilelandWorld::UI::MainMenuScreen mainMenu;
-        bool startGame = mainMenu.show();
-        if (!startGame) {
-            LOG_INFO("User exited from main menu.");
-            Logger::getInstance().shutdown();
-            return 0;
+        // 0. 设置加载与主菜单
+        std::string cfgPath = "settings.cfg";
+        Settings settings = SettingsManager::load(cfgPath);
+
+        while (true) {
+            TilelandWorld::UI::MainMenuScreen mainMenu;
+            auto action = mainMenu.show();
+            if (action == TilelandWorld::UI::MainMenuScreen::Action::Start) {
+                LOG_INFO("Main menu: start game.");
+                break;
+            }
+            if (action == TilelandWorld::UI::MainMenuScreen::Action::Quit) {
+                LOG_INFO("User exited from main menu.");
+                Logger::getInstance().shutdown();
+                return 0;
+            }
+            if (action == TilelandWorld::UI::MainMenuScreen::Action::Settings) {
+                TilelandWorld::UI::SettingsScreen settingsScreen(settings);
+                bool applied = settingsScreen.show();
+                if (applied) {
+                    SettingsManager::save(settings, cfgPath);
+                    LOG_INFO("Settings saved.");
+                }
+                continue;
+            }
         }
         LOG_INFO("Main menu accepted, continuing to map setup.");
 
@@ -34,20 +54,20 @@ int main() {
         // 使用 FastNoise 生成器以获得有趣的地形
         // 参数: seed, frequency, noiseType, fractalType, octaves, lacunarity, gain
         auto generator = std::make_unique<FastNoiseTerrainGenerator>(
-            1337,      // Seed
-            0.025f,      // Frequency
-            "OpenSimplex2",   // Noise Type
-            "FBm",      // Fractal Type
-            5,          // Octaves
-            2.0f,       // Lacunarity
-            0.5f        // Gain
+            settings.noiseSeed,
+            static_cast<float>(settings.noiseFrequency),
+            settings.noiseType,
+            settings.noiseFractal,
+            settings.noiseOctaves,
+            static_cast<float>(settings.noiseLacunarity),
+            static_cast<float>(settings.noiseGain)
         );
         
         auto map = std::make_unique<Map>(std::move(generator));
         LOG_INFO("Map created with FastNoiseTerrainGenerator.");
 
         // 3. 创建 TUI 控制器
-        TuiChunkController controller(*map);
+        TuiChunkController controller(*map, settings);
         LOG_INFO("TuiChunkController created.");
 
         // 4. 初始化控制器 (设置控制台等)

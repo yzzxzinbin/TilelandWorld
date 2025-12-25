@@ -21,21 +21,35 @@ namespace TilelandWorld
     // --- FastNoiseTerrainGenerator Implementation ---
 
     FastNoiseTerrainGenerator::FastNoiseTerrainGenerator(
-        int seed, float frequency, const char *noiseTypeStr, const char *fractalTypeStr,
+        int seed, float frequency, const std::string &noiseTypeStr, const std::string &fractalTypeStr,
         int octaves, float lacunarity, float gain)
         : seed(seed), frequency(frequency)
-    {
-        // Use defaults if input strings are null
-        std::string noiseType(noiseTypeStr ? noiseTypeStr : "Perlin");
-        // Empty string or "None" signifies no fractal modifier
-        std::string fractalType(fractalTypeStr ? fractalTypeStr : "");
-        if (fractalType == "None")
-        {
-            fractalType = "";
-        }
+{
+    // Normalize and trim inputs
+    auto trim = [](std::string s) {
+        size_t start = 0;
+        while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
+        size_t end = s.size();
+        while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1]))) --end;
+        return s.substr(start, end - start);
+    };
 
-        // Log the configuration attempt
-        LOG_INFO("Configuring FastNoiseTerrainGenerator:");
+    std::string noiseType = trim(noiseTypeStr);
+    std::string fractalType = trim(fractalTypeStr);
+
+    if (noiseType.empty()) {
+        noiseType = "Perlin";
+    }
+    if (fractalType == "None") {
+        fractalType.clear();
+    }
+
+    auto toLower = [](const std::string &s){ std::string r = s; std::transform(r.begin(), r.end(), r.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); }); return r; };
+    std::string noiseLower = toLower(noiseType);
+    std::string fractalLower = toLower(fractalType);
+
+    // Log the configuration attempt
+    LOG_INFO("Configuring FastNoiseTerrainGenerator:");
         LOG_INFO("  Seed: " + std::to_string(seed));
         LOG_INFO("  Frequency: " + std::to_string(frequency));
         LOG_INFO("  Base Noise: '" + noiseType + "'");
@@ -61,32 +75,26 @@ namespace TilelandWorld
 
             // --- Create Base Noise Node ---
             FastNoise::SmartNode<> baseNoiseNode;
-            if (noiseType == "Perlin")
+            if (noiseLower == "perlin")
             {
-                // *** Pass targetLevel ***
                 baseNoiseNode = FastNoise::New<FastNoise::Perlin>(targetLevel);
             }
-            else if (noiseType == "OpenSimplex2")
+            else if (noiseLower == "opensimplex2" || noiseLower == "open simplex2" || noiseLower == "open_simplex2")
             {
-                // *** Pass targetLevel ***
                 baseNoiseNode = FastNoise::New<FastNoise::OpenSimplex2>(targetLevel);
             }
-            else if (noiseType == "Value")
+            else if (noiseLower == "value")
             {
-                // *** Pass targetLevel ***
                 baseNoiseNode = FastNoise::New<FastNoise::Value>(targetLevel);
             }
-            else if (noiseType == "CellularDistance")
+            else if (noiseLower == "cellulardistance" || noiseLower == "cellular_distance" || noiseLower == "cellular distance")
             {
-                // *** Pass targetLevel ***
                 baseNoiseNode = FastNoise::New<FastNoise::CellularDistance>(targetLevel);
             }
-            else if (noiseType == "CellularValue")
+            else if (noiseLower == "cellularvalue" || noiseLower == "cellular_value" || noiseLower == "cellular value")
             {
-                // *** Pass targetLevel ***
                 baseNoiseNode = FastNoise::New<FastNoise::CellularValue>(targetLevel);
             }
-            // Add other base noise types here...
             else
             {
                 throw std::runtime_error("Unsupported base noise type: " + noiseType);
@@ -103,9 +111,8 @@ namespace TilelandWorld
             {
                 FastNoise::SmartNode<> finalNode; // This will hold the configured fractal node
 
-                if (fractalType == "FBm")
+                if (fractalLower == "fbm")
                 {
-                    // *** Pass targetLevel ***
                     auto fbmNode = FastNoise::New<FastNoise::FractalFBm>(targetLevel);
                     if (!fbmNode)
                         throw std::runtime_error("Failed to create FractalFBm node.");
@@ -116,9 +123,8 @@ namespace TilelandWorld
                     finalNode = fbmNode;
                     LOG_INFO("FractalFBm node created and configured for input type 'FBm'.");
                 }
-                else if (fractalType == "Ridged")
+                else if (fractalLower == "ridged")
                 {
-                    // *** Pass targetLevel ***
                     auto ridgedNode = FastNoise::New<FastNoise::FractalRidged>(targetLevel);
                     if (!ridgedNode)
                         throw std::runtime_error("Failed to create FractalRidged node.");
@@ -170,6 +176,7 @@ namespace TilelandWorld
         catch (const std::runtime_error &e)
         {
             LOG_ERROR("Failed to initialize FastNoise: " + std::string(e.what()));
+            LOG_ERROR("Parameters: noiseType='" + noiseType + "' (len=" + std::to_string(noiseType.size()) + ") fractal='" + fractalType + "' (len=" + std::to_string(fractalType.size()) + ") seed=" + std::to_string(seed));
             LOG_WARNING("Falling back to default Perlin noise configuration (SSE4.1)."); // Updated log
             // *** Ensure fallback also uses targetLevel (SSE4.1) ***
             this->noiseSource = FastNoise::New<FastNoise::Perlin>(targetLevel);
@@ -184,6 +191,7 @@ namespace TilelandWorld
         catch (...)
         {
             LOG_ERROR("An unknown error occurred during FastNoise initialization.");
+            LOG_ERROR("Parameters: noiseType='" + noiseType + "' (len=" + std::to_string(noiseType.size()) + ") fractal='" + fractalType + "' (len=" + std::to_string(fractalType.size()) + ") seed=" + std::to_string(seed));
             LOG_WARNING("Falling back to default Perlin noise configuration (SSE4.1)."); // Updated log
             // *** Ensure fallback also uses targetLevel (SSE4.1) ***
             this->noiseSource = FastNoise::New<FastNoise::Perlin>(targetLevel);

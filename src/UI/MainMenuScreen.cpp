@@ -15,17 +15,18 @@ namespace {
 }
 
 MainMenuScreen::MainMenuScreen()
-        : surface(96, 32),
-            menu({"Start Game", "Load Sample (coming soon)", "Quit"}, theme) {
-        menu.setTitle("Tileland World");
-        menu.setSubtitle("Minimal ANSI TUI - arrow keys + Enter");
+    : surface(96, 32),
+      menu({"Start Game", "Settings", "Quit"}, theme) {
+    // 重新应用主题，确保菜单使用已初始化的 theme（成员顺序已调整）。
+    menu.setTitle("Tileland World");
+    menu.setSubtitle("Minimal ANSI TUI - arrow keys + Enter");
 }
 
-bool MainMenuScreen::show() {
+MainMenuScreen::Action MainMenuScreen::show() {
     ensureAnsiEnabled();
 
     bool running = true;
-    bool startGame = false;
+    Action result = Action::Quit;
 
     while (running) {
         renderFrame();
@@ -43,21 +44,18 @@ bool MainMenuScreen::show() {
             menu.moveDown();
         } else if (key == 13) { // Enter
             selectedIndex = menu.getSelected();
-            if (selectedIndex == 0) {
-                startGame = true;
-            }
-            if (selectedIndex >= 2) {
-                startGame = false;
-            }
+            if (selectedIndex == 0) result = Action::Start;
+            else if (selectedIndex == 1) result = Action::Settings;
+            else result = Action::Quit;
             running = false;
         } else if (key == 27 || key == 'q' || key == 'Q') { // Esc or Q
             running = false;
-            startGame = false;
+            result = Action::Quit;
         }
     }
 
     painter.reset();
-    return startGame;
+    return result;
 }
 
 void MainMenuScreen::renderFrame() {

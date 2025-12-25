@@ -6,6 +6,7 @@
 #include "../Coordinates.h"
 #include "TuiRenderer.h" 
 #include "InputController.h"
+#include "../Settings.h"
 #include "../MapGenInfrastructure/ChunkGeneratorPool.h"
 #include "../Utils/TaskSystem.h" // 引入 TaskSystem
 #include <unordered_set>
@@ -18,7 +19,7 @@ namespace TilelandWorld {
 
     class TuiChunkController {
     public:
-        explicit TuiChunkController(Map& map);
+        explicit TuiChunkController(Map& map, const Settings& settings);
         ~TuiChunkController();
 
         // 1. 初始化 TUI 环境
@@ -57,13 +58,15 @@ namespace TilelandWorld {
         int viewHeight = 48;
         bool running = true;
 
+        Settings settings;
+
         // 鼠标叠加层
         std::shared_ptr<UI::TuiSurface> mouseOverlay;
         int mouseScreenX = -1;
         int mouseScreenY = -1;
         
         // TPS 控制
-        const double targetTps = 60.9;
+        double targetTps = 60.9;
 
         // 新增：TPS 计算变量
         double currentTps = 0.0;

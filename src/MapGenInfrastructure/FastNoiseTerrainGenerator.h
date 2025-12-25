@@ -6,6 +6,7 @@
 #include "../Chunk.h" // 需要 Chunk 定义
 #include "../Tile.h"  // 需要 Tile 和 TerrainType
 #include <FastNoise/FastNoise.h> // 包含 FastNoise2 主头文件
+#include <string>
 #include <memory> // For std::unique_ptr
 
 namespace TilelandWorld {
@@ -30,8 +31,8 @@ namespace TilelandWorld {
         FastNoiseTerrainGenerator(
             int seed = 1337,
             float frequency = 0.02f,
-            const char* noiseType = "Perlin", // 默认使用 Perlin
-            const char* fractalType = "FBm",  // 默认使用 FBM 分形
+            const std::string& noiseType = std::string("Perlin"), // 默认使用 Perlin
+            const std::string& fractalType = std::string("FBm"),  // 默认使用 FBM 分形
             int octaves = 3,
             float lacunarity = 2.0f,
             float gain = 0.5f

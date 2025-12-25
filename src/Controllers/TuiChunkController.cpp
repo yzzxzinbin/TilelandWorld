@@ -12,7 +12,7 @@
 
 namespace TilelandWorld {
 
-    TuiChunkController::TuiChunkController(Map& mapRef) : map(mapRef) {
+    TuiChunkController::TuiChunkController(Map& mapRef, const Settings& cfg) : map(mapRef), settings(cfg) {
         // 1. 初始化通用任务系统
         taskSystem = std::make_unique<TaskSystem>(); // 默认使用 (核心数-1) 个线程
 
@@ -20,10 +20,15 @@ namespace TilelandWorld {
         generatorPool = std::make_unique<ChunkGeneratorPool>(map, *taskSystem);
 
         // 3. 初始化渲染器
-        renderer = std::make_unique<TuiRenderer>(map, mapMutex);
+        renderer = std::make_unique<TuiRenderer>(map, mapMutex, settings.statsOverlayAlpha, settings.enableStatsOverlay);
 
         // 4. 初始化输入控制器
         inputController = std::make_unique<InputController>();
+
+        // 视图尺寸与 TPS 从设置读取
+        viewWidth = settings.viewWidth;
+        viewHeight = settings.viewHeight;
+        targetTps = settings.targetTps;
     }
 
     TuiChunkController::~TuiChunkController() {
@@ -226,6 +231,7 @@ namespace TilelandWorld {
                 else if (ev.key == InputKey::Escape) { running = false; }
             }
             else if (ev.type == InputEvent::Type::Mouse) {
+                if (!settings.enableMouseCross) continue;
                 mouseScreenX = ev.x;
                 mouseScreenY = ev.y;
                 rebuildMouseOverlay();
@@ -234,6 +240,12 @@ namespace TilelandWorld {
     }
 
     void TuiChunkController::rebuildMouseOverlay() {
+        if (!settings.enableMouseCross) {
+            mouseOverlay.reset();
+            if (renderer) renderer->clearUiLayer();
+            return;
+        }
+
         int overlayW = viewWidth * 2;
         int overlayH = viewHeight;
 
@@ -256,7 +268,7 @@ namespace TilelandWorld {
         surface->fillRect(tileX * 2, 0, 2, overlayH, white, white, " ");
 
         mouseOverlay = surface;
-        if (renderer) renderer->setUiLayer(mouseOverlay, 0.10); // 10% 背景混合
+        if (renderer) renderer->setUiLayer(mouseOverlay, settings.mouseCrossAlpha);
     }
 
     void TuiChunkController::preloadChunks() {

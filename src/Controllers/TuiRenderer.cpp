@@ -46,8 +46,8 @@ namespace TilelandWorld
         }
     } // namespace
 
-    TuiRenderer::TuiRenderer(const Map &mapRef, std::mutex &mutexRef)
-        : map(mapRef), mapMutex(mutexRef), running(false)
+    TuiRenderer::TuiRenderer(const Map &mapRef, std::mutex &mutexRef, double statsAlpha, bool enableStats)
+        : map(mapRef), mapMutex(mutexRef), running(false), baseStatsAlpha(statsAlpha), enableStatsOverlay(enableStats)
     {
         // 初始化默认视图状态
         currentViewState = {0, 0, 0, 64, 48, 0, 0.0}; // 新增 tps 初始化为 0.0
@@ -193,11 +193,24 @@ namespace TilelandWorld
                 externalOverlay = uiLayer;
                 overlayAlpha = uiLayerAlphaBg;
             }
-            auto stats = buildStatsOverlay(state);
-            overlay = stats;
-            double statsAlpha = 0.1;
+            std::shared_ptr<UI::TuiSurface> stats;
+            if (enableStatsOverlay)
+            {
+                stats = buildStatsOverlay(state);
+            }
 
-            if (externalOverlay)
+            // 基线：stats 或 external
+            if (stats)
+            {
+                overlay = stats;
+            }
+            else if (externalOverlay)
+            {
+                overlay = externalOverlay;
+                overlayAlpha = std::max(baseStatsAlpha, overlayAlpha); // fallback to avoid zero alpha
+            }
+
+            if (stats && externalOverlay)
             {
                 // 合并：外部 UI 在上，文字优先保留，背景叠加
                 auto merged = std::make_shared<UI::TuiSurface>(*stats);
@@ -212,14 +225,12 @@ namespace TilelandWorld
 
                         if (UI::TuiCell* dst = merged->editCell(x, y))
                         {
-                            // 非空格字符：直接覆盖
                             if (!top.glyph.empty() && top.glyph != " ")
                             {
                                 dst->glyph = top.glyph;
                                 dst->fg = top.fg;
                             }
 
-                            // 背景：始终覆盖为白背景十字，保留原文字
                             if (top.hasBg || (!top.glyph.empty() && top.glyph != " "))
                             {
                                 dst->bg = top.bg;
@@ -229,11 +240,11 @@ namespace TilelandWorld
                     }
                 }
                 overlay = merged;
-                overlayAlpha = std::max(statsAlpha, overlayAlpha);
+                overlayAlpha = std::max(baseStatsAlpha, overlayAlpha);
             }
-            else
+            else if (stats)
             {
-                overlayAlpha = statsAlpha;
+                overlayAlpha = baseStatsAlpha;
             }
 
             // 3. 渲染输出
