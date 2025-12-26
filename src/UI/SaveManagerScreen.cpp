@@ -1,4 +1,5 @@
 #include "SaveManagerScreen.h"
+#include "SaveCreationScreen.h"
 #include "../BinaryFileInfrastructure/MapSerializer.h"
 #include <filesystem>
 #include <algorithm>
@@ -44,21 +45,21 @@ SaveManagerScreen::Result SaveManagerScreen::show() {
 
         for (const auto& ev : events) {
             if (ev.type == InputEvent::Type::Mouse) {
-                handleMouse(ev, running, result);
+                handleMouse(ev, running, result, input);
             } else if (ev.type == InputEvent::Type::Key) {
                 if (ev.key == InputKey::Character) {
                     int ch = static_cast<int>(ev.ch);
                     if (ch == 13 || ch == '\n' || ch == '\r') {
-                        handleKey(13, running, result);
+                        handleKey(13, running, result, input);
                     } else {
-                        handleKey(ch, running, result);
+                        handleKey(ch, running, result, input);
                     }
                 } else if (ev.key == InputKey::Enter) {
-                    handleKey(13, running, result);
+                    handleKey(13, running, result, input);
                 } else if (ev.key == InputKey::ArrowUp) {
-                    handleKey(kArrowUp, running, result);
+                    handleKey(kArrowUp, running, result, input);
                 } else if (ev.key == InputKey::ArrowDown) {
-                    handleKey(kArrowDown, running, result);
+                    handleKey(kArrowDown, running, result, input);
                 }
             }
             if (!running) break;
@@ -126,7 +127,7 @@ void SaveManagerScreen::renderFrame() {
     surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), "Click or Enter to open | Q back", theme.hintFg, theme.background);
 }
 
-void SaveManagerScreen::handleKey(int key, bool& running, Result& result) {
+void SaveManagerScreen::handleKey(int key, bool& running, Result& result, InputController& input) {
     if (!running) return;
 
     if (key == kArrowUp || key == 'w' || key == 'W') {
@@ -144,23 +145,31 @@ void SaveManagerScreen::handleKey(int key, bool& running, Result& result) {
         if (idx < saves.size()) {
             result.action = Result::Action::Load;
             result.saveName = saves[idx];
+            result.saveDirectory = directory;
             running = false;
         } else if (idx == saves.size()) { // New
-            result = handleCreateNew();
+            input.stop();
+            result = handleCreateNew(input);
+            input.start();
             if (result.action != Result::Action::Back) {
+                if (!result.saveDirectory.empty()) {
+                    directory = result.saveDirectory;
+                }
                 running = false;
             }
         } else { // Back
             result.action = Result::Action::Back;
+            result.saveDirectory = directory;
             running = false;
         }
     } else if (key == 'q' || key == 'Q') {
         result.action = Result::Action::Back;
+        result.saveDirectory = directory;
         running = false;
     }
 }
 
-void SaveManagerScreen::handleMouse(const InputEvent& ev, bool& running, Result& result) {
+void SaveManagerScreen::handleMouse(const InputEvent& ev, bool& running, Result& result, InputController& input) {
     if (!running) return;
     if (ev.wheel != 0) {
         if (ev.wheel > 0) menu.moveUp(); else menu.moveDown();
@@ -174,12 +183,13 @@ void SaveManagerScreen::handleMouse(const InputEvent& ev, bool& running, Result&
 
     size_t idx = static_cast<size_t>(relY);
     if (idx < menu.getItems().size()) {
-        // 悬停高亮
-        while (menu.getSelected() < idx) menu.moveDown();
-        while (menu.getSelected() > idx) menu.moveUp();
+        int areaWidth = std::max(0, lastPanelWidth - 4);
+        int localX = std::clamp(relX - 2, 0, areaWidth);
+        double originNorm = areaWidth > 0 ? static_cast<double>(localX) / static_cast<double>(areaWidth) : 0.0;
+        menu.setSelectedWithOrigin(idx, originNorm);
 
         if (ev.button == 0 && ev.pressed) {
-            handleKey(13, running, result); // 左键单击激活
+            handleKey(13, running, result, input); // 左键单击激活
         }
     }
 }
@@ -197,29 +207,18 @@ void SaveManagerScreen::ensureAnsiEnabled() {
 #endif
 }
 
-SaveManagerScreen::Result SaveManagerScreen::handleCreateNew() {
+SaveManagerScreen::Result SaveManagerScreen::handleCreateNew(InputController&) {
     Result res{};
     res.action = Result::Action::Back;
 
-    painter.reset();
-    std::cout << "\x1b[2J\x1b[H";
-    std::cout << "Enter save name (letters/numbers). Leave empty for generated: ";
-    std::string name;
-    std::getline(std::cin, name);
-    if (name.empty()) {
-        auto now = std::chrono::system_clock::now().time_since_epoch().count();
-        name = "world-" + std::to_string(static_cast<long long>(now & 0xFFFFFFFF));
+    SaveCreationScreen creator(directory);
+    auto form = creator.show();
+    if (form.accepted) {
+        res.action = Result::Action::CreateNew;
+        res.saveName = form.saveName;
+        res.metadata = form.metadata;
+        res.saveDirectory = form.saveDirectory;
     }
-    // Sanitize simple
-    std::replace_if(name.begin(), name.end(), [](char c){ return c == '/' || c == '\\' || c == ' ' || c == ':' || c == '*'; }, '_');
-
-    WorldMetadata meta{};
-    auto seedNow = std::chrono::steady_clock::now().time_since_epoch().count();
-    meta.seed = static_cast<int64_t>(seedNow & 0x7FFFFFFF);
-
-    res.action = Result::Action::CreateNew;
-    res.saveName = name;
-    res.metadata = meta;
     return res;
 }
 

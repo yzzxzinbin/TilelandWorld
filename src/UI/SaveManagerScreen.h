@@ -17,6 +17,7 @@ public:
         enum class Action { Load, CreateNew, Back };
         Action action{Action::Back};
         std::string saveName;
+        std::string saveDirectory;
         WorldMetadata metadata{};
     };
 
@@ -43,11 +44,11 @@ private:
 
     void refreshList();
     void renderFrame();
-    void handleKey(int key, bool& running, Result& result);
-    void handleMouse(const InputEvent& ev, bool& running, Result& result);
+    void handleKey(int key, bool& running, Result& result, InputController& input);
+    void handleMouse(const InputEvent& ev, bool& running, Result& result, InputController& input);
     void ensureAnsiEnabled();
 
-    Result handleCreateNew();
+    Result handleCreateNew(InputController& input);
     bool deleteSelected();
 };
 

@@ -41,18 +41,21 @@ int main() {
 
                 std::unique_ptr<Map> map;
                 if (sel.action == TilelandWorld::UI::SaveManagerScreen::Result::Action::Load) {
-                    map = MapSerializer::loadMapFromSave(sel.saveName, settings.saveDirectory);
+                    std::string chosenDir = sel.saveDirectory.empty() ? settings.saveDirectory : sel.saveDirectory;
+                    map = MapSerializer::loadMapFromSave(sel.saveName, chosenDir);
                     if (!map) {
                         LOG_ERROR("Failed to load save '" + sel.saveName + "'. Returning to main menu.");
                         continue;
                     }
                     LOG_INFO("Loaded save '" + sel.saveName + "'.");
                 } else if (sel.action == TilelandWorld::UI::SaveManagerScreen::Result::Action::CreateNew) {
-                    std::filesystem::create_directories(settings.saveDirectory);
+                    std::string chosenDir = sel.saveDirectory.empty() ? settings.saveDirectory : sel.saveDirectory;
+                    std::filesystem::create_directories(chosenDir);
+                    settings.saveDirectory = chosenDir;
                     map = std::make_unique<Map>(createTerrainGeneratorFromMetadata(sel.metadata));
                     map->setWorldMetadata(sel.metadata);
-                    MapSerializer::saveCompressedMap(*map, sel.saveName, settings.saveDirectory, false);
-                    LOG_INFO("Created new save '" + sel.saveName + "'.");
+                    MapSerializer::saveCompressedMap(*map, sel.saveName, chosenDir, false);
+                    LOG_INFO("Created new save '" + sel.saveName + "' in '" + chosenDir + "'.");
                 }
 
                 // 清屏：从主界面进入游戏主循环时做一次 ANSI 清屏
