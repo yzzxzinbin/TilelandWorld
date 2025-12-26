@@ -43,7 +43,8 @@ DirectoryBrowserScreen::DirectoryBrowserScreen(std::string initialPath)
 
 std::string DirectoryBrowserScreen::show()
 {
-    InputController input;
+    InputController input(false); // keep VT mouse enabled for caller
+    input.setRestoreOnExit(false);
     input.start();
 
     bool running = true;

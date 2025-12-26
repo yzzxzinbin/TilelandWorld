@@ -23,7 +23,8 @@ namespace TilelandWorld {
         }
     }
 
-    InputController::InputController()
+    InputController::InputController(bool restoreOnExit_)
+        : restoreOnExit(restoreOnExit_)
     {
 #ifdef _WIN32
         hIn = GetStdHandle(STD_INPUT_HANDLE);
@@ -35,7 +36,7 @@ namespace TilelandWorld {
     {
         stop();
 #ifdef _WIN32
-        restoreConsole();
+        if (restoreOnExit) restoreConsole();
 #endif
     }
 

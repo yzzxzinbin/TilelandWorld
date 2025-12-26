@@ -47,12 +47,14 @@ namespace TilelandWorld {
 
     class InputController {
     public:
-        InputController();
+        explicit InputController(bool restoreOnExit = true);
         ~InputController();
 
         // 启动后台读取线程
         void start();
         void stop();
+
+        void setRestoreOnExit(bool enabled) { restoreOnExit = enabled; }
 
         // 拉取当前已解析的输入事件队列（清空内部队列）
         std::vector<InputEvent> pollEvents();
@@ -62,6 +64,7 @@ namespace TilelandWorld {
         HANDLE hIn{INVALID_HANDLE_VALUE};
         DWORD oldMode{0};
 #endif
+    bool restoreOnExit{true};
         std::thread readerThread;
         std::atomic<bool> running{false};
         std::mutex queueMutex;
