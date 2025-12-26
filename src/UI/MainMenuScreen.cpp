@@ -1,6 +1,8 @@
 #include "MainMenuScreen.h"
+#include "TuiUtils.h"
 #include <algorithm>
 #include <thread>
+#include <vector>
 #include "../Controllers/InputController.h"
 #ifdef _WIN32
 #include <windows.h>
@@ -13,6 +15,14 @@ namespace {
     constexpr int kArrowUp = 0x100 | 72;
     constexpr int kArrowDown = 0x100 | 80;
     const BoxStyle kModernFrame{"╭", "╮", "╰", "╯", "─", "│"};
+    const std::vector<std::string> kBannerLines = {
+        "████████╗██╗██╗     ███████╗██╗      █████╗ ███╗   ██╗██████╗     ██╗    ██╗ ██████╗ ██████╗ ██╗     ██████╗ ",
+        "╚══██╔══╝██║██║     ██╔════╝██║     ██╔══██╗████╗  ██║██╔══██╗    ██║    ██║██╔═══██╗██╔══██╗██║     ██╔══██╗",
+        "   ██║   ██║██║     █████╗  ██║     ███████║██╔██╗ ██║██║  ██║    ██║ █╗ ██║██║   ██║██████╔╝██║     ██║  ██║",
+        "   ██║   ██║██║     ██╔══╝  ██║     ██╔══██║██║╚██╗██║██║  ██║    ██║███╗██║██║   ██║██╔══██╗██║     ██║  ██║",
+        "   ██║   ██║███████╗███████╗███████╗██║  ██║██║ ╚████║██████╔╝    ╚███╔███╔╝╚██████╔╝██║  ██║███████╗██████╔╝",
+        "   ╚═╝   ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝      ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═════╝ "
+    };
 }
 
 MainMenuScreen::MainMenuScreen()
@@ -84,6 +94,22 @@ void MainMenuScreen::renderFrame() {
 
     surface.clear(theme.itemFg, theme.background, " ");
 
+    int bannerStartY = 2;
+    int bannerHeight = static_cast<int>(kBannerLines.size());
+    for (int i = 0; i < bannerHeight; ++i) {
+        double fade = static_cast<double>(i) / std::max(1, bannerHeight - 1);
+        RGBColor rowBg = TuiUtils::blendColor(theme.accent, theme.panel, 0.35 + fade * 0.15);
+        RGBColor rowFg = TuiUtils::blendColor(theme.title, theme.focusBg, 0.4 + fade * 0.1);
+        surface.fillRect(0, bannerStartY + i, surface.getWidth(), 1, rowFg, rowBg, " ");
+        std::string line = kBannerLines[static_cast<size_t>(i)];
+        size_t vis = TuiUtils::calculateUtf8VisualWidth(line);
+        int maxVis = surface.getWidth();
+        if (static_cast<int>(vis) > maxVis) {
+            line = TuiUtils::trimToUtf8VisualWidth(line, static_cast<size_t>(maxVis));
+        }
+        surface.drawCenteredText(0, bannerStartY + i, surface.getWidth(), line, rowFg, rowBg);
+    }
+
     // 顶部和底部的强调色条，营造现代简约感
     surface.fillRect(0, 0, surface.getWidth(), 1, theme.accent, theme.accent, " ");
     surface.fillRect(0, surface.getHeight() - 1, surface.getWidth(), 1, theme.accent, theme.accent, " ");
@@ -91,7 +117,8 @@ void MainMenuScreen::renderFrame() {
     int padding = 4;
     int panelWidth = std::max(32, surface.getWidth() - padding * 2);
     int originX = padding;
-    int originY = std::max(2, surface.getHeight() / 5);
+    int bannerBottom = bannerStartY + bannerHeight;
+    int originY = std::max(bannerBottom + 2, surface.getHeight() / 4);
 
     lastPanelX = originX;
     lastPanelY = originY;
@@ -101,8 +128,12 @@ void MainMenuScreen::renderFrame() {
 
     menu.render(surface, originX, originY, panelWidth);
 
-    // 底部提示
-    surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), "Click or Enter to select | Q quits", theme.hintFg, theme.background);
+    int infoHeight = 3;
+    int infoOriginY = surface.getHeight() - infoHeight - 2;
+    surface.fillRect(0, infoOriginY, surface.getWidth(), infoHeight, theme.panel, theme.panel, " ");
+    surface.drawCenteredText(0, infoOriginY, surface.getWidth(), "Procedural walls, endless plains", theme.subtitle, theme.panel);
+    surface.drawCenteredText(0, infoOriginY + 1, surface.getWidth(), "Use Enter/click to choose · Q exits", theme.hintFg, theme.panel);
+    surface.drawCenteredText(0, infoOriginY + 2, surface.getWidth(), "Version 0.9.1 • build 2025-12-26", theme.hintFg, theme.panel);
 }
 
 void MainMenuScreen::handleKey(int key, bool& running, Action& result) {

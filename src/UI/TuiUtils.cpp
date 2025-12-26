@@ -25,7 +25,7 @@ Utf8CharInfo nextUtf8Char(const std::string& s, size_t pos) {
         if (pos + 2 < s.size() && (static_cast<unsigned char>(s[pos + 1]) & 0xC0) == 0x80 && (static_cast<unsigned char>(s[pos + 2]) & 0xC0) == 0x80) {
             charLen = 3;
             codepoint = ((byte & 0x0F) << 12) | ((static_cast<unsigned char>(s[pos + 1]) & 0x3F) << 6) | (static_cast<unsigned char>(s[pos + 2]) & 0x3F);
-            if (codepoint >= 0x2500 && codepoint <= 0x257F) {
+            if ((codepoint >= 0x2500 && codepoint <= 0x257F) || (codepoint >= 0x2580 && codepoint <= 0x259F)) {
                 visual = 1;
             } else {
                 visual = 2;
