@@ -169,9 +169,10 @@ void MainMenuScreen::handleMouse(const InputEvent& ev, bool& running, Action& re
 
     size_t idx = static_cast<size_t>(relY);
     if (idx < menu.getItems().size()) {
-        // 悬停高亮
-        while (menu.getSelected() < idx) menu.moveDown();
-        while (menu.getSelected() > idx) menu.moveUp();
+        int areaWidth = std::max(0, lastPanelWidth - 4);
+        int localX = std::clamp(relX - 2, 0, areaWidth);
+        double originNorm = (areaWidth > 0) ? static_cast<double>(localX) / static_cast<double>(areaWidth) : 0.0;
+        menu.setSelectedWithOrigin(idx, originNorm);
 
         if (ev.button == 0 && ev.pressed) {
             handleKey(13, running, result); // 左键单击激活

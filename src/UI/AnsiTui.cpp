@@ -1,6 +1,8 @@
 #include "AnsiTui.h"
 #include "TuiUtils.h"
 #include <algorithm>
+#include <cmath>
+#include <utility>
 
 namespace TilelandWorld {
 namespace UI {
@@ -191,6 +193,7 @@ MenuView::MenuView(std::vector<std::string> items, MenuTheme theme_) : options(s
         options.push_back("Start");
     }
     selected = 0;
+    startSelectionChange(selected, 0.0);
 }
 
 void MenuView::setTitle(std::string text) {
@@ -203,16 +206,20 @@ void MenuView::setSubtitle(std::string text) {
 
 void MenuView::moveUp() {
     if (options.empty()) return;
-    if (selected == 0) {
-        selected = options.size() - 1;
-    } else {
-        --selected;
-    }
+    size_t next = (selected == 0) ? options.size() - 1 : selected - 1;
+    startSelectionChange(next, 0.0);
 }
 
 void MenuView::moveDown() {
     if (options.empty()) return;
-    selected = (selected + 1) % options.size();
+    size_t next = (selected + 1) % options.size();
+    startSelectionChange(next, 0.0);
+}
+
+void MenuView::setSelectedWithOrigin(size_t idx, double originNorm) {
+    if (idx >= options.size()) return;
+    if (idx == selected) return;
+    startSelectionChange(idx, originNorm);
 }
 
 void MenuView::render(TuiSurface& surface, int originX, int originY, int width) {
@@ -236,6 +243,65 @@ void MenuView::render(TuiSurface& surface, int originX, int originY, int width) 
 
     int listStart = y + 4;
     int areaWidth = safeWidth - 4;
+    auto now = std::chrono::steady_clock::now();
+
+    struct HighlightSpan { int start; int end; bool done; };
+    auto spanFor = [&](bool isActive, bool isFading, double originNorm, std::chrono::steady_clock::time_point startTime, double duration) {
+        double t = std::chrono::duration<double>(now - startTime).count();
+        if (t < 0) t = 0;
+        double progress = duration > 0 ? std::min(1.0, t / duration) : 1.0;
+        double eased = easeOutCubic(progress);
+        double radius = 0.0;
+        if (isActive) {
+            radius = eased * static_cast<double>(areaWidth);
+        } else if (isFading) {
+            radius = (1.0 - eased) * static_cast<double>(areaWidth);
+        }
+        bool done = duration <= 0 || t >= duration;
+        if (radius <= 0.05) return HighlightSpan{-1, -1, done};
+        double originPx = originNorm * static_cast<double>(areaWidth);
+        double start = originPx - radius;
+        double end = originPx + radius;
+        int hStart = static_cast<int>(std::floor(std::max(0.0, start)));
+        int hEnd = static_cast<int>(std::ceil(std::min(static_cast<double>(areaWidth), end)));
+        if (hStart >= hEnd) return HighlightSpan{-1, -1, done};
+        return HighlightSpan{hStart, hEnd, done};
+    };
+
+    auto drawRowTextSegmented = [&](int rowY, int rowX, const std::string& line,
+                                    int highlightStart, int highlightEnd,
+                                    const RGBColor& baseFg, const RGBColor& baseBg,
+                                    const RGBColor& hiFg, const RGBColor& hiBg) {
+        int cursorX = rowX;
+        for (size_t pos = 0; pos < line.size();) {
+            auto info = TuiUtils::nextUtf8Char(line, pos);
+            if (info.length == 0) break;
+            int relX = cursorX - rowX;
+            bool inHighlight = relX >= highlightStart && relX < highlightEnd;
+            const RGBColor& useBg = inHighlight ? hiBg : baseBg;
+            const RGBColor& useFg = inHighlight ? hiFg : baseFg;
+            if (TuiCell* cell = surface.editCell(cursorX, rowY)) {
+                cell->glyph = line.substr(pos, info.length);
+                cell->fg = useFg;
+                cell->bg = useBg;
+                cell->hasBg = true;
+                cell->isContinuation = false;
+            }
+            if (info.visualWidth == 2) {
+                if (TuiCell* cont = surface.editCell(cursorX + 1, rowY)) {
+                    cont->glyph.clear();
+                    cont->fg = useFg;
+                    cont->bg = useBg;
+                    cont->hasBg = true;
+                    cont->isContinuation = true;
+                }
+            }
+            cursorX += static_cast<int>(info.visualWidth);
+            pos += info.length;
+            if (relX > areaWidth) break;
+        }
+    };
+
     for (size_t i = 0; i < options.size(); ++i) {
         bool focus = i == selected;
         std::string marker = focus ? "▶ " : "  ";
@@ -250,18 +316,105 @@ void MenuView::render(TuiSurface& surface, int originX, int originY, int width) 
 
         std::string line = marker + text;
         double stripeBlend = 0.25 + (static_cast<int>(i) % 2) * 0.05;
-        RGBColor rowBg = focus ? TuiUtils::blendColor(theme.focusBg, theme.accent, 0.35)
-                                : TuiUtils::blendColor(theme.panel, theme.background, stripeBlend);
-        RGBColor rowFg = focus ? theme.focusFg : theme.itemFg;
+        RGBColor rowBg = TuiUtils::blendColor(theme.panel, theme.background, stripeBlend);
+        RGBColor rowFg = theme.itemFg;
         surface.fillRect(x + 2, listStart + static_cast<int>(i), areaWidth, 1, rowFg, rowBg, " ");
-        if (focus) {
-            surface.fillRect(x + 1, listStart + static_cast<int>(i), 1, 1, theme.accent, rowBg, " ");
+
+        RGBColor hiliteBaseBg = TuiUtils::blendColor(theme.focusBg, theme.accent, 0.35);
+        RGBColor hiliteBaseFg = theme.focusFg;
+
+        auto blendedBg = [&](int hStart, int hEnd, bool isActiveSpan) {
+            if (hStart < 0 || hEnd <= hStart) return rowBg;
+            double alpha = std::clamp(static_cast<double>(hEnd - hStart) / std::max(1, areaWidth), 0.0, 1.0);
+            if (!isActiveSpan) {
+                alpha *= 0.8;
+            }
+            return TuiUtils::blendColor(rowBg, hiliteBaseBg, alpha);
+        };
+
+        auto blendedFg = [&](int hStart, int hEnd, bool isActiveSpan) {
+            if (hStart < 0 || hEnd <= hStart) return rowFg;
+            double alpha = std::clamp(static_cast<double>(hEnd - hStart) / std::max(1, areaWidth), 0.0, 1.0);
+            if (!isActiveSpan) alpha *= 0.6;
+            return TuiUtils::blendColor(rowFg, hiliteBaseFg, alpha);
+        };
+
+        int highlightStart = -1;
+        int highlightEnd = -1;
+        RGBColor hBg = rowBg;
+        RGBColor hFg = rowFg;
+        if (hasFadeAnim && fadeRow == i) {
+            auto span = spanFor(false, true, fadeOriginNorm, fadeStart, kFadeDuration);
+            if (span.done) { hasFadeAnim = false; }
+            if (span.start >= 0 && span.end > span.start) {
+                highlightStart = span.start;
+                highlightEnd = span.end;
+                hBg = blendedBg(span.start, span.end, false);
+                hFg = blendedFg(span.start, span.end, false);
+            }
         }
-        // Marker gets a colored accent foreground for better contrast (avoid pure black)
-        RGBColor markerFg = focus ? TuiUtils::lightenColor(theme.accent, 0.18) : rowFg;
-        surface.drawText(x + 2, listStart + static_cast<int>(i), marker, markerFg, rowBg);
-        surface.drawText(x + 2 + static_cast<int>(markerWidth), listStart + static_cast<int>(i), text, rowFg, rowBg);
+
+
+        auto applyHighlightSpan = [&](int rowY, int hStart, int hEnd, const RGBColor& hiFg, const RGBColor& hiBg) {
+            int start = std::max(0, hStart);
+            int end = std::min(areaWidth, hEnd);
+            if (start >= end) return;
+            for (int px = start; px < end; ++px) {
+                if (TuiCell* cell = surface.editCell(x + 2 + px, rowY)) {
+                    cell->bg = hiBg;
+                    cell->fg = hiFg;
+                    cell->hasBg = true;
+                }
+            }
+        };
+
+        if (focus) {
+            int focusStart = 0;
+            int focusEnd = areaWidth;
+            if (hasActiveAnim) {
+                auto span = spanFor(true, false, activeOriginNorm, activeStart, kExpandDuration);
+                if (span.done) { hasActiveAnim = false; }
+                if (span.start >= 0 && span.end > span.start) {
+                    focusStart = span.start;
+                    focusEnd = span.end;
+                }
+            }
+            highlightStart = focusStart;
+            highlightEnd = focusEnd;
+            hBg = blendedBg(focusStart, focusEnd, true);
+            hFg = blendedFg(focusStart, focusEnd, true);
+        }
+
+        RGBColor markerFg = rowFg;
+        int rowY = listStart + static_cast<int>(i);
+        applyHighlightSpan(rowY, highlightStart, highlightEnd, hFg, hBg);
+        drawRowTextSegmented(rowY, x + 2, marker, highlightStart, highlightEnd, markerFg, rowBg, hFg, hBg);
+        drawRowTextSegmented(rowY, x + 2 + static_cast<int>(markerWidth), text,
+                            highlightStart - static_cast<int>(markerWidth),
+                            highlightEnd - static_cast<int>(markerWidth),
+                            rowFg, rowBg, hFg, hBg);
     }
+}
+
+void MenuView::startSelectionChange(size_t newSel, double originNorm) {
+    if (options.empty()) return;
+    auto now = std::chrono::steady_clock::now();
+    if (selected < options.size() && newSel != selected) {
+        fadeRow = selected;
+        fadeOriginNorm = activeOriginNorm;
+        fadeStart = now;
+        hasFadeAnim = true;
+    }
+    selected = newSel;
+    activeOriginNorm = std::clamp(originNorm, 0.0, 1.0);
+    activeStart = now;
+    hasActiveAnim = true;
+}
+
+double MenuView::easeOutCubic(double t) {
+    double clamped = std::clamp(t, 0.0, 1.0);
+    double inv = 1.0 - clamped;
+    return 1.0 - inv * inv * inv;
 }
 
 } // namespace UI

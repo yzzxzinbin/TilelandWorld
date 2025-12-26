@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <ostream>
 #include <iostream>
+#include <chrono>
 #include "../TerrainTypes.h"
 
 namespace TilelandWorld {
@@ -88,6 +89,7 @@ public:
     void setTitle(std::string text);
     void setSubtitle(std::string text);
     void setFrameStyle(const BoxStyle& style) { frame = style; }
+    void setSelectedWithOrigin(size_t idx, double originNorm);
 
     void moveUp();
     void moveDown();
@@ -103,6 +105,20 @@ private:
     std::string title{"Tileland World"};
     std::string subtitle{"Arrow keys to navigate, Enter to confirm"};
     BoxStyle frame{};
+
+    // Animated highlight state
+    std::chrono::steady_clock::time_point activeStart{};
+    std::chrono::steady_clock::time_point fadeStart{};
+    bool hasActiveAnim{false};
+    bool hasFadeAnim{false};
+    size_t fadeRow{static_cast<size_t>(-1)};
+    double activeOriginNorm{0.0};
+    double fadeOriginNorm{0.0};
+    static constexpr double kExpandDuration = 0.8;  // seconds (slower)
+    static constexpr double kFadeDuration = 0.4;    // seconds (slower)
+
+    void startSelectionChange(size_t newSel, double originNorm);
+    static double easeOutCubic(double t);
 };
 
 } // namespace UI
