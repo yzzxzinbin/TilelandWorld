@@ -11,6 +11,14 @@ namespace TilelandWorld {
 namespace UI {
 namespace TuiUtils {
 
+struct Utf8CharInfo {
+	size_t length{1};
+	size_t visualWidth{1};
+};
+
+// Decode a single UTF-8 codepoint starting at pos; returns byte length and visual width (does not strip ANSI).
+Utf8CharInfo nextUtf8Char(const std::string& s, size_t pos);
+
 // Strip ANSI escape sequences from text.
 std::string stripAnsiEscape(const std::string& s);
 

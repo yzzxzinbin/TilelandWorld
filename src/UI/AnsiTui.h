@@ -18,6 +18,7 @@ struct TuiCell {
     RGBColor fg{255, 255, 255};
     RGBColor bg{0, 0, 0};
     bool hasBg{false}; // 标记该格子是否显式设置了背景
+    bool isContinuation{false}; // 标记该格是否为宽字符的续写列
 };
 
 // 边框样式（默认 ASCII；可使用 UTF-8 单线/双线字符）

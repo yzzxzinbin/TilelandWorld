@@ -6,6 +6,65 @@ namespace TilelandWorld {
 namespace UI {
 namespace TuiUtils {
 
+Utf8CharInfo nextUtf8Char(const std::string& s, size_t pos) {
+    Utf8CharInfo info{};
+    if (pos >= s.size()) return info;
+
+    unsigned char byte = static_cast<unsigned char>(s[pos]);
+    size_t charLen = 1;
+    uint32_t codepoint = byte;
+    size_t visual = 1;
+
+    if ((byte & 0xE0) == 0xC0) {
+        if (pos + 1 < s.size() && (static_cast<unsigned char>(s[pos + 1]) & 0xC0) == 0x80) {
+            charLen = 2;
+            codepoint = ((byte & 0x1F) << 6) | (static_cast<unsigned char>(s[pos + 1]) & 0x3F);
+            visual = 2;
+        }
+    } else if ((byte & 0xF0) == 0xE0) {
+        if (pos + 2 < s.size() && (static_cast<unsigned char>(s[pos + 1]) & 0xC0) == 0x80 && (static_cast<unsigned char>(s[pos + 2]) & 0xC0) == 0x80) {
+            charLen = 3;
+            codepoint = ((byte & 0x0F) << 12) | ((static_cast<unsigned char>(s[pos + 1]) & 0x3F) << 6) | (static_cast<unsigned char>(s[pos + 2]) & 0x3F);
+            if (codepoint >= 0x2500 && codepoint <= 0x257F) {
+                visual = 1;
+            } else {
+                visual = 2;
+            }
+        }
+    } else if ((byte & 0xF8) == 0xF0) {
+        if (pos + 3 < s.size() && (static_cast<unsigned char>(s[pos + 1]) & 0xC0) == 0x80 && (static_cast<unsigned char>(s[pos + 2]) & 0xC0) == 0x80 && (static_cast<unsigned char>(s[pos + 3]) & 0xC0) == 0x80) {
+            charLen = 4;
+            codepoint = ((byte & 0x07) << 18) | ((static_cast<unsigned char>(s[pos + 1]) & 0x3F) << 12) | ((static_cast<unsigned char>(s[pos + 2]) & 0x3F) << 6) | (static_cast<unsigned char>(s[pos + 3]) & 0x3F);
+            visual = 2;
+        }
+    }
+
+    // Adjust for ranges treated as width 1
+    if ((codepoint >= 0xE000 && codepoint <= 0xF8FF) ||
+        (codepoint >= 0xF0000 && codepoint <= 0xFFFFD) ||
+        (codepoint >= 0x100000 && codepoint <= 0x10FFFD)) {
+        visual = 1;
+    }
+    if ((codepoint >= 0x0391 && codepoint <= 0x03A1) || (codepoint >= 0x03B1 && codepoint <= 0x03C1)) {
+        visual = 1;
+    }
+    if ((codepoint >= 0x0041 && codepoint <= 0x005A) ||
+        (codepoint >= 0x0061 && codepoint <= 0x007A) ||
+        (codepoint >= 0x0080 && codepoint <= 0x00FF) ||
+        (codepoint >= 0x0100 && codepoint <= 0x02AF)) {
+        visual = 1;
+    }
+    if ((codepoint >= 0x2190 && codepoint <= 0x21FF) ||
+        (codepoint >= 0x27F0 && codepoint <= 0x27FF) ||
+        (codepoint >= 0x2B00 && codepoint <= 0x2BFF)) {
+        visual = 1;
+    }
+
+    info.length = charLen;
+    info.visualWidth = visual;
+    return info;
+}
+
 std::string stripAnsiEscape(const std::string& s) {
     std::string out;
     out.reserve(s.size());
@@ -43,71 +102,10 @@ size_t calculateUtf8VisualWidth(const std::string& s) {
     std::string str = stripAnsiEscape(s);
     size_t visual_width = 0;
     for (size_t i = 0; i < str.length();) {
-        unsigned char byte = static_cast<unsigned char>(str[i]);
-        size_t char_len = 1;
-        size_t char_visual_width = 1;
-        uint32_t codepoint = 0;
-
-        if (byte < 0x80) {
-            codepoint = byte;
-        } else if ((byte & 0xE0) == 0xC0) {
-            char_len = 2;
-            if (i + 1 < str.length() && (static_cast<unsigned char>(str[i + 1]) & 0xC0) == 0x80) {
-                codepoint = ((byte & 0x1F) << 6) | (static_cast<unsigned char>(str[i + 1]) & 0x3F);
-                char_visual_width = 2;
-            } else {
-                char_len = 1; char_visual_width = 1; codepoint = byte;
-            }
-        } else if ((byte & 0xF0) == 0xE0) {
-            char_len = 3;
-            if (i + 2 < str.length() && (static_cast<unsigned char>(str[i + 1]) & 0xC0) == 0x80 && (static_cast<unsigned char>(str[i + 2]) & 0xC0) == 0x80) {
-                codepoint = ((byte & 0x0F) << 12) | ((static_cast<unsigned char>(str[i + 1]) & 0x3F) << 6) | (static_cast<unsigned char>(str[i + 2]) & 0x3F);
-                if (codepoint >= 0x2500 && codepoint <= 0x257F) {
-                    char_visual_width = 1;
-                } else {
-                    char_visual_width = 2;
-                }
-            } else {
-                char_len = 1; char_visual_width = 1; codepoint = byte;
-            }
-        } else if ((byte & 0xF8) == 0xF0) {
-            char_len = 4;
-            if (i + 3 < str.length() && (static_cast<unsigned char>(str[i + 1]) & 0xC0) == 0x80 && (static_cast<unsigned char>(str[i + 2]) & 0xC0) == 0x80 && (static_cast<unsigned char>(str[i + 3]) & 0xC0) == 0x80) {
-                codepoint = ((byte & 0x07) << 18) | ((static_cast<unsigned char>(str[i + 1]) & 0x3F) << 12) | ((static_cast<unsigned char>(str[i + 2]) & 0x3F) << 6) | (static_cast<unsigned char>(str[i + 3]) & 0x3F);
-                char_visual_width = 2;
-            } else {
-                char_len = 1; char_visual_width = 1; codepoint = byte;
-            }
-        } else {
-            char_len = 1; char_visual_width = 1; codepoint = byte;
-        }
-
-        if ((codepoint >= 0xE000 && codepoint <= 0xF8FF) ||
-            (codepoint >= 0xF0000 && codepoint <= 0xFFFFD) ||
-            (codepoint >= 0x100000 && codepoint <= 0x10FFFD)) {
-            char_visual_width = 1;
-        }
-        if ((codepoint >= 0x0391 && codepoint <= 0x03A1) || (codepoint >= 0x03B1 && codepoint <= 0x03C1)) {
-            char_visual_width = 1;
-        }
-        if ((codepoint >= 0x0041 && codepoint <= 0x005A) ||
-            (codepoint >= 0x0061 && codepoint <= 0x007A) ||
-            (codepoint >= 0x0080 && codepoint <= 0x00FF) ||
-            (codepoint >= 0x0100 && codepoint <= 0x02AF)) {
-            char_visual_width = 1;
-        }
-        if ((codepoint >= 0x2190 && codepoint <= 0x21FF) ||
-            (codepoint >= 0x27F0 && codepoint <= 0x27FF) ||
-            (codepoint >= 0x2B00 && codepoint <= 0x2BFF)) {
-            char_visual_width = 1;
-        }
-
-        if (i + char_len > str.length()) {
-            visual_width += (str.length() - i);
-            break;
-        }
-        visual_width += char_visual_width;
-        i += char_len;
+        auto info = nextUtf8Char(str, i);
+        if (info.length == 0) break;
+        visual_width += info.visualWidth;
+        i += info.length;
     }
     return visual_width;
 }
@@ -119,51 +117,13 @@ std::string trimToUtf8VisualWidth(const std::string& s, size_t targetVisualWidth
     size_t current_visual_width = 0;
 
     for (size_t i = 0; i < s.length();) {
-        unsigned char byte = static_cast<unsigned char>(s[i]);
-        size_t char_len = 1;
-        size_t char_visual_width = 1;
-        uint32_t codepoint = 0;
+        auto info = nextUtf8Char(s, i);
+        if (info.length == 0) break;
+        if (current_visual_width + info.visualWidth > targetVisualWidth) break;
 
-        if (byte < 0x80) {
-            codepoint = byte;
-        } else if ((byte & 0xE0) == 0xC0) {
-            char_len = 2;
-            if (i + 1 < s.length() && (static_cast<unsigned char>(s[i + 1]) & 0xC0) == 0x80) {
-                codepoint = ((byte & 0x1F) << 6) | (static_cast<unsigned char>(s[i + 1]) & 0x3F);
-                char_visual_width = 2;
-            } else {
-                char_len = 1; char_visual_width = 1; codepoint = byte;
-            }
-        } else if ((byte & 0xF0) == 0xE0) {
-            char_len = 3;
-            if (i + 2 < s.length() && (static_cast<unsigned char>(s[i + 1]) & 0xC0) == 0x80 && (static_cast<unsigned char>(s[i + 2]) & 0xC0) == 0x80) {
-                codepoint = ((byte & 0x0F) << 12) | ((static_cast<unsigned char>(s[i + 1]) & 0x3F) << 6) | (static_cast<unsigned char>(s[i + 2]) & 0x3F);
-                if (codepoint >= 0x2500 && codepoint <= 0x257F) {
-                    char_visual_width = 1;
-                } else {
-                    char_visual_width = 2;
-                }
-            } else {
-                char_len = 1; char_visual_width = 1; codepoint = byte;
-            }
-        } else if ((byte & 0xF8) == 0xF0) {
-            char_len = 4;
-            if (i + 3 < s.length() && (static_cast<unsigned char>(s[i + 1]) & 0xC0) == 0x80 && (static_cast<unsigned char>(s[i + 2]) & 0xC0) == 0x80 && (static_cast<unsigned char>(s[i + 3]) & 0xC0) == 0x80) {
-                codepoint = ((byte & 0x07) << 18) | ((static_cast<unsigned char>(s[i + 1]) & 0x3F) << 12) | ((static_cast<unsigned char>(s[i + 2]) & 0x3F) << 6) | (static_cast<unsigned char>(s[i + 3]) & 0x3F);
-                char_visual_width = 2;
-            } else {
-                char_len = 1; char_visual_width = 1; codepoint = byte;
-            }
-        } else {
-            codepoint = byte;
-        }
-
-        if (i + char_len > s.length()) break;
-        if (current_visual_width + char_visual_width > targetVisualWidth) break;
-
-        result.append(s, i, char_len);
-        current_visual_width += char_visual_width;
-        i += char_len;
+        result.append(s, i, info.length);
+        current_visual_width += info.visualWidth;
+        i += info.length;
     }
     return result;
 }

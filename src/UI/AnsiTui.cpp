@@ -41,23 +41,38 @@ void TuiSurface::clear(const RGBColor& fg, const RGBColor& bg, const std::string
 void TuiSurface::drawText(int x, int y, const std::string& text, const RGBColor& fg, const RGBColor& bg) {
     if (y < 0 || y >= height) return;
     int cursorX = x;
-    for (char ch : text) {
+    for (size_t i = 0; i < text.size();) {
+        auto info = TuiUtils::nextUtf8Char(text, i);
         if (cursorX >= width) break;
+        if (info.visualWidth == 2 && cursorX + 1 >= width) break; // not enough space for wide glyph
+
         if (cursorX >= 0) {
             if (TuiCell* cell = at(cursorX, y)) {
-                cell->glyph.assign(1, ch);
+                cell->glyph = text.substr(i, info.length);
                 cell->fg = fg;
                 cell->bg = bg;
                 cell->hasBg = true;
+                cell->isContinuation = false;
+            }
+            if (info.visualWidth == 2) {
+                if (TuiCell* cont = at(cursorX + 1, y)) {
+                    cont->glyph.clear();
+                    cont->fg = fg;
+                    cont->bg = bg;
+                    cont->hasBg = true;
+                    cont->isContinuation = true;
+                }
             }
         }
-        ++cursorX;
+        cursorX += static_cast<int>(info.visualWidth);
+        i += info.length;
     }
 }
 
 void TuiSurface::drawCenteredText(int x, int y, int areaWidth, const std::string& text, const RGBColor& fg, const RGBColor& bg) {
     int safeWidth = std::max(0, areaWidth);
-    int startX = x + std::max(0, (safeWidth - static_cast<int>(text.size())) / 2);
+    int visualWidth = static_cast<int>(TuiUtils::calculateUtf8VisualWidth(text));
+    int startX = x + std::max(0, (safeWidth - visualWidth) / 2);
     drawText(startX, y, text, fg, bg);
 }
 
@@ -75,6 +90,7 @@ void TuiSurface::fillRect(int x, int y, int w, int h, const RGBColor& fg, const 
             cell.fg = fg;
             cell.bg = bg;
             cell.hasBg = true;
+            cell.isContinuation = false;
         }
     }
 }
@@ -88,6 +104,7 @@ void TuiSurface::drawFrame(int x, int y, int w, int h, const BoxStyle& style, co
             cell->fg = fg;
             cell->bg = bg;
             cell->hasBg = true;
+            cell->isContinuation = false;
         }
     };
 
@@ -132,6 +149,7 @@ std::string TuiPainter::buildAnsi(const TuiSurface& surface, bool hideCursor, in
 
         for (int x = 0; x < surface.getWidth(); ++x) {
             const TuiCell& cell = cells[static_cast<size_t>(y) * surface.getWidth() + x];
+            if (cell.isContinuation) continue;
             if (!hasColor || !sameColor(cell.fg, currentFg) || !sameColor(cell.bg, currentBg)) {
                 output.append("\x1b[48;2;");
                 output.append(std::to_string(cell.bg.r));
@@ -230,10 +248,10 @@ void MenuView::render(TuiSurface& surface, int originX, int originY, int width) 
 
         std::string line = marker + text;
         surface.drawText(x + 2, listStart + static_cast<int>(i), line, fg, bg);
-        int drawnBytes = static_cast<int>(line.size());
-        int remaining = areaWidth - drawnBytes;
+        int consumed = static_cast<int>(markerWidth + textWidth);
+        int remaining = areaWidth - consumed;
         if (remaining > 0) {
-            surface.fillRect(x + 2 + drawnBytes, listStart + static_cast<int>(i), remaining, 1, fg, bg, " ");
+            surface.fillRect(x + 2 + consumed, listStart + static_cast<int>(i), remaining, 1, fg, bg, " ");
         }
     }
 
