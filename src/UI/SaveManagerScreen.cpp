@@ -1,11 +1,14 @@
 #include "SaveManagerScreen.h"
 #include "SaveCreationScreen.h"
+#include "TuiUtils.h"
 #include "../BinaryFileInfrastructure/MapSerializer.h"
 #include <filesystem>
 #include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <thread>
+#include <sstream>
+#include <iomanip>
 #include "../Controllers/InputController.h"
 #ifdef _WIN32
 #include <windows.h>
@@ -92,7 +95,13 @@ void SaveManagerScreen::refreshList() {
     menu = MenuView(items, theme);
     menu.setFrameStyle(kModernFrame);
     menu.setTitle("Save Manager");
-    menu.setSubtitle("Enter/click=load | D delete | R refresh | Q back");
+    menu.setSubtitle("Enter/click=load | E edit | D delete | R refresh | Q back");
+    menu.setMarkerProvider([this](size_t idx, bool focus) {
+        if (!focus) return std::string("  ");
+        if (idx < saves.size()) return std::string("🌍 ");
+        return std::string("▶ ");
+    });
+    infoCache.assign(saves.size(), SaveInfo{});
 }
 
 void SaveManagerScreen::renderFrame() {
@@ -122,9 +131,51 @@ void SaveManagerScreen::renderFrame() {
 
     menu.render(surface, originX, originY, panelWidth);
 
+    renderInfoBar();
+
     std::string dirLabel = "Dir: " + directory;
     surface.drawText(2, surface.getHeight() - 3, dirLabel, theme.hintFg, theme.background);
-    surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), "Click or Enter to open | Q back", theme.hintFg, theme.background);
+}
+
+void SaveManagerScreen::renderInfoBar() {
+    int barHeight = 3;
+    int y = surface.getHeight() - (barHeight + 3);
+    if (y < 0) return;
+    surface.fillRect(0, y, surface.getWidth(), barHeight, theme.subtitle, theme.panel, " ");
+
+    size_t idx = menu.getSelected();
+    if (idx >= saves.size()) {
+        surface.drawText(2, y, "Select a save to view details", theme.hintFg, theme.panel);
+        return;
+    }
+
+    ensureInfo(idx);
+    if (infoCache.size() <= idx || !infoCache[idx].ok) {
+        surface.drawText(2, y, "Metadata unavailable for this save", theme.hintFg, theme.panel);
+        return;
+    }
+
+    const auto& summary = infoCache[idx].summary;
+    std::ostringstream line1;
+    line1 << "🌍 " << saves[idx] << " | " << (summary.compressed ? ".tlwz" : ".tlwf")
+          << " | " << formatBytes(summary.fileSize) << " | chunks: " << summary.chunkCount;
+    std::string l1 = line1.str();
+    l1 = TuiUtils::trimToUtf8VisualWidth(l1, surface.getWidth() - 4);
+    surface.drawText(2, y, l1, theme.title, theme.panel);
+
+    std::ostringstream line2;
+    line2 << "Seed " << summary.metadata.seed
+          << " | Freq " << std::fixed << std::setprecision(3) << summary.metadata.frequency
+          << " | Noise " << summary.metadata.noiseType
+          << " | Fractal " << summary.metadata.fractalType
+          << " | Oct " << summary.metadata.octaves
+          << " | Lac " << std::setprecision(2) << summary.metadata.lacunarity
+          << " | Gain " << std::setprecision(2) << summary.metadata.gain;
+    std::string l2 = line2.str();
+    l2 = TuiUtils::trimToUtf8VisualWidth(l2, surface.getWidth() - 4);
+    surface.drawText(2, y + 1, l2, theme.itemFg, theme.panel);
+
+    surface.drawText(2, y + 2, "E: edit parameters for this world", theme.hintFg, theme.panel);
 }
 
 void SaveManagerScreen::handleKey(int key, bool& running, Result& result, InputController& input) {
@@ -139,6 +190,11 @@ void SaveManagerScreen::handleKey(int key, bool& running, Result& result, InputC
     } else if (key == 'd' || key == 'D') {
         if (deleteSelected()) {
             refreshList();
+        }
+    } else if (key == 'e' || key == 'E') {
+        size_t idx = menu.getSelected();
+        if (idx < saves.size()) {
+            editSave(idx, input);
         }
     } else if (key == 13) { // Enter
         size_t idx = menu.getSelected();
@@ -192,6 +248,60 @@ void SaveManagerScreen::handleMouse(const InputEvent& ev, bool& running, Result&
             handleKey(13, running, result, input); // 左键单击激活
         }
     }
+}
+
+void SaveManagerScreen::ensureInfo(size_t idx) {
+    if (idx >= saves.size()) return;
+    if (infoCache.size() != saves.size()) {
+        infoCache.assign(saves.size(), SaveInfo{});
+    }
+    auto& slot = infoCache[idx];
+    if (slot.loaded) return;
+    slot.loaded = true;
+    MapSerializer::SaveSummary summary{};
+    if (MapSerializer::readSaveSummary(saves[idx], directory, summary)) {
+        slot.ok = true;
+        slot.summary = std::move(summary);
+    } else {
+        slot.ok = false;
+    }
+}
+
+std::string SaveManagerScreen::formatBytes(size_t bytes) const {
+    const char* units[] = {"B", "KB", "MB", "GB"};
+    double value = static_cast<double>(bytes);
+    int unit = 0;
+    while (value >= 1024.0 && unit < 3) {
+        value /= 1024.0;
+        ++unit;
+    }
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(unit == 0 ? 0 : 1) << value << " " << units[unit];
+    return oss.str();
+}
+
+bool SaveManagerScreen::editSave(size_t idx, InputController& input) {
+    if (idx >= saves.size()) return false;
+    ensureInfo(idx);
+    if (infoCache.size() <= idx || !infoCache[idx].ok) return false;
+
+    auto meta = infoCache[idx].summary.metadata;
+    SaveCreationScreen editor(directory, meta, saves[idx], true, true);
+
+    input.stop();
+    auto form = editor.show();
+    input.start();
+
+    if (!form.accepted) return false;
+
+    bool updated = MapSerializer::updateMetadata(saves[idx], directory, form.metadata);
+    if (updated) {
+        if (infoCache.size() > idx) {
+            infoCache[idx].loaded = false;
+            infoCache[idx].ok = false;
+        }
+    }
+    return updated;
 }
 
 void SaveManagerScreen::ensureAnsiEnabled() {

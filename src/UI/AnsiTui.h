@@ -8,6 +8,7 @@
 #include <ostream>
 #include <iostream>
 #include <chrono>
+#include <functional>
 #include "../TerrainTypes.h"
 
 namespace TilelandWorld {
@@ -90,6 +91,7 @@ public:
     void setSubtitle(std::string text);
     void setFrameStyle(const BoxStyle& style) { frame = style; }
     void setSelectedWithOrigin(size_t idx, double originNorm);
+    void setMarkerProvider(std::function<std::string(size_t, bool)> provider) { markerProvider = std::move(provider); }
 
     void moveUp();
     void moveDown();
@@ -105,6 +107,7 @@ private:
     std::string title{"Tileland World"};
     std::string subtitle{"Arrow keys to navigate, Enter to confirm"};
     BoxStyle frame{};
+    std::function<std::string(size_t, bool)> markerProvider{};
 
     // Animated highlight state
     std::chrono::steady_clock::time_point activeStart{};

@@ -5,6 +5,7 @@
 #include "AnsiTui.h"
 #include "../Controllers/InputController.h"
 #include "../SaveMetadata.h"
+#include "../BinaryFileInfrastructure/MapSerializer.h"
 #include <string>
 #include <vector>
 
@@ -34,6 +35,8 @@ private:
     MenuView menu;
     size_t selectedIndex{0};
     std::vector<std::string> saves;
+    struct SaveInfo { bool loaded{false}; bool ok{false}; MapSerializer::SaveSummary summary{}; };
+    std::vector<SaveInfo> infoCache;
 
     // 布局缓存供鼠标命中
     int lastPanelX{0};
@@ -47,6 +50,10 @@ private:
     void handleKey(int key, bool& running, Result& result, InputController& input);
     void handleMouse(const InputEvent& ev, bool& running, Result& result, InputController& input);
     void ensureAnsiEnabled();
+    void ensureInfo(size_t idx);
+    void renderInfoBar();
+    std::string formatBytes(size_t bytes) const;
+    bool editSave(size_t idx, InputController& input);
 
     Result handleCreateNew(InputController& input);
     bool deleteSelected();

@@ -36,8 +36,10 @@ namespace {
     }
 }
 
-SaveCreationScreen::SaveCreationScreen(std::string defaultDirectory, WorldMetadata defaults)
-    : surface(100, 40), name(defaultName()), directory(std::move(defaultDirectory)), meta(defaults) {
+SaveCreationScreen::SaveCreationScreen(std::string defaultDirectory, WorldMetadata defaults, std::string defaultNameValue, bool lockName, bool lockDirectory)
+    : surface(100, 40), name(defaultNameValue.empty() ? defaultName() : sanitizedName(defaultNameValue)), directory(std::move(defaultDirectory)), meta(defaults) {
+    allowNameEdit = !lockName;
+    allowDirectoryEdit = !lockDirectory;
     noiseChoices = {"OpenSimplex2", "Perlin", "Value"};
     fractalChoices = {"FBm", "Ridged", "PingPong"};
     syncChoiceFromMetadata();
@@ -78,7 +80,7 @@ SaveCreationScreen::Result SaveCreationScreen::show() {
     bool running = true;
     bool accepted = false;
 
-    InputController input;
+    InputController input(false);
     activeInput = &input;
     input.start();
 
@@ -282,21 +284,21 @@ void SaveCreationScreen::handleKey(int key, bool& running, bool& accepted) {
         } else if (f.type == FieldType::Action) {
             accepted = true; running = false; return;
         } else if (f.type == FieldType::Directory) {
-            openDirectoryPicker();
+            if (allowDirectoryEdit) openDirectoryPicker();
         }
     } else if (key == 13) { // Enter
         const auto& f = fields[selected];
         if (f.type == FieldType::Action) {
             accepted = true; running = false;
         } else if (f.type == FieldType::Directory) {
-            openDirectoryPicker();
+            if (allowDirectoryEdit) openDirectoryPicker();
         } else if (f.type == FieldType::Text || f.type == FieldType::Integer || f.type == FieldType::Float) {
             startEdit(selected);
         }
     } else if (key == 'q' || key == 'Q') {
         accepted = false; running = false;
     } else if (key == 'b' || key == 'B') {
-        openDirectoryPicker();
+        if (allowDirectoryEdit) openDirectoryPicker();
     } else if (key == 'r' || key == 'R') {
         if (selected == 2 || selected == fields.size() - 1) { // seed row or create row
             randomizeSeed();
@@ -339,7 +341,7 @@ void SaveCreationScreen::handleMouse(const InputEvent& ev, bool& running, bool& 
             if (f.type == FieldType::Text || f.type == FieldType::Integer || f.type == FieldType::Float) {
                 startEdit(idx);
             } else if (f.type == FieldType::Directory) {
-                openDirectoryPicker();
+                if (allowDirectoryEdit) openDirectoryPicker();
             } else if (f.type == FieldType::Action) {
                 accepted = true; running = false;
             }
@@ -347,7 +349,7 @@ void SaveCreationScreen::handleMouse(const InputEvent& ev, bool& running, bool& 
         }
 
         if (f.type == FieldType::Directory) {
-            openDirectoryPicker();
+            if (allowDirectoryEdit) openDirectoryPicker();
         } else if (f.type == FieldType::Choice) {
             if (idx == 4) {
                 noiseIndex = (noiseIndex + 1) % noiseChoices.size();
@@ -362,6 +364,7 @@ void SaveCreationScreen::handleMouse(const InputEvent& ev, bool& running, bool& 
 
 void SaveCreationScreen::startEdit(size_t idx) {
     if (idx >= fields.size()) return;
+    if ((idx == 0 && !allowNameEdit) || (idx == 1 && !allowDirectoryEdit)) return;
     editingIndex = static_cast<int>(idx);
     editingType = fields[idx].type;
     if (editingType == FieldType::Text) {
@@ -410,6 +413,7 @@ void SaveCreationScreen::cancelEdit() {
 }
 
 void SaveCreationScreen::openDirectoryPicker() {
+    if (!allowDirectoryEdit) return;
     painter.reset();
     if (activeInput) activeInput->stop();
 

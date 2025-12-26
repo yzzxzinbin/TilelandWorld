@@ -304,7 +304,12 @@ void MenuView::render(TuiSurface& surface, int originX, int originY, int width) 
 
     for (size_t i = 0; i < options.size(); ++i) {
         bool focus = i == selected;
-        std::string marker = focus ? "▶ " : "  ";
+        std::string marker;
+        if (markerProvider) {
+            marker = markerProvider(i, focus);
+        } else {
+            marker = focus ? "▶ " : "  ";
+        }
         size_t markerWidth = TuiUtils::calculateUtf8VisualWidth(marker);
         std::string text = options[i];
         size_t textWidth = TuiUtils::calculateUtf8VisualWidth(text);

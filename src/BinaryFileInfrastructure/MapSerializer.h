@@ -30,6 +30,14 @@ namespace TilelandWorld {
 
     class MapSerializer {
     public:
+        struct SaveSummary {
+            bool compressed{false};
+            std::string path;
+            size_t fileSize{0};
+            size_t chunkCount{0};
+            WorldMetadata metadata{};
+        };
+
         // 保存地图数据到文件
         // modifiedChunks: 可选参数。如果提供，则只保存集合中存在的区块 (用于增量保存或只保存修改过的部分)。
         static bool saveMap(const Map& map, const std::string& filepath, const std::unordered_set<ChunkCoord, ChunkCoordHash>* modifiedChunks = nullptr);
@@ -43,6 +51,12 @@ namespace TilelandWorld {
 
         // 从存档加载地图（自动处理 .tlwf 或 .tlwz）
         static std::unique_ptr<Map> loadMapFromSave(const std::string& saveName, const std::string& directory = ".");
+
+        // 仅读取元数据与概要信息，不加载区块
+        static bool readSaveSummary(const std::string& saveName, const std::string& directory, SaveSummary& outSummary);
+
+        // 更新存档中的元数据（tlwf 或 tlwz 文件）
+        static bool updateMetadata(const std::string& saveName, const std::string& directory, const WorldMetadata& metadata);
 
         // 获取 .tlwf 和 .tlwz 的完整路径
         static std::string getTlwfPath(const std::string& saveName, const std::string& directory);

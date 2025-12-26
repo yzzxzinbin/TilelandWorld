@@ -22,7 +22,7 @@ public:
         WorldMetadata metadata{};
     };
 
-    explicit SaveCreationScreen(std::string defaultDirectory, WorldMetadata defaults = {});
+    explicit SaveCreationScreen(std::string defaultDirectory, WorldMetadata defaults = {}, std::string defaultName = {}, bool lockName = false, bool lockDirectory = false);
 
     // 显示创建界面，返回结果；accepted=false 表示取消
     Result show();
@@ -46,6 +46,9 @@ private:
     std::string name;
     std::string directory;
     WorldMetadata meta;
+
+    bool allowNameEdit{true};
+    bool allowDirectoryEdit{true};
 
     std::vector<Field> fields;
     size_t selected{0};

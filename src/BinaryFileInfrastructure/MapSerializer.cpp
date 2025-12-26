@@ -21,6 +21,113 @@ namespace TilelandWorld {
         return (*reinterpret_cast<uint8_t*>(&test) == 1);
     }
 
+    namespace {
+        inline std::string trimNullTerminated(const char* data, size_t len) {
+            size_t realLen = 0;
+            while (realLen < len && data[realLen] != '\0') ++realLen;
+            return std::string(data, realLen);
+        }
+
+        bool readSummaryFromBuffer(const uint8_t* data, size_t size, MapSerializer::SaveSummary& out) {
+            if (data == nullptr || size < sizeof(FileHeader)) return false;
+
+            FileHeader header{};
+            std::memcpy(&header, data, sizeof(header));
+            if (header.magicNumber != MAGIC_NUMBER) return false;
+
+            size_t metaOffset = static_cast<size_t>(header.metadataOffset);
+            if (metaOffset == 0 || metaOffset + sizeof(MetadataBlock) > size) return false;
+
+            MetadataBlock block{};
+            std::memcpy(&block, data + metaOffset, sizeof(block));
+            out.metadata.seed = block.seed;
+            out.metadata.frequency = block.frequency;
+            out.metadata.noiseType = trimNullTerminated(block.noiseType, sizeof(block.noiseType));
+            out.metadata.fractalType = trimNullTerminated(block.fractalType, sizeof(block.fractalType));
+            out.metadata.octaves = block.octaves;
+            out.metadata.lacunarity = block.lacunarity;
+            out.metadata.gain = block.gain;
+
+            out.chunkCount = 0;
+            size_t indexOffset = static_cast<size_t>(header.indexOffset);
+            if (indexOffset != 0 && indexOffset + sizeof(size_t) <= size) {
+                size_t count = 0;
+                std::memcpy(&count, data + indexOffset, sizeof(size_t));
+                out.chunkCount = count;
+            }
+
+            return true;
+        }
+
+        bool readSummaryFromBuffer(const std::vector<uint8_t>& buffer, MapSerializer::SaveSummary& out) {
+            return readSummaryFromBuffer(buffer.data(), buffer.size(), out);
+        }
+
+        bool applyMetadataToBuffer(std::vector<uint8_t>& buffer, const WorldMetadata& meta) {
+            if (buffer.size() < sizeof(FileHeader)) return false;
+            FileHeader header{};
+            std::memcpy(&header, buffer.data(), sizeof(header));
+            size_t metaOffset = static_cast<size_t>(header.metadataOffset);
+            if (metaOffset == 0 || metaOffset + sizeof(MetadataBlock) > buffer.size()) return false;
+
+            MetadataBlock block{};
+            block.seed = meta.seed;
+            block.frequency = meta.frequency;
+            std::memset(block.noiseType, 0, sizeof(block.noiseType));
+            std::memset(block.fractalType, 0, sizeof(block.fractalType));
+            std::strncpy(block.noiseType, meta.noiseType.c_str(), sizeof(block.noiseType) - 1);
+            std::strncpy(block.fractalType, meta.fractalType.c_str(), sizeof(block.fractalType) - 1);
+            block.octaves = meta.octaves;
+            block.lacunarity = meta.lacunarity;
+            block.gain = meta.gain;
+
+            std::memcpy(buffer.data() + metaOffset, &block, sizeof(block));
+            return true;
+        }
+
+        bool readSummaryFromTlwf(const std::string& path, MapSerializer::SaveSummary& out) {
+            std::ifstream file(path, std::ios::binary | std::ios::ate);
+            if (!file) return false;
+            std::streamsize size = file.tellg();
+            if (size <= 0) return false;
+            file.seekg(0, std::ios::beg);
+            std::vector<uint8_t> buffer(static_cast<size_t>(size));
+            if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) return false;
+
+            if (!readSummaryFromBuffer(buffer, out)) return false;
+            out.path = path;
+            out.compressed = false;
+            out.fileSize = static_cast<size_t>(size);
+            return true;
+        }
+
+        bool writeBufferToFile(const std::string& path, const std::vector<uint8_t>& buffer) {
+            BinaryWriter writer(path);
+            return writer.writeBytes(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+        }
+
+        bool recompressBufferToTlwz(const std::vector<uint8_t>& buffer, const std::string& tlwzPath) {
+            std::vector<Bytef> source(buffer.begin(), buffer.end());
+            std::vector<Bytef> compressedData;
+            auto status = SimpZlib::compress(source, compressedData);
+            if (status != SimpZlib::Status::OK) return false;
+
+            CompressedFileHeader header{};
+            header.magicNumber = COMPRESSED_MAGIC_NUMBER;
+            header.versionMajor = COMPRESSED_FORMAT_VERSION_MAJOR;
+            header.versionMinor = COMPRESSED_FORMAT_VERSION_MINOR;
+            header.compressionType = COMPRESSION_TYPE_ZLIB;
+            header.uncompressedSize = buffer.size();
+            header.uncompressedChecksum = calculateCRC32(buffer.data(), buffer.size());
+            header.compressedSize = compressedData.size();
+            header.compressedChecksum = calculateCRC32(compressedData.data(), compressedData.size());
+
+            BinaryWriter writer(tlwzPath);
+            if (!writer.write(header)) return false;
+            return writer.writeBytes(reinterpret_cast<const char*>(compressedData.data()), compressedData.size());
+        }
+    }
+
     // --- 文件头读写 ---
     bool MapSerializer::writeHeader(BinaryWriter& writer, FileHeader& header) {
         header.endianness = isLittleEndianRuntime() ? ENDIANNESS_LITTLE : ENDIANNESS_BIG;
@@ -350,6 +457,98 @@ namespace TilelandWorld {
     std::string MapSerializer::getTlwzPath(const std::string& saveName, const std::string& directory) {
         std::filesystem::path dirPath(directory);
         return (dirPath / (saveName + ".tlwz")).string();
+    }
+
+    bool MapSerializer::readSaveSummary(const std::string& saveName, const std::string& directory, SaveSummary& outSummary) {
+        std::string tlwfPath = getTlwfPath(saveName, directory);
+        std::string tlwzPath = getTlwzPath(saveName, directory);
+
+        if (std::filesystem::exists(tlwfPath)) {
+            if (readSummaryFromTlwf(tlwfPath, outSummary)) {
+                return true;
+            }
+        }
+
+        if (!std::filesystem::exists(tlwzPath)) return false;
+
+        try {
+            BinaryReader reader(tlwzPath);
+            CompressedFileHeader header{};
+            if (!reader.read(header)) return false;
+            if (header.magicNumber != COMPRESSED_MAGIC_NUMBER) return false;
+            if (header.versionMajor != COMPRESSED_FORMAT_VERSION_MAJOR || header.versionMinor > COMPRESSED_FORMAT_VERSION_MINOR) return false;
+            if (header.compressionType != COMPRESSION_TYPE_ZLIB) return false;
+
+            std::vector<Bytef> compressedData(static_cast<size_t>(header.compressedSize));
+            size_t bytesRead = reader.readBytes(reinterpret_cast<char*>(compressedData.data()), compressedData.size());
+            if (bytesRead != header.compressedSize) return false;
+
+            uint32_t compressedChecksum = calculateCRC32(compressedData.data(), compressedData.size());
+            if (compressedChecksum != header.compressedChecksum) return false;
+
+            std::vector<Bytef> decompressed;
+            auto status = SimpZlib::uncompress(compressedData, decompressed, header.uncompressedSize);
+            if (status != SimpZlib::Status::OK || decompressed.size() != header.uncompressedSize) return false;
+
+            uint32_t uncompressedChecksum = calculateCRC32(decompressed.data(), decompressed.size());
+            if (uncompressedChecksum != header.uncompressedChecksum) return false;
+
+            if (!readSummaryFromBuffer(reinterpret_cast<uint8_t*>(decompressed.data()), decompressed.size(), outSummary)) return false;
+            outSummary.path = tlwzPath;
+            outSummary.compressed = true;
+            outSummary.fileSize = std::filesystem::file_size(tlwzPath);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+
+    bool MapSerializer::updateMetadata(const std::string& saveName, const std::string& directory, const WorldMetadata& metadata) {
+        std::string tlwfPath = getTlwfPath(saveName, directory);
+        std::string tlwzPath = getTlwzPath(saveName, directory);
+        bool updated = false;
+
+        if (std::filesystem::exists(tlwfPath)) {
+            std::ifstream file(tlwfPath, std::ios::binary | std::ios::ate);
+            if (file) {
+                std::streamsize size = file.tellg();
+                file.seekg(0, std::ios::beg);
+                std::vector<uint8_t> buffer(static_cast<size_t>(size));
+                if (file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+                    if (applyMetadataToBuffer(buffer, metadata) && writeBufferToFile(tlwfPath, buffer)) {
+                        updated = true;
+                        if (std::filesystem::exists(tlwzPath)) {
+                            recompressBufferToTlwz(buffer, tlwzPath);
+                        }
+                    }
+                }
+            }
+        } else if (std::filesystem::exists(tlwzPath)) {
+            try {
+                BinaryReader reader(tlwzPath);
+                CompressedFileHeader header{};
+                if (!reader.read(header)) return false;
+                if (header.magicNumber != COMPRESSED_MAGIC_NUMBER || header.compressionType != COMPRESSION_TYPE_ZLIB) return false;
+
+                std::vector<Bytef> compressedData(static_cast<size_t>(header.compressedSize));
+                size_t bytesRead = reader.readBytes(reinterpret_cast<char*>(compressedData.data()), compressedData.size());
+                if (bytesRead != header.compressedSize) return false;
+                if (calculateCRC32(compressedData.data(), compressedData.size()) != header.compressedChecksum) return false;
+
+                std::vector<Bytef> decompressed;
+                auto status = SimpZlib::uncompress(compressedData, decompressed, header.uncompressedSize);
+                if (status != SimpZlib::Status::OK || decompressed.size() != header.uncompressedSize) return false;
+                if (calculateCRC32(decompressed.data(), decompressed.size()) != header.uncompressedChecksum) return false;
+
+                std::vector<uint8_t> buffer(decompressed.begin(), decompressed.end());
+                if (!applyMetadataToBuffer(buffer, metadata)) return false;
+                updated = recompressBufferToTlwz(buffer, tlwzPath);
+            } catch (...) {
+                return false;
+            }
+        }
+
+        return updated;
     }
 
     // --- saveCompressedMap Implementation (moved from MapPersistenceManager) ---
