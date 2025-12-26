@@ -59,6 +59,9 @@ Utf8CharInfo nextUtf8Char(const std::string& s, size_t pos) {
         (codepoint >= 0x2B00 && codepoint <= 0x2BFF)) {
         visual = 1;
     }
+    if (codepoint == 0x25CF || codepoint == 0x2022 || codepoint == 0x25B6) {
+        visual = 1;
+    }
 
     info.length = charLen;
     info.visualWidth = visual;

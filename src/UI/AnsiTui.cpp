@@ -227,16 +227,18 @@ void MenuView::render(TuiSurface& surface, int originX, int originY, int width) 
     surface.fillRect(x, y, safeWidth, safeHeight, theme.itemFg, theme.panel, " ");
     surface.drawFrame(x, y, safeWidth, safeHeight, frame, theme.itemFg, theme.panel);
 
-    surface.drawCenteredText(x, y + 1, safeWidth, title, theme.title, theme.panel);
-    surface.drawCenteredText(x, y + 2, safeWidth, subtitle, theme.subtitle, theme.panel);
+    RGBColor titleBg = TuiUtils::blendColor(theme.accent, theme.panel, 0.45);
+    surface.fillRect(x + 1, y + 1, safeWidth - 2, 1, theme.title, titleBg, " ");
+    surface.drawCenteredText(x, y + 1, safeWidth, title, theme.title, titleBg);
+    RGBColor subtitleBg = TuiUtils::blendColor(theme.panel, theme.background, 0.25);
+    surface.fillRect(x + 1, y + 2, safeWidth - 2, 1, theme.subtitle, subtitleBg, " ");
+    surface.drawCenteredText(x, y + 2, safeWidth, subtitle, theme.subtitle, subtitleBg);
 
     int listStart = y + 4;
+    int areaWidth = safeWidth - 4;
     for (size_t i = 0; i < options.size(); ++i) {
         bool focus = i == selected;
-        RGBColor fg = focus ? theme.focusFg : theme.itemFg;
-        RGBColor bg = focus ? theme.focusBg : theme.itemBg;
-        std::string marker = focus ? "> " : "  ";
-        int areaWidth = safeWidth - 4;
+        std::string marker = focus ? "▶ " : "  ";
         size_t markerWidth = TuiUtils::calculateUtf8VisualWidth(marker);
         std::string text = options[i];
         size_t textWidth = TuiUtils::calculateUtf8VisualWidth(text);
@@ -247,15 +249,19 @@ void MenuView::render(TuiSurface& surface, int originX, int originY, int width) 
         }
 
         std::string line = marker + text;
-        surface.drawText(x + 2, listStart + static_cast<int>(i), line, fg, bg);
-        int consumed = static_cast<int>(markerWidth + textWidth);
-        int remaining = areaWidth - consumed;
-        if (remaining > 0) {
-            surface.fillRect(x + 2 + consumed, listStart + static_cast<int>(i), remaining, 1, fg, bg, " ");
+        double stripeBlend = 0.25 + (static_cast<int>(i) % 2) * 0.05;
+        RGBColor rowBg = focus ? TuiUtils::blendColor(theme.focusBg, theme.accent, 0.35)
+                                : TuiUtils::blendColor(theme.panel, theme.background, stripeBlend);
+        RGBColor rowFg = focus ? theme.focusFg : theme.itemFg;
+        surface.fillRect(x + 2, listStart + static_cast<int>(i), areaWidth, 1, rowFg, rowBg, " ");
+        if (focus) {
+            surface.fillRect(x + 1, listStart + static_cast<int>(i), 1, 1, theme.accent, rowBg, " ");
         }
+        // Marker gets a colored accent foreground for better contrast (avoid pure black)
+        RGBColor markerFg = focus ? TuiUtils::lightenColor(theme.accent, 0.18) : rowFg;
+        surface.drawText(x + 2, listStart + static_cast<int>(i), marker, markerFg, rowBg);
+        surface.drawText(x + 2 + static_cast<int>(markerWidth), listStart + static_cast<int>(i), text, rowFg, rowBg);
     }
-
-    surface.drawCenteredText(x, y + safeHeight - 2, safeWidth, "Enter: confirm | Q: quit", theme.hintFg, theme.panel);
 }
 
 } // namespace UI

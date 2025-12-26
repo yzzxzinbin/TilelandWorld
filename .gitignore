@@ -9,3 +9,4 @@ GetStart.md
 *.log
 Doxyfile
 *.csv
+/cmake

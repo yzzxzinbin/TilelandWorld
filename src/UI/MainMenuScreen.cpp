@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <thread>
 #include <vector>
+#include <string>
 #include "../Controllers/InputController.h"
 #ifdef _WIN32
 #include <windows.h>
@@ -30,7 +31,7 @@ MainMenuScreen::MainMenuScreen()
       menu({"Start Game", "Settings", "Quit"}, theme) {
     // 重新应用主题，确保菜单使用已初始化的 theme（成员顺序已调整）。
     menu.setTitle("Tileland World");
-    menu.setSubtitle("Click or arrows + Enter");
+    menu.setSubtitle("Click or arrows + Enter · Q exits");
     menu.setFrameStyle(kModernFrame);
 }
 
@@ -128,12 +129,12 @@ void MainMenuScreen::renderFrame() {
 
     menu.render(surface, originX, originY, panelWidth);
 
-    int infoHeight = 3;
+    int infoHeight = 2;
     int infoOriginY = surface.getHeight() - infoHeight - 2;
     surface.fillRect(0, infoOriginY, surface.getWidth(), infoHeight, theme.panel, theme.panel, " ");
     surface.drawCenteredText(0, infoOriginY, surface.getWidth(), "Procedural walls, endless plains", theme.subtitle, theme.panel);
-    surface.drawCenteredText(0, infoOriginY + 1, surface.getWidth(), "Use Enter/click to choose · Q exits", theme.hintFg, theme.panel);
-    surface.drawCenteredText(0, infoOriginY + 2, surface.getWidth(), "Version 0.9.1 • build 2025-12-26", theme.hintFg, theme.panel);
+    std::string versionLine = "Version " + std::string(kVersion) + " • build " + kBuildTimestamp;
+    surface.drawCenteredText(0, infoOriginY + 1, surface.getWidth(), versionLine, theme.hintFg, theme.panel);
 }
 
 void MainMenuScreen::handleKey(int key, bool& running, Action& result) {
