@@ -17,24 +17,6 @@ namespace {
     double clampDouble(double v, double lo, double hi) { return std::max(lo, std::min(hi, v)); }
     int clampInt(int v, int lo, int hi) { return std::max(lo, std::min(hi, v)); }
 
-    RGBColor blendColor(const RGBColor& from, const RGBColor& to, double t) {
-        auto blendChannel = [t](uint8_t a, uint8_t b) {
-            int val = static_cast<int>(a + (b - a) * t + 0.5);
-            val = std::clamp(val, 0, 255);
-            return static_cast<uint8_t>(val);
-        };
-        return { blendChannel(from.r, to.r), blendChannel(from.g, to.g), blendChannel(from.b, to.b) };
-    }
-
-    RGBColor lighten(const RGBColor& c, double ratio) {
-        double t = std::clamp(ratio, 0.0, 1.0);
-        auto lift = [t](uint8_t ch) {
-            int val = static_cast<int>(ch + (255 - ch) * t + 0.5);
-            return static_cast<uint8_t>(std::clamp(val, 0, 255));
-        };
-        return { lift(c.r), lift(c.g), lift(c.b) };
-    }
-
     constexpr int kArrowUp = 0x100 | 72;
     constexpr int kArrowDown = 0x100 | 80;
     constexpr int kArrowLeft = 0x100 | 75;
@@ -152,11 +134,10 @@ void SettingsScreen::buildItems() {
         {}, 0,0,0,false
     });
 
-    toggleFlash.assign(items.size(), std::chrono::steady_clock::time_point{});
-    togglePrevState.assign(items.size(), false);
+    toggleStates.assign(items.size(), ToggleSwitchState{});
     for (size_t i = 0; i < items.size(); ++i) {
         if (items[i].type == ItemType::Toggle && items[i].isOn) {
-            togglePrevState[i] = items[i].isOn();
+            toggleStates[i].previousOn = items[i].isOn();
         }
     }
 }
@@ -248,54 +229,11 @@ void SettingsScreen::renderFrame() {
         std::string val = editing ? ("[ " + editingBuffer + " ]") : items[i].value();
 
         if (items[i].type == ItemType::Toggle && items[i].isOn) {
-            bool on = items[i].isOn();
-            auto now = std::chrono::steady_clock::now();
-            auto flashStart = (toggleFlash.size() > i) ? toggleFlash[i] : std::chrono::steady_clock::time_point{};
-            double moveProgress = 1.0;
-            double colorProgress = 1.0;
-            if (flashStart.time_since_epoch().count() != 0) {
-                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - flashStart).count();
-                moveProgress = std::clamp(ms / 200.0, 0.0, 1.0);
-                colorProgress = std::clamp((ms - 80.0) / 220.0, 0.0, 1.0);
-            }
-
-            int trackLen = 16;
-            int trackX = listValueX;
-            int trackY = listStartY + static_cast<int>(i);
-            int indicatorWidth = 4;
-            int leftBound = trackX + 1;
-            int rightBound = trackX + trackLen - indicatorWidth - 1;
-            int span = std::max(0, rightBound - leftBound);
-            double pos = on ? moveProgress : (1.0 - moveProgress);
-            int indicatorX = leftBound + static_cast<int>(pos * span + 0.5);
-
-            RGBColor trackBase{32, 36, 48};
-            RGBColor indicatorOn{64, 150, 220};
-            RGBColor indicatorOff{210, 70, 70};
-            RGBColor startColor = (togglePrevState.size() > i && togglePrevState[i]) ? indicatorOn : indicatorOff;
-            RGBColor targetColor = on ? indicatorOn : indicatorOff;
-            RGBColor indicatorColor = blendColor(startColor, targetColor, colorProgress);
-
-            if (hoverToggleHot && hoverToggleIndex == i) {
-                trackBase = lighten(trackBase, 0.05);
-                indicatorColor = lighten(indicatorColor, 0.05);
-            }
-
-            surface.fillRect(trackX, trackY, trackLen, 1, trackBase, trackBase, " ");
-            
-            // Draw background labels
-            surface.drawText(trackX + 1, trackY, "OFF", {80, 85, 100}, trackBase);
-            surface.drawText(trackX + trackLen - 4, trackY, "ON", {80, 85, 100}, trackBase);
-
-            surface.fillRect(indicatorX, trackY, indicatorWidth, 1, indicatorColor, indicatorColor, " ");
-            
-            // Draw labels on top of indicator if they overlap
-            if (indicatorX <= trackX + 1 && indicatorX + indicatorWidth > trackX + 1) {
-                surface.drawText(trackX + 1, trackY, "OFF", {255, 255, 255}, indicatorColor);
-            }
-            if (indicatorX <= trackX + trackLen - 4 && indicatorX + indicatorWidth > trackX + trackLen - 4) {
-                surface.drawText(trackX + trackLen - 4, trackY, "ON", {255, 255, 255}, indicatorColor);
-            }
+            ToggleSwitchStyle style{};
+            ToggleSwitchState state = (toggleStates.size() > i) ? toggleStates[i] : ToggleSwitchState{};
+            state.hover = (hoverToggleIndex == i);
+            state.hot = (hoverToggleHot && hoverToggleIndex == i);
+            ToggleSwitch::render(surface, listValueX, listStartY + static_cast<int>(i), items[i].isOn(), state, style);
         } else {
             surface.drawText(listValueX, listStartY + static_cast<int>(i), val, rowFg, rowBg);
         }
@@ -354,6 +292,7 @@ void SettingsScreen::handleMouse(const InputEvent& ev, bool& running, bool& acce
 
     hoverToggleIndex = static_cast<size_t>(-1);
     hoverToggleHot = false;
+    for (auto& st : toggleStates) { st.hover = false; st.hot = false; }
 
     if (ev.wheel != 0) {
         if (ev.wheel > 0) {
@@ -375,11 +314,17 @@ void SettingsScreen::handleMouse(const InputEvent& ev, bool& running, bool& acce
     if (items[idx].type == ItemType::Toggle) {
         int trackLen = 16;
         int trackX = listValueX;
-        if (ev.x >= trackX && ev.x < trackX + trackLen) {
-            hoverToggleIndex = idx;
-            hoverToggleHot = true;
-        } else {
-            hoverToggleIndex = idx;
+        if (toggleStates.size() > idx) {
+            if (ev.x >= trackX && ev.x < trackX + trackLen) {
+                hoverToggleIndex = idx;
+                hoverToggleHot = true;
+                toggleStates[idx].hover = true;
+                toggleStates[idx].hot = true;
+            } else {
+                hoverToggleIndex = idx;
+                toggleStates[idx].hover = true;
+                toggleStates[idx].hot = false;
+            }
         }
     }
 
@@ -474,10 +419,9 @@ void SettingsScreen::openDirectoryPicker() {
 void SettingsScreen::markToggleAnimation(size_t idx) {
     if (idx >= items.size()) return;
     if (items[idx].type != ItemType::Toggle) return;
-    if (togglePrevState.size() < items.size()) togglePrevState.resize(items.size());
-    if (toggleFlash.size() < items.size()) toggleFlash.resize(items.size());
-    togglePrevState[idx] = !items[idx].isOn();
-    toggleFlash[idx] = std::chrono::steady_clock::now();
+    if (toggleStates.size() < items.size()) toggleStates.resize(items.size());
+    toggleStates[idx].previousOn = !items[idx].isOn();
+    toggleStates[idx].lastToggle = std::chrono::steady_clock::now();
 }
 
 } // namespace UI

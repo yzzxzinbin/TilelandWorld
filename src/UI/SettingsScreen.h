@@ -5,6 +5,8 @@
 #include "AnsiTui.h"
 #include "../Settings.h"
 #include "../Controllers/InputController.h"
+#include "ToggleSwitch.h"
+#include "TuiUtils.h"
 #include <functional>
 #include <vector>
 #include <chrono>
@@ -60,11 +62,8 @@ private:
     size_t lastClickIndex{static_cast<size_t>(-1)};
     std::chrono::steady_clock::time_point lastClickTime{};
 
-    // Toggle 动画闪烁时间戳
-    std::vector<std::chrono::steady_clock::time_point> toggleFlash;
-    std::vector<bool> togglePrevState;
-
-    // 悬停状态
+    // Toggle 状态
+    std::vector<ToggleSwitchState> toggleStates;
     size_t hoverToggleIndex{static_cast<size_t>(-1)};
     bool hoverToggleHot{false};
 

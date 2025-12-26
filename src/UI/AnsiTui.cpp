@@ -1,4 +1,5 @@
 #include "AnsiTui.h"
+#include "TuiUtils.h"
 #include <algorithm>
 
 namespace TilelandWorld {
@@ -217,10 +218,22 @@ void MenuView::render(TuiSurface& surface, int originX, int originY, int width) 
         RGBColor fg = focus ? theme.focusFg : theme.itemFg;
         RGBColor bg = focus ? theme.focusBg : theme.itemBg;
         std::string marker = focus ? "> " : "  ";
-        surface.drawText(x + 2, listStart + static_cast<int>(i), marker + options[i], fg, bg);
-        int remaining = safeWidth - 4 - static_cast<int>(marker.size() + options[i].size());
+        int areaWidth = safeWidth - 4;
+        size_t markerWidth = TuiUtils::calculateUtf8VisualWidth(marker);
+        std::string text = options[i];
+        size_t textWidth = TuiUtils::calculateUtf8VisualWidth(text);
+        if (markerWidth + textWidth > static_cast<size_t>(areaWidth)) {
+            size_t trimWidth = static_cast<size_t>(areaWidth > static_cast<int>(markerWidth) ? areaWidth - static_cast<int>(markerWidth) : 0);
+            text = TuiUtils::trimToUtf8VisualWidth(text, trimWidth);
+            textWidth = TuiUtils::calculateUtf8VisualWidth(text);
+        }
+
+        std::string line = marker + text;
+        surface.drawText(x + 2, listStart + static_cast<int>(i), line, fg, bg);
+        int drawnBytes = static_cast<int>(line.size());
+        int remaining = areaWidth - drawnBytes;
         if (remaining > 0) {
-            surface.fillRect(x + 2 + static_cast<int>(marker.size() + options[i].size()), listStart + static_cast<int>(i), remaining, 1, fg, bg, " ");
+            surface.fillRect(x + 2 + drawnBytes, listStart + static_cast<int>(i), remaining, 1, fg, bg, " ");
         }
     }
 

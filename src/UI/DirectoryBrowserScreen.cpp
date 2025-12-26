@@ -1,4 +1,5 @@
 #include "DirectoryBrowserScreen.h"
+#include "TuiUtils.h"
 #include <algorithm>
 #include <iostream>
 #include <thread>
@@ -173,11 +174,19 @@ void DirectoryBrowserScreen::renderFrame()
         {
             label = "[" + entries[static_cast<size_t>(i)].name + "]";
         }
+        int areaWidth = listWidth - 4;
+        size_t labelWidth = TuiUtils::calculateUtf8VisualWidth(label);
+        if (labelWidth > static_cast<size_t>(areaWidth)) {
+            label = TuiUtils::trimToUtf8VisualWidth(label, static_cast<size_t>(areaWidth));
+            labelWidth = TuiUtils::calculateUtf8VisualWidth(label);
+        }
+        int labelByteWidth = static_cast<int>(label.size());
+
         surface.drawText(listOriginX + 2, rowY + (i - start), label, fg, bg);
-        int remain = listWidth - 4 - static_cast<int>(label.size());
+        int remain = areaWidth - labelByteWidth;
         if (remain > 0)
         {
-            surface.fillRect(listOriginX + 2 + static_cast<int>(label.size()), rowY + (i - start), remain, 1, fg, bg, " ");
+            surface.fillRect(listOriginX + 2 + labelByteWidth, rowY + (i - start), remain, 1, fg, bg, " ");
         }
     }
 
