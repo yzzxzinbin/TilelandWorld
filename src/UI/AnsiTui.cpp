@@ -390,10 +390,17 @@ void MenuView::render(TuiSurface& surface, int originX, int originY, int width) 
             hFg = blendedFg(focusStart, focusEnd, true);
         }
 
-        RGBColor markerFg = rowFg;
+        RGBColor markerFg =theme.accent;
         int rowY = listStart + static_cast<int>(i);
         applyHighlightSpan(rowY, highlightStart, highlightEnd, hFg, hBg);
-        drawRowTextSegmented(rowY, x + 2, marker, highlightStart, highlightEnd, markerFg, rowBg, hFg, hBg);
+        // Marker: keep accent foreground; background uses highlight only if the highlight overlaps the marker area
+        {
+            int hs = std::max(0, highlightStart);
+            int he = std::max(0, highlightEnd);
+            bool markerHighlighted = (hs < he) && (hs < static_cast<int>(markerWidth));
+            RGBColor markerBg = markerHighlighted ? hBg : rowBg;
+            surface.drawText(x + 2, rowY, marker, markerFg, markerBg);
+        }
         drawRowTextSegmented(rowY, x + 2 + static_cast<int>(markerWidth), text,
                             highlightStart - static_cast<int>(markerWidth),
                             highlightEnd - static_cast<int>(markerWidth),
