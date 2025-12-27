@@ -136,6 +136,14 @@ namespace TilelandWorld
         currentViewState.tps = tps; // 新增：设置 TPS
     }
 
+    void TuiRenderer::applyRuntimeSettings(double statsAlpha, bool enableStats, bool enableDiff, double fpsCap)
+    {
+        baseStatsAlpha.store(std::clamp(statsAlpha, 0.0, 1.0));
+        enableStatsOverlay.store(enableStats);
+        enableDiffOutput.store(enableDiff);
+        targetFpsCap.store(std::max(1.0, fpsCap));
+    }
+
     void TuiRenderer::setUiLayer(std::shared_ptr<const UI::TuiSurface> layer, double alphaBg)
     {
         double clamped = std::clamp(alphaBg, 0.0, 1.0);
@@ -181,8 +189,6 @@ namespace TilelandWorld
         QueryPerformanceCounter(&nowLI);
         lastFpsTime = nowLI.QuadPart;
 
-        double effectiveFps = std::max(1.0, targetFpsCap);
-        const double targetFrameTime = 1000.0 / effectiveFps; // 毫秒
 #endif
 
         size_t frameNumber = 0;
@@ -194,6 +200,7 @@ namespace TilelandWorld
 #ifdef _WIN32
             LARGE_INTEGER startTick, endTick;
             QueryPerformanceCounter(&startTick);
+            double targetFrameTime = 1000.0 / std::max(1.0, targetFpsCap.load());
 #endif
 
             // 1. 获取当前视图状态
@@ -216,7 +223,7 @@ namespace TilelandWorld
                 overlayAlpha = uiLayerAlphaBg;
             }
             std::shared_ptr<UI::TuiSurface> stats;
-            if (enableStatsOverlay)
+            if (enableStatsOverlay.load())
             {
                 stats = buildStatsOverlay(state);
             }
@@ -229,7 +236,7 @@ namespace TilelandWorld
             else if (externalOverlay)
             {
                 overlay = externalOverlay;
-                overlayAlpha = std::max(baseStatsAlpha, overlayAlpha); // fallback to avoid zero alpha
+                overlayAlpha = std::max(baseStatsAlpha.load(), overlayAlpha); // fallback to avoid zero alpha
             }
 
             if (stats && externalOverlay)
@@ -262,11 +269,11 @@ namespace TilelandWorld
                     }
                 }
                 overlay = merged;
-                overlayAlpha = std::max(baseStatsAlpha, overlayAlpha);
+                overlayAlpha = std::max(baseStatsAlpha.load(), overlayAlpha);
             }
             else if (stats)
             {
-                overlayAlpha = baseStatsAlpha;
+                overlayAlpha = baseStatsAlpha.load();
             }
 
             // 3. 渲染输出
@@ -526,7 +533,7 @@ namespace TilelandWorld
         std::string tpsStr = std::to_string(state.tps);
         statusLine.append(tpsStr.substr(0, tpsStr.find('.') + 2));
 
-        if (enableDiffOutput)
+        if (enableDiffOutput.load())
         {
             std::uint64_t frameHash = fnv1aHash(frameLines, statusLine);
             if (frameHash == lastFrameHash)

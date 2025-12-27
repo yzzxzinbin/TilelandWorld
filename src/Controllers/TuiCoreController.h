@@ -14,6 +14,8 @@
 #include <string>
 #include <mutex> 
 #include <memory>
+#include <vector>
+#include <functional>
 #include <windows.h> // 引入 QueryPerformanceCounter
 
 namespace TilelandWorld {
@@ -61,6 +63,21 @@ namespace TilelandWorld {
 
         Settings settings;
 
+        struct RuntimeSettingItem {
+            enum class Kind { Toggle, Number };
+            std::string label;
+            Kind kind{Kind::Number};
+            std::function<void(int)> adjust; // dir: -1/1
+            std::function<std::string()> display;
+        };
+
+        bool settingsOverlayActive{false};
+        Settings settingsOverlayWorking{};
+        size_t settingsOverlaySelected{0};
+        std::shared_ptr<UI::TuiSurface> settingsOverlaySurface;
+        UI::MenuTheme settingsOverlayTheme{};
+        std::vector<RuntimeSettingItem> settingsOverlayItems;
+
         // 鼠标叠加层
         std::shared_ptr<UI::TuiSurface> mouseOverlay;
         int mouseScreenX = -1;
@@ -82,6 +99,16 @@ namespace TilelandWorld {
         // 内部逻辑
         void handleInput();
         void rebuildMouseOverlay();
+        void pushActiveOverlay();
+        void toggleInGameSettings();
+        void openInGameSettings();
+        void closeInGameSettings();
+        void buildSettingsOverlayItems();
+        void rebuildSettingsOverlay();
+        void handleSettingsOverlayKey(const InputEvent& ev);
+        void applySettingsWorking();
+        void adjustSettingsSelection(int delta);
+        void adjustSettingsValue(int dir);
         
         // 2. 预加载逻辑
         void preloadChunks();

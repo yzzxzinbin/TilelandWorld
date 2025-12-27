@@ -40,6 +40,9 @@ namespace TilelandWorld {
         // 更新视图参数 (由逻辑线程调用)
         void updateViewState(int x, int y, int z, int w, int h, size_t modifiedCount, double tps);
 
+        // 运行时更新渲染配置（无须重启线程）
+        void applyRuntimeSettings(double statsAlpha, bool enableStats, bool enableDiff, double fpsCap);
+
         // 设置可选的 UI 覆盖层（与地图同尺寸网格），alpha 用于背景预混合 [0,1]
         void setUiLayer(std::shared_ptr<const UI::TuiSurface> layer, double alphaBg = 0.0);
 
@@ -62,10 +65,10 @@ namespace TilelandWorld {
         double uiLayerAlphaBg = 0.0; // 0 表示不混合
         std::mutex uiMutex;
 
-        double baseStatsAlpha = 0.10;
-        bool enableStatsOverlay = true;
-        bool enableDiffOutput = false;
-        double targetFpsCap = 360.0;
+        std::atomic<double> baseStatsAlpha{0.10};
+        std::atomic<bool> enableStatsOverlay{true};
+        std::atomic<bool> enableDiffOutput{false};
+        std::atomic<double> targetFpsCap{360.0};
 
         // 渲染缓冲区 (本地副本)
         std::vector<Tile> tileBuffer;

@@ -1,8 +1,11 @@
 #include "TuiCoreController.h"
 #include "../Constants.h"
 #include "../Utils/Logger.h"
+#include "../UI/TuiUtils.h"
 #include <iostream>
 #include <algorithm>
+#include <sstream>
+#include <iomanip>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -11,6 +14,17 @@
 #endif
 
 namespace TilelandWorld {
+
+    namespace {
+        double clampDouble(double v, double lo, double hi) { return std::max(lo, std::min(hi, v)); }
+        int clampInt(int v, int lo, int hi) { return std::max(lo, std::min(hi, v)); }
+
+        std::string formatFixed(double v, int digits = 2) {
+            std::ostringstream oss;
+            oss << std::fixed << std::setprecision(digits) << v;
+            return oss.str();
+        }
+    }
 
     TuiCoreController::TuiCoreController(Map& mapRef, const Settings& cfg) : map(mapRef), settings(cfg) {
         // 确保地形生成器与存档元数据一致。
@@ -100,7 +114,6 @@ namespace TilelandWorld {
         LARGE_INTEGER frequency;
         QueryPerformanceFrequency(&frequency);
         double pcFreq = double(frequency.QuadPart) / 1000.0; // ms
-        double targetFrameTime = 1000.0 / targetTps;
 
         // 新增：TPS 计算初始化
         LARGE_INTEGER tpsFreqLI;
@@ -115,6 +128,7 @@ namespace TilelandWorld {
             #ifdef _WIN32
             LARGE_INTEGER startTick;
             QueryPerformanceCounter(&startTick);
+                        double targetFrameTime = 1000.0 / std::max(1.0, targetTps);
             #endif
 
             // --- 1. 逻辑更新开始 ---
@@ -191,6 +205,7 @@ namespace TilelandWorld {
 
         // 高频按键（WASD/Q/Esc/左右层级切换）在 Windows 下用 GetAsyncKeyState 提升长按采样率
 #ifdef _WIN32
+    if (!settingsOverlayActive) {
         auto keyDown = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
 
         if (keyDown('W')) viewY--;
@@ -203,9 +218,19 @@ namespace TilelandWorld {
         if (keyDown(VK_RIGHT)) currentZ++;
 
         if (keyDown('Q') || keyDown(VK_ESCAPE)) running = false;
+    }
 #endif
 
         auto events = inputController->pollEvents();
+        if (settingsOverlayActive) {
+            for (const auto& ev : events) {
+                if (ev.type == InputEvent::Type::Key) {
+                    handleSettingsOverlayKey(ev);
+                }
+            }
+            return;
+        }
+
         for (const auto& ev : events) {
             if (ev.type == InputEvent::Type::Key) {
 #ifdef _WIN32
@@ -224,6 +249,7 @@ namespace TilelandWorld {
                     else if (ev.ch == 'a' || ev.ch == 'A') viewX--;
                     else if (ev.ch == 'd' || ev.ch == 'D') viewX++;
                     else if (ev.ch == 'q' || ev.ch == 'Q') running = false;
+                    else if (ev.ch == 'i' || ev.ch == 'I') { toggleInGameSettings(); if (settingsOverlayActive) return; }
                 }
 
                 // 特殊键
@@ -234,7 +260,7 @@ namespace TilelandWorld {
                 else if (ev.key == InputKey::Escape) { running = false; }
             }
             else if (ev.type == InputEvent::Type::Mouse) {
-                if (!settings.enableMouseCross) continue;
+                if (!settings.enableMouseCross || settingsOverlayActive) continue;
                 mouseScreenX = ev.x;
                 mouseScreenY = ev.y;
                 rebuildMouseOverlay();
@@ -247,6 +273,10 @@ namespace TilelandWorld {
             mouseOverlay.reset();
             if (renderer) renderer->clearUiLayer();
             return;
+        }
+
+        if (settingsOverlayActive) {
+            return; // UI 叠加优先
         }
 
         int overlayW = viewWidth * 2;
@@ -271,7 +301,248 @@ namespace TilelandWorld {
         surface->fillRect(tileX * 2, 0, 2, overlayH, white, white, " ");
 
         mouseOverlay = surface;
-        if (renderer) renderer->setUiLayer(mouseOverlay, settings.mouseCrossAlpha);
+        pushActiveOverlay();
+    }
+
+    void TuiCoreController::pushActiveOverlay() {
+        if (!renderer) return;
+
+        constexpr double kUiOverlayAlpha = 0.10; // 与状态栏一致的 10% 透明度
+        if (settingsOverlayActive && settingsOverlaySurface) {
+            renderer->setUiLayer(settingsOverlaySurface, kUiOverlayAlpha);
+            return;
+        }
+
+        if (settings.enableMouseCross && mouseOverlay) {
+            renderer->setUiLayer(mouseOverlay, settings.mouseCrossAlpha);
+        } else {
+            renderer->clearUiLayer();
+        }
+    }
+
+    void TuiCoreController::toggleInGameSettings() {
+        if (settingsOverlayActive) {
+            closeInGameSettings();
+        } else {
+            openInGameSettings();
+        }
+    }
+
+    void TuiCoreController::openInGameSettings() {
+        settingsOverlayWorking = settings;
+        settingsOverlaySelected = 0;
+        buildSettingsOverlayItems();
+        settingsOverlayActive = true;
+        rebuildSettingsOverlay();
+    }
+
+    void TuiCoreController::closeInGameSettings() {
+        settingsOverlayActive = false;
+        settingsOverlaySurface.reset();
+        pushActiveOverlay();
+        rebuildMouseOverlay();
+    }
+
+    void TuiCoreController::buildSettingsOverlayItems() {
+        settingsOverlayItems.clear();
+
+        settingsOverlayItems.push_back(RuntimeSettingItem{
+            "FPS limit",
+            RuntimeSettingItem::Kind::Number,
+            [this](int dir) {
+                settingsOverlayWorking.targetFpsLimit = clampDouble(settingsOverlayWorking.targetFpsLimit + dir * 5.0, 30.0, 1440.0);
+            },
+            [this]() { return std::to_string(static_cast<int>(settingsOverlayWorking.targetFpsLimit)); }
+        });
+
+        settingsOverlayItems.push_back(RuntimeSettingItem{
+            "Target TPS",
+            RuntimeSettingItem::Kind::Number,
+            [this](int dir) {
+                settingsOverlayWorking.targetTps = clampDouble(settingsOverlayWorking.targetTps + dir * 1.0, 10.0, 240.0);
+            },
+            [this]() { return std::to_string(static_cast<int>(settingsOverlayWorking.targetTps)); }
+        });
+
+        settingsOverlayItems.push_back(RuntimeSettingItem{
+            "Stats overlay alpha",
+            RuntimeSettingItem::Kind::Number,
+            [this](int dir) {
+                settingsOverlayWorking.statsOverlayAlpha = clampDouble(settingsOverlayWorking.statsOverlayAlpha + dir * 0.02, 0.0, 1.0);
+            },
+            [this]() { return formatFixed(settingsOverlayWorking.statsOverlayAlpha, 2); }
+        });
+
+        settingsOverlayItems.push_back(RuntimeSettingItem{
+            "Mouse cross alpha",
+            RuntimeSettingItem::Kind::Number,
+            [this](int dir) {
+                settingsOverlayWorking.mouseCrossAlpha = clampDouble(settingsOverlayWorking.mouseCrossAlpha + dir * 0.05, 0.0, 1.0);
+            },
+            [this]() { return formatFixed(settingsOverlayWorking.mouseCrossAlpha, 2); }
+        });
+
+        settingsOverlayItems.push_back(RuntimeSettingItem{
+            "Show stats overlay",
+            RuntimeSettingItem::Kind::Toggle,
+            [this](int) { settingsOverlayWorking.enableStatsOverlay = !settingsOverlayWorking.enableStatsOverlay; },
+            [this]() { return settingsOverlayWorking.enableStatsOverlay ? "On" : "Off"; }
+        });
+
+        settingsOverlayItems.push_back(RuntimeSettingItem{
+            "Show mouse cross",
+            RuntimeSettingItem::Kind::Toggle,
+            [this](int) { settingsOverlayWorking.enableMouseCross = !settingsOverlayWorking.enableMouseCross; },
+            [this]() { return settingsOverlayWorking.enableMouseCross ? "On" : "Off"; }
+        });
+
+        settingsOverlayItems.push_back(RuntimeSettingItem{
+            "Diff-based rendering",
+            RuntimeSettingItem::Kind::Toggle,
+            [this](int) { settingsOverlayWorking.enableDiffRendering = !settingsOverlayWorking.enableDiffRendering; },
+            [this]() { return settingsOverlayWorking.enableDiffRendering ? "On" : "Off"; }
+        });
+
+        settingsOverlayItems.push_back(RuntimeSettingItem{
+            "View width",
+            RuntimeSettingItem::Kind::Number,
+            [this](int dir) {
+                settingsOverlayWorking.viewWidth = clampInt(settingsOverlayWorking.viewWidth + dir * 2, 16, 200);
+            },
+            [this]() { return std::to_string(settingsOverlayWorking.viewWidth); }
+        });
+
+        settingsOverlayItems.push_back(RuntimeSettingItem{
+            "View height",
+            RuntimeSettingItem::Kind::Number,
+            [this](int dir) {
+                settingsOverlayWorking.viewHeight = clampInt(settingsOverlayWorking.viewHeight + dir * 2, 16, 120);
+            },
+            [this]() { return std::to_string(settingsOverlayWorking.viewHeight); }
+        });
+
+        if (settingsOverlaySelected >= settingsOverlayItems.size()) {
+            settingsOverlaySelected = settingsOverlayItems.empty() ? 0 : settingsOverlayItems.size() - 1;
+        }
+    }
+
+    void TuiCoreController::rebuildSettingsOverlay() {
+        if (!settingsOverlayActive) return;
+        if (settingsOverlayItems.empty()) buildSettingsOverlayItems();
+        if (settingsOverlayItems.empty()) return;
+        if (settingsOverlaySelected >= settingsOverlayItems.size()) {
+            settingsOverlaySelected = settingsOverlayItems.size() - 1;
+        }
+
+        int overlayW = std::max(32, viewWidth * 2);
+        int overlayH = std::max(8, viewHeight);
+        auto surface = std::make_shared<UI::TuiSurface>(overlayW, overlayH);
+
+        int panelW = std::min(std::max(32, overlayW - 6), overlayW - 2);
+        int panelX = std::max(1, (overlayW - panelW) / 2);
+        int panelY = 2;
+        int minPanelH = static_cast<int>(settingsOverlayItems.size()) + 6;
+        int panelH = std::min(std::max(minPanelH, 8), overlayH - panelY - 1);
+        if (panelH < 6) panelH = 6;
+
+        surface->fillRect(panelX, panelY, panelW, panelH, settingsOverlayTheme.itemFg, settingsOverlayTheme.panel, " ");
+        // Use modern rounded single-line box characters for a contemporary look
+        UI::BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
+        surface->drawFrame(panelX, panelY, panelW, panelH, modernFrame, settingsOverlayTheme.itemFg, settingsOverlayTheme.panel);
+
+        RGBColor titleBg = UI::TuiUtils::blendColor(settingsOverlayTheme.accent, settingsOverlayTheme.panel, 0.35);
+        surface->fillRect(panelX + 1, panelY + 1, panelW - 2, 1, settingsOverlayTheme.title, titleBg, " ");
+        surface->drawText(panelX + 2, panelY + 1, "In-game Settings", settingsOverlayTheme.title, titleBg);
+
+        std::string subtitle = "W/S or Up/Down: select - A/D or Left/Right: adjust";
+        surface->drawText(panelX + 2, panelY + 2, subtitle, settingsOverlayTheme.hintFg, settingsOverlayTheme.panel);
+
+        int rowY = panelY + 4;
+        int labelX = panelX + 3;
+        int valueRight = panelX + panelW - 3;
+
+        for (size_t i = 0; i < settingsOverlayItems.size() && rowY < panelY + panelH - 2; ++i) {
+            const auto& item = settingsOverlayItems[i];
+            bool focus = (i == settingsOverlaySelected);
+            RGBColor rowBg = focus ? settingsOverlayTheme.focusBg : settingsOverlayTheme.panel;
+            RGBColor rowFg = focus ? settingsOverlayTheme.focusFg : settingsOverlayTheme.itemFg;
+
+            surface->fillRect(panelX + 1, rowY, panelW - 2, 1, rowFg, rowBg, " ");
+            surface->drawText(labelX, rowY, item.label, rowFg, rowBg);
+
+            std::string value = item.display ? item.display() : "";
+            int valueWidth = static_cast<int>(UI::TuiUtils::calculateUtf8VisualWidth(value));
+            int valueX = std::max(labelX + 12, valueRight - valueWidth);
+            surface->drawText(valueX, rowY, value, rowFg, rowBg);
+
+            rowY += 1;
+        }
+
+        int hintY = std::min(panelY + panelH - 2, overlayH - 2);
+        surface->fillRect(panelX + 1, hintY, panelW - 2, 1, settingsOverlayTheme.hintFg, settingsOverlayTheme.panel, " ");
+        surface->drawText(panelX + 2, hintY, "Enter/I/Q: close", settingsOverlayTheme.hintFg, settingsOverlayTheme.panel);
+
+        settingsOverlaySurface = surface;
+        pushActiveOverlay();
+    }
+
+    void TuiCoreController::applySettingsWorking() {
+        settings = settingsOverlayWorking;
+        viewWidth = settings.viewWidth;
+        viewHeight = settings.viewHeight;
+        targetTps = settings.targetTps;
+
+        if (renderer) {
+            renderer->applyRuntimeSettings(settings.statsOverlayAlpha, settings.enableStatsOverlay, settings.enableDiffRendering, settings.targetFpsLimit);
+        }
+
+        if (!settings.enableMouseCross) {
+            mouseOverlay.reset();
+        }
+    }
+
+    void TuiCoreController::adjustSettingsSelection(int delta) {
+        if (settingsOverlayItems.empty()) return;
+        int count = static_cast<int>(settingsOverlayItems.size());
+        int next = static_cast<int>(settingsOverlaySelected) + delta;
+        if (next < 0) next = count - 1;
+        if (next >= count) next = 0;
+        settingsOverlaySelected = static_cast<size_t>(next);
+        rebuildSettingsOverlay();
+    }
+
+    void TuiCoreController::adjustSettingsValue(int dir) {
+        if (settingsOverlayItems.empty()) return;
+        int step = dir >= 0 ? 1 : -1;
+        auto& item = settingsOverlayItems[settingsOverlaySelected];
+        if (item.adjust) item.adjust(step);
+        applySettingsWorking();
+        rebuildSettingsOverlay();
+    }
+
+    void TuiCoreController::handleSettingsOverlayKey(const InputEvent& ev) {
+        if (ev.type != InputEvent::Type::Key) return;
+
+        // NOTE: Do NOT treat Escape as a close trigger to avoid conflicts with terminal ESC sequences.
+        if (ev.key == InputKey::Enter) {
+            closeInGameSettings();
+            return;
+        }
+
+        if (ev.key == InputKey::ArrowUp) { adjustSettingsSelection(-1); return; }
+        if (ev.key == InputKey::ArrowDown) { adjustSettingsSelection(1); return; }
+        if (ev.key == InputKey::ArrowLeft) { adjustSettingsValue(-1); return; }
+        if (ev.key == InputKey::ArrowRight) { adjustSettingsValue(1); return; }
+
+        if (ev.key == InputKey::Character) {
+            char c = static_cast<char>(ev.ch);
+            if (c == 'i' || c == 'I' || c == 'q' || c == 'Q') { closeInGameSettings(); return; }
+            if (c == 'w' || c == 'W') { adjustSettingsSelection(-1); return; }
+            if (c == 's' || c == 'S') { adjustSettingsSelection(1); return; }
+            if (c == 'a' || c == 'A') { adjustSettingsValue(-1); return; }
+            if (c == 'd' || c == 'D') { adjustSettingsValue(1); return; }
+            if (c == '\r' || c == '\n') { closeInGameSettings(); return; }
+        }
     }
 
     void TuiCoreController::preloadChunks() {
