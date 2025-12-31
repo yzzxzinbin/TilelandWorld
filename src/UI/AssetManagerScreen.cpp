@@ -10,6 +10,7 @@
 #include <cmath>
 #include <set>
 #include <map>
+#include <vector>
 #include <sstream>
 #include <iomanip>
 #include <chrono>
@@ -254,8 +255,8 @@ namespace UI {
                 auto btnColor = [&](HoverButton hb) {
                     bool hot = (hoverRow == i && hoverButton == hb);
                     RGBColor baseBg = theme.accent;
-                    RGBColor bbg = hot ? darken(baseBg, 0.9) : baseBg;
-                    RGBColor bfg = theme.title;
+                    RGBColor bbg = hot ? darken(baseBg, 0.6) : baseBg;
+                    RGBColor bfg = hot ? RGBColor{255,255,255} : theme.title;
                     return std::make_pair(bfg, bbg);
                 };
                 auto [fgOpen, bgOpen] = btnColor(HoverButton::Open);
@@ -338,8 +339,9 @@ namespace UI {
             int btnY = dy + dh - 3;
             auto drawBtn = [&](const std::string& lbl, int x, bool hot, bool focus){
                 RGBColor baseBg = theme.accent;
-                RGBColor bg = hot || focus ? darken(baseBg, 0.9) : baseBg;
-                RGBColor fg = theme.title;
+                bool active = hot || focus;
+                RGBColor bg = active ? darken(baseBg, 0.6) : baseBg;
+                RGBColor fg = active ? RGBColor{255,255,255} : theme.title;
                 surface.drawText(x, btnY, lbl, fg, bg);
             };
             drawBtn(importLbl, importX, hoverImport, focusIdx == 2);
@@ -409,6 +411,13 @@ namespace UI {
                                     std::string name = std::filesystem::path(filePath).stem().string();
                                     manager.saveAsset(asset, name);
                                     refreshList();
+                                    for (size_t idx = 0; idx < assets.size(); ++idx) {
+                                        if (assets[idx].name == name) {
+                                            selectedIndex = static_cast<int>(idx);
+                                            loadPreview();
+                                            break;
+                                        }
+                                    }
                                 }
                             } catch (...) {}
                             dialogRunning = false;
@@ -450,6 +459,13 @@ namespace UI {
                                     std::string name = std::filesystem::path(filePath).stem().string();
                                     manager.saveAsset(asset, name);
                                     refreshList();
+                                    for (size_t idx = 0; idx < assets.size(); ++idx) {
+                                        if (assets[idx].name == name) {
+                                            selectedIndex = static_cast<int>(idx);
+                                            loadPreview();
+                                            break;
+                                        }
+                                    }
                                 }
                             } catch (...) {}
                             dialogRunning = false;
@@ -501,17 +517,42 @@ void AssetManagerScreen::showInfoDialog(const ImageAsset& asset) {
                 bgset.insert(std::to_string(c.bg.r) + "," + std::to_string(c.bg.g) + "," + std::to_string(c.bg.b));
             }
         }
+        int totalCells = wcells * hcells;
+        lines.push_back("Cells: " + std::to_string(totalCells));
         lines.push_back("Unique glyphs: " + std::to_string((int)glyphs.size()));
         lines.push_back("Unique foreground colors: " + std::to_string((int)fgset.size()));
         lines.push_back("Unique background colors: " + std::to_string((int)bgset.size()));
 
-        // top glyphs
-        lines.push_back("Top glyphs:");
-        int shown = 0;
-        for (auto it = glyphCount.begin(); it != glyphCount.end() && shown < 5; ++it) {
-            std::ostringstream ss; ss << "  '" << it->first << "' x " << it->second;
-            lines.push_back(ss.str());
-            ++shown;
+        // glyphs by frequency (no ellipsis unless dialog would overflow screen)
+        std::vector<std::pair<std::string,int>> glyphVec(glyphCount.begin(), glyphCount.end());
+        std::sort(glyphVec.begin(), glyphVec.end(), [](const auto& a, const auto& b){
+            if (a.second != b.second) return a.second > b.second;
+            return a.first < b.first;
+        });
+
+        std::vector<std::string> glyphLines;
+        glyphLines.reserve(glyphVec.size() + 1);
+        glyphLines.push_back("Top glyphs (by cells):");
+        for (const auto& kv : glyphVec) {
+            double pct = totalCells > 0 ? (static_cast<double>(kv.second) * 100.0 / static_cast<double>(totalCells)) : 0.0;
+            std::ostringstream ss; ss << "  '" << kv.first << "' x " << kv.second << " (" << std::fixed << std::setprecision(1) << pct << "%)";
+            glyphLines.push_back(ss.str());
+        }
+
+        int maxDh = std::max(7, h - 4);
+        int neededDhAll = static_cast<int>(lines.size() + glyphLines.size()) + 7;
+        if (neededDhAll <= maxDh) {
+            lines.insert(lines.end(), glyphLines.begin(), glyphLines.end());
+        } else {
+            int availableGlyphLines = std::max(0, maxDh - 7 - static_cast<int>(lines.size()));
+            if (availableGlyphLines > 0) {
+                int take = std::min(static_cast<int>(glyphLines.size()), availableGlyphLines);
+                lines.insert(lines.end(), glyphLines.begin(), glyphLines.begin() + take);
+                if (static_cast<int>(glyphLines.size()) > take) {
+                    int remaining = static_cast<int>(glyphLines.size()) - take;
+                    lines.push_back("  ..." + std::to_string(remaining) + " more glyphs");
+                }
+            }
         }
     }
 
@@ -543,8 +584,8 @@ void AssetManagerScreen::showInfoDialog(const ImageAsset& asset) {
         int btnY = dy + dh - 2;
         auto drawBtn = [&](const std::string& lbl, int x, bool hot){
             RGBColor baseBg = theme.accent;
-            RGBColor bg = hot ? darken(baseBg, 0.9) : baseBg;
-            RGBColor fg = theme.title;
+            RGBColor bg = hot ? darken(baseBg, 0.6) : baseBg;
+            RGBColor fg = hot ? RGBColor{255,255,255} : theme.title;
             surface.drawText(x, btnY, lbl, fg, bg);
         };
         drawBtn(ok, okx, hoverOk);
