@@ -7,10 +7,20 @@
 #include <thread>
 #include <algorithm>
 #include <cmath>
+#include <set>
+#include <map>
+#include <sstream>
+#include <iomanip>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
+
+namespace {
+    const std::string kOpenBtnLabel = "[Open]";
+    const std::string kDeleteBtnLabel = "[Delete]";
+    const std::string kInfoBtnLabel = "[Info]";
+}
 
 namespace TilelandWorld {
 namespace UI {
@@ -37,7 +47,46 @@ namespace UI {
             
             auto events = input->pollEvents();
             for (const auto& ev : events) {
-                if (ev.type == InputEvent::Type::Key) {
+                if (ev.type == InputEvent::Type::Mouse) {
+                    if (!assets.empty() && ev.wheel != 0) {
+                        int delta = (ev.wheel > 0) ? -1 : 1;
+                        int maxIndex = std::max(0, static_cast<int>(assets.size()) - 1);
+                        selectedIndex = std::clamp(selectedIndex + delta, 0, maxIndex);
+                        loadPreview();
+                    }
+
+                    bool insideList = (ev.x >= listX && ev.x < listX + listW && ev.y >= listY && ev.y < listY + listH);
+                    if (ev.move && insideList && !assets.empty()) {
+                        int row = ev.y - listY;
+                        if (row >= 0 && row < static_cast<int>(assets.size()) && row != selectedIndex) {
+                            selectedIndex = row;
+                            loadPreview();
+                        }
+                        continue;
+                    }
+                    if (!ev.pressed) continue;
+
+                    if (insideList && !assets.empty()) {
+                        int row = ev.y - listY;
+                        if (row >= 0 && row < static_cast<int>(assets.size())) {
+                            selectedIndex = row;
+                            loadPreview();
+
+                            bool onOpen = ev.x >= buttonOpenX && ev.x < buttonOpenX + static_cast<int>(kOpenBtnLabel.size());
+                            bool onDelete = ev.x >= buttonDeleteX && ev.x < buttonDeleteX + static_cast<int>(kDeleteBtnLabel.size());
+                            bool onInfo = ev.x >= buttonInfoX && ev.x < buttonInfoX + static_cast<int>(kInfoBtnLabel.size());
+                            if (onDelete) {
+                                deleteCurrentAsset();
+                            } else if (onOpen) {
+                                // Stub for open: currently just reload preview
+                                loadPreview();
+                            } else if (onInfo) {
+                                if (!previewLoaded) loadPreview();
+                                if (previewLoaded) showInfoDialog(currentPreview);
+                            }
+                        }
+                    }
+                } else if (ev.type == InputEvent::Type::Key) {
                     if (ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
                         running = false;
                     } else if (ev.key == InputKey::ArrowUp) {
@@ -143,26 +192,54 @@ namespace UI {
         int padding = 2;
         int contentY = 5; // leave room for title + subtitle
         int contentH = h - contentY - 2;
-        int listW = std::max(24, w / 3);
-        int listX = padding;
-        int prevX = listX + listW + padding;
+        int listWOuter = std::max(24, w / 3);
+        int listXOuter = padding;
+        int prevX = listXOuter + listWOuter + padding;
         int prevW = w - prevX - padding;
         if (prevW < 20) prevW = 20;
 
         // List panel (header strip to match other screens)
-        surface.fillRect(listX, contentY, listW, contentH, theme.itemFg, theme.panel, " ");
-        surface.drawFrame(listX, contentY, listW, contentH, modernFrame, theme.itemFg, theme.panel);
-        surface.fillRect(listX + 1, contentY + 1, listW - 2, 1, theme.title, theme.background, " ");
-        surface.drawText(listX + 2, contentY + 1, "Assets", theme.title, theme.background);
+        surface.fillRect(listXOuter, contentY, listWOuter, contentH, theme.itemFg, theme.panel, " ");
+        surface.drawFrame(listXOuter, contentY, listWOuter, contentH, modernFrame, theme.itemFg, theme.panel);
+        surface.fillRect(listXOuter + 1, contentY + 1, listWOuter - 2, 1, theme.title, theme.background, " ");
+        surface.drawText(listXOuter + 2, contentY + 1, "Assets", theme.title, theme.background);
 
+        int listInnerX = listXOuter + 1;
         int listInnerY = contentY + 3;
-        int listInnerH = contentH - 4;
+        int listInnerW = std::max(0, listWOuter - 2);
+        int listInnerH = std::max(0, contentH - 4);
+
+        listX = listInnerX;
+        listY = listInnerY;
+        listW = listInnerW;
+        listH = listInnerH;
+
+        int buttonsWidth = static_cast<int>(kOpenBtnLabel.size() + 1 + kDeleteBtnLabel.size() + 1 + kInfoBtnLabel.size());
+        int buttonsStart = std::max(listInnerX + 4, listInnerX + listInnerW - buttonsWidth);
+        buttonOpenX = buttonsStart;
+        buttonDeleteX = buttonOpenX + static_cast<int>(kOpenBtnLabel.size()) + 1;
+        buttonInfoX = buttonDeleteX + static_cast<int>(kDeleteBtnLabel.size()) + 1;
+
+        RGBColor white{255,255,255};
+        RGBColor black{0,0,0};
         for (int i = 0; i < static_cast<int>(assets.size()) && i < listInnerH; ++i) {
-            RGBColor fg = (i == selectedIndex) ? theme.focusFg : theme.itemFg;
-            RGBColor bg = (i == selectedIndex) ? theme.focusBg : theme.panel;
+            int rowY = listInnerY + i;
+            bool focused = (i == selectedIndex);
+            RGBColor fg = focused ? black : theme.itemFg;
+            RGBColor bg = focused ? white : theme.panel;
+            surface.fillRect(listInnerX, rowY, listInnerW, 1, fg, bg, " ");
+
+            int textLimit = std::max(0, buttonOpenX - (listInnerX + 1) - 1);
             std::string name = assets[i].name;
-            name = TuiUtils::trimToUtf8VisualWidth(name, static_cast<size_t>(listW - 4));
-            surface.drawText(listX + 2, listInnerY + i, name, fg, bg);
+            name = TuiUtils::trimToUtf8VisualWidth(name, static_cast<size_t>(std::max(0, textLimit)));
+            surface.drawText(listInnerX + 1, rowY, name, fg, bg);
+
+            if (focused) {
+                // Draw buttons with high-contrast accent background
+                surface.drawText(buttonOpenX, rowY, kOpenBtnLabel, white, theme.accent);
+                surface.drawText(buttonDeleteX, rowY, kDeleteBtnLabel, white, theme.accent);
+                surface.drawText(buttonInfoX, rowY, kInfoBtnLabel, white, theme.accent);
+            }
         }
 
         // Preview panel
@@ -281,6 +358,85 @@ namespace UI {
         }
         input->stop();
     }
+
+void AssetManagerScreen::showInfoDialog(const ImageAsset& asset) {
+    int w = surface.getWidth();
+    int h = surface.getHeight();
+    std::vector<std::string> lines;
+    if (asset.getWidth() <= 0 || asset.getHeight() <= 0) {
+        lines.push_back("No image loaded");
+    } else {
+        lines.push_back("Width: " + std::to_string(asset.getWidth()));
+        lines.push_back("Height: " + std::to_string(asset.getHeight()));
+        int wcells = asset.getWidth();
+        int hcells = asset.getHeight();
+        std::set<std::string> glyphs;
+        std::set<std::string> fgset;
+        std::set<std::string> bgset;
+        std::map<std::string,int> glyphCount;
+        for (int y = 0; y < hcells; ++y) {
+            for (int x = 0; x < wcells; ++x) {
+                const auto& c = asset.getCell(x, y);
+                glyphs.insert(c.character);
+                glyphCount[c.character]++;
+                fgset.insert(std::to_string(c.fg.r) + "," + std::to_string(c.fg.g) + "," + std::to_string(c.fg.b));
+                bgset.insert(std::to_string(c.bg.r) + "," + std::to_string(c.bg.g) + "," + std::to_string(c.bg.b));
+            }
+        }
+        lines.push_back("Unique glyphs: " + std::to_string((int)glyphs.size()));
+        lines.push_back("Unique foreground colors: " + std::to_string((int)fgset.size()));
+        lines.push_back("Unique background colors: " + std::to_string((int)bgset.size()));
+
+        // top glyphs
+        lines.push_back("Top glyphs:");
+        int shown = 0;
+        for (auto it = glyphCount.begin(); it != glyphCount.end() && shown < 5; ++it) {
+            std::ostringstream ss; ss << "  '" << it->first << "' x " << it->second;
+            lines.push_back(ss.str());
+            ++shown;
+        }
+    }
+
+    int dw = std::min(60, w - 6);
+    int dh = static_cast<int>(lines.size()) + 6;
+    int dx = (w - dw) / 2;
+    int dy = (h - dh) / 2;
+    BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
+
+    bool running = true;
+    while (running) {
+        drawMainUI();
+        surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
+        surface.drawText(dx + 2, dy, " Image Info ", theme.title, theme.panel);
+        int ly = dy + 2;
+        for (const auto& L : lines) {
+            surface.drawText(dx + 2, ly++, L, theme.itemFg, theme.panel);
+        }
+        // OK button
+        std::string ok = "[ OK ]";
+        int okx = dx + (dw - static_cast<int>(ok.size())) / 2;
+        int oky = dy + dh - 2;
+        surface.drawText(okx, oky, ok, theme.title, theme.accent);
+        painter.present(surface);
+
+        auto events = input->pollEvents();
+        for (const auto& ev : events) {
+            if (ev.type == InputEvent::Type::Key) {
+                if (ev.key == InputKey::Enter || ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
+                    running = false; break;
+                }
+            } else if (ev.type == InputEvent::Type::Mouse) {
+                if (ev.button == 0 && ev.pressed) {
+                    if (ev.x >= okx && ev.x < okx + static_cast<int>(ok.size()) && ev.y == oky) { running = false; break; }
+                    // anywhere click closes too
+                    running = false; break;
+                }
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
 
     void AssetManagerScreen::drawPreview(int x, int y, int w, int h) {
         // Center the image

@@ -38,6 +38,10 @@ private:
     // Persistence
     std::string lastImportPath = ".";
 
+    // Layout cache for mouse hit-testing
+    int listX{0}, listY{0}, listW{0}, listH{0};
+    int buttonOpenX{0}, buttonDeleteX{0}, buttonInfoX{0};
+
     void refreshList();
     void drawMainUI(); // Renamed from render() to avoid confusion with present()
     void importAsset();
@@ -49,6 +53,8 @@ private:
 
     // Dialogs
     void showImportDialog(const std::string& filePath);
+    // Show detailed info about current image asset
+    void showInfoDialog(const ImageAsset& asset);
 };
 
 }
