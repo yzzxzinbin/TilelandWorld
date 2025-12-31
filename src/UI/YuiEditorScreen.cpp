@@ -208,7 +208,7 @@ void YuiEditorScreen::drawPropertyPanel() {
     surface.fillRect(x + 1, y + 1, w - 2, 1, theme.title, theme.background, " ");
     surface.drawText(x + 2, y + 1, "Properties", theme.title, theme.background);
 
-    const auto& cell = working.getCell(selX, selY);
+    const auto& cell = hasStaged ? stagedCell : working.getCell(selX, selY);
     int line = y + 3;
     surface.drawText(x + 2, line++, "Pos: (" + std::to_string(selX) + "," + std::to_string(selY) + ")", theme.itemFg, theme.panel);
     surface.drawText(x + 2, line, "Glyph:", theme.itemFg, theme.panel);
@@ -221,6 +221,20 @@ void YuiEditorScreen::drawPropertyPanel() {
     surface.drawText(x + 2, line++, bgss.str(), theme.itemFg, theme.panel);
     surface.drawText(x + 2, line++, "Click FG/BG to edit (HSV)", theme.hintFg, theme.panel);
     surface.drawText(x + 2, line++, "Click glyph to change", theme.hintFg, theme.panel);
+
+    // Buttons
+    std::string okLabel = "[Confirm]";
+    std::string cancelLabel = "[Cancel]";
+    int btnY = y + h - 2;
+    int okX = x + 2;
+    int cancelX = x + w - 2 - static_cast<int>(cancelLabel.size());
+    auto paintBtn = [&](int bx, const std::string& label, bool hover){
+        RGBColor fg = hover ? theme.background : theme.itemFg;
+        RGBColor bg = hover ? theme.focusBg : theme.panel;
+        surface.drawText(bx, btnY, label, fg, bg);
+    };
+    paintBtn(okX, okLabel, hoverConfirm);
+    paintBtn(cancelX, cancelLabel, hoverCancel);
 }
 
 void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
@@ -228,6 +242,8 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     int my = ev.y;
     hoverHThumb = false;
     hoverVThumb = false;
+    hoverConfirm = false;
+    hoverCancel = false;
     // Toolbar button hit-test
     if (my == kToolbarY) {
         int x = 2;
@@ -321,6 +337,9 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
                     selX = ax;
                     selY = ay;
                     hasSelection = true;
+                    originalCell = working.getCell(selX, selY);
+                    stagedCell = originalCell;
+                    hasStaged = true;
                 }
             }
         } else {
@@ -334,7 +353,7 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
         draggingVThumb = false;
     }
 
-    if (hasSelection && ev.button == 0 && ev.pressed) {
+    if (hasSelection) {
         // check property panel interactions
         int px = surface.getWidth() - propPanelW - 2;
         int py = canvasY;
@@ -342,27 +361,55 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
             int lineGlyph = py + 4;
             int lineFg = lineGlyph + 1;
             int lineBg = lineFg + 1;
-            if (my == lineGlyph && mx >= px + 10 && mx < px + propPanelW - 2) {
-                std::string glyph = working.getCell(selX, selY).character;
+            int btnY = py + canvasH - 2;
+            std::string okLabel = "[Confirm]";
+            std::string cancelLabel = "[Cancel]";
+            int okX = px + 2;
+            int cancelX = px + propPanelW - 2 - static_cast<int>(cancelLabel.size());
+            if (ev.move) {
+                if (my == btnY) {
+                    hoverConfirm = (mx >= okX && mx < okX + static_cast<int>(okLabel.size()));
+                    hoverCancel = (mx >= cancelX && mx < cancelX + static_cast<int>(cancelLabel.size()));
+                }
+            }
+            if (ev.button == 0 && ev.pressed && my == lineGlyph && mx >= px + 10 && mx < px + propPanelW - 2) {
+                std::string glyph = stagedCell.character;
                 if (openGlyphDialog(glyph, glyph)) {
-                    ImageCell c = working.getCell(selX, selY);
-                    c.character = glyph.empty() ? " " : glyph;
-                    working.setCell(selX, selY, c);
+                    stagedCell.character = glyph.empty() ? " " : glyph;
+                    hasStaged = true;
+                    working.setCell(selX, selY, stagedCell);
                 }
-            } else if (my == lineFg) {
-                RGBColor newColor = working.getCell(selX, selY).fg;
+            } else if (ev.button == 0 && ev.pressed && my == lineFg) {
+                RGBColor newColor = stagedCell.fg;
                 if (openColorPicker(newColor, newColor)) {
-                    ImageCell c = working.getCell(selX, selY);
-                    c.fg = newColor;
-                    working.setCell(selX, selY, c);
+                    stagedCell.fg = newColor;
+                    hasStaged = true;
+                    working.setCell(selX, selY, stagedCell);
                 }
-            } else if (my == lineBg) {
-                RGBColor newColor = working.getCell(selX, selY).bg;
+            } else if (ev.button == 0 && ev.pressed && my == lineBg) {
+                RGBColor newColor = stagedCell.bg;
                 if (openColorPicker(newColor, newColor)) {
-                    ImageCell c = working.getCell(selX, selY);
-                    c.bg = newColor;
-                    working.setCell(selX, selY, c);
+                    stagedCell.bg = newColor;
+                    hasStaged = true;
+                    working.setCell(selX, selY, stagedCell);
                 }
+            } else if (ev.button == 0 && ev.pressed && my == btnY) {
+                if (mx >= okX && mx < okX + static_cast<int>(okLabel.size())) {
+                    // Confirm
+                    if (hasStaged) {
+                        working.setCell(selX, selY, stagedCell);
+                        originalCell = stagedCell;
+                    }
+                    hasSelection = false;
+                    hasStaged = false;
+                } else if (mx >= cancelX && mx < cancelX + static_cast<int>(cancelLabel.size())) {
+                    // Cancel -> revert staged and working to original
+                    stagedCell = originalCell;
+                    working.setCell(selX, selY, originalCell);
+                    hasSelection = false;
+                    hasStaged = false;
+                }
+                return;
             }
         }
     }

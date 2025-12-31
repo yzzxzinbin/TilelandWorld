@@ -53,6 +53,11 @@ private:
     bool hasSelection{false};
     int selX{0};
     int selY{0};
+    ImageCell stagedCell{};
+    ImageCell originalCell{};
+    bool hasStaged{false};
+    bool hoverConfirm{false};
+    bool hoverCancel{false};
 
     // Layout cache
     int canvasX{0};
