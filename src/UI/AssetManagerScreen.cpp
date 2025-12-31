@@ -56,35 +56,40 @@ namespace UI {
                     }
 
                     bool insideList = (ev.x >= listX && ev.x < listX + listW && ev.y >= listY && ev.y < listY + listH);
-                    if (ev.move && insideList && !assets.empty()) {
-                        int row = ev.y - listY;
-                        if (row >= 0 && row < static_cast<int>(assets.size()) && row != selectedIndex) {
-                            selectedIndex = row;
-                            loadPreview();
-                        }
-                        continue;
-                    }
-                    if (!ev.pressed) continue;
-
+                    hoverRow = -1;
+                    hoverButton = HoverButton::None;
                     if (insideList && !assets.empty()) {
                         int row = ev.y - listY;
                         if (row >= 0 && row < static_cast<int>(assets.size())) {
-                            selectedIndex = row;
-                            loadPreview();
-
+                            hoverRow = row;
+                            if (row != selectedIndex && ev.move) {
+                                selectedIndex = row;
+                                loadPreview();
+                            }
                             bool onOpen = ev.x >= buttonOpenX && ev.x < buttonOpenX + static_cast<int>(kOpenBtnLabel.size());
                             bool onDelete = ev.x >= buttonDeleteX && ev.x < buttonDeleteX + static_cast<int>(kDeleteBtnLabel.size());
                             bool onInfo = ev.x >= buttonInfoX && ev.x < buttonInfoX + static_cast<int>(kInfoBtnLabel.size());
-                            if (onDelete) {
-                                deleteCurrentAsset();
-                            } else if (onOpen) {
-                                // Stub for open: currently just reload preview
+                            if (onOpen) hoverButton = HoverButton::Open;
+                            else if (onDelete) hoverButton = HoverButton::Delete;
+                            else if (onInfo) hoverButton = HoverButton::Info;
+
+                            if (ev.pressed) {
+                                selectedIndex = row;
                                 loadPreview();
-                            } else if (onInfo) {
-                                if (!previewLoaded) loadPreview();
-                                if (previewLoaded) showInfoDialog(currentPreview);
+                                if (onDelete) {
+                                    deleteCurrentAsset();
+                                } else if (onOpen) {
+                                    // Stub for open: currently just reload preview
+                                    loadPreview();
+                                } else if (onInfo) {
+                                    if (!previewLoaded) loadPreview();
+                                    if (previewLoaded) showInfoDialog(currentPreview);
+                                }
                             }
                         }
+                    } else {
+                        hoverButton = HoverButton::None;
+                        hoverRow = -1;
                     }
                 } else if (ev.type == InputEvent::Type::Key) {
                     if (ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
@@ -235,10 +240,18 @@ namespace UI {
             surface.drawText(listInnerX + 1, rowY, name, fg, bg);
 
             if (focused) {
-                // Draw buttons with high-contrast accent background
-                surface.drawText(buttonOpenX, rowY, kOpenBtnLabel, white, theme.accent);
-                surface.drawText(buttonDeleteX, rowY, kDeleteBtnLabel, white, theme.accent);
-                surface.drawText(buttonInfoX, rowY, kInfoBtnLabel, white, theme.accent);
+                auto btnColor = [&](HoverButton hb) {
+                    bool hot = (hoverRow == i && hoverButton == hb);
+                    RGBColor bbg = hot ? theme.focusBg : theme.accent;
+                    RGBColor bfg = hot ? theme.focusFg : white;
+                    return std::make_pair(bfg, bbg);
+                };
+                auto [fgOpen, bgOpen] = btnColor(HoverButton::Open);
+                auto [fgDel, bgDel] = btnColor(HoverButton::Delete);
+                auto [fgInfo, bgInfo] = btnColor(HoverButton::Info);
+                surface.drawText(buttonOpenX, rowY, kOpenBtnLabel, fgOpen, bgOpen);
+                surface.drawText(buttonDeleteX, rowY, kDeleteBtnLabel, fgDel, bgDel);
+                surface.drawText(buttonInfoX, rowY, kInfoBtnLabel, fgInfo, bgInfo);
             }
         }
 
@@ -259,6 +272,7 @@ namespace UI {
         std::string widthStr = "80";
         int qualityIdx = 1; // 0: Low, 1: High
         int focusIdx = 0; // 0:W, 1:Quality, 2:Import, 3:Cancel
+        bool hoverImport = false, hoverCancel = false;
         
         bool dialogRunning = true;
         input->start(); 
@@ -270,39 +284,91 @@ namespace UI {
             // Draw Dialog Box
             int w = surface.getWidth();
             int h = surface.getHeight();
-            int dw = 40, dh = 12;
+            int dw = 44, dh = 12;
             int dx = (w - dw) / 2;
             int dy = (h - dh) / 2;
             
-            // Modern border style
             BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
             surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
-            surface.drawText(dx + 2, dy, " Import Settings ", theme.title, theme.panel);
-            
-            auto drawField = [&](int idx, const std::string& label, const std::string& val, int y) {
+            surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
+            surface.drawText(dx + 2, dy + 1, "Import Settings", theme.title, theme.background);
+            int labelWidth = 8;
+            int labelX = dx + 2;
+            int fieldX = dx + labelWidth + 6;
+            auto drawLabel = [&](const std::string& label, int y){
+                int pad = std::max(0, labelWidth - static_cast<int>(label.size()));
+                surface.drawText(labelX, y, std::string(pad, ' ') + label + ":", theme.itemFg, theme.panel);
+            };
+            auto drawField = [&](int idx, const std::string& val, int y) {
                 RGBColor fg = (focusIdx == idx) ? theme.focusFg : theme.itemFg;
                 RGBColor bg = (focusIdx == idx) ? theme.focusBg : theme.panel;
-                surface.drawText(dx + 2, dy + y, label, theme.itemFg, theme.panel);
-                surface.drawText(dx + 15, dy + y, " " + val + " ", fg, bg);
+                surface.drawText(fieldX, y, " " + val + " ", fg, bg);
             };
-            
-            drawField(0, "Width:", widthStr, 3);
-            drawField(1, "Quality:", (qualityIdx == 1 ? "High" : "Low"), 5);
+            int lineY = dy + 3;
+            drawLabel("Width", lineY);
+            drawField(0, widthStr, lineY);
+            lineY++;
+            drawLabel("Quality", lineY);
+            drawField(1, (qualityIdx == 1 ? "High" : "Low"), lineY);
             
             // Buttons
-            RGBColor btnFg = (focusIdx == 2) ? theme.focusFg : theme.itemFg;
-            RGBColor btnBg = (focusIdx == 2) ? theme.focusBg : theme.panel;
-            surface.drawText(dx + 5, dy + 8, "[ Import ]", btnFg, btnBg);
-            
-            btnFg = (focusIdx == 3) ? theme.focusFg : theme.itemFg;
-            btnBg = (focusIdx == 3) ? theme.focusBg : theme.panel;
-            surface.drawText(dx + 20, dy + 8, "[ Cancel ]", btnFg, btnBg);
+            std::string importLbl = "[ Import ]";
+            std::string cancelLbl = "[ Cancel ]";
+            int importX = dx + 6;
+            int cancelX = dx + dw - static_cast<int>(cancelLbl.size()) - 6;
+            int btnY = dy + dh - 3;
+            auto drawBtn = [&](const std::string& lbl, int x, bool hot, bool focus){
+                RGBColor fg = hot || focus ? theme.focusFg : theme.title;
+                RGBColor bg = hot || focus ? theme.focusBg : theme.accent;
+                surface.drawText(x, btnY, lbl, fg, bg);
+            };
+            drawBtn(importLbl, importX, hoverImport, focusIdx == 2);
+            drawBtn(cancelLbl, cancelX, hoverCancel, focusIdx == 3);
             
             painter.present(surface);
             
             // Input
             auto events = input->pollEvents();
             for (const auto& ev : events) {
+                if (ev.type == InputEvent::Type::Mouse) {
+                    bool onImport = (ev.x >= importX && ev.x < importX + static_cast<int>(importLbl.size()) && ev.y == btnY);
+                    bool onCancel = (ev.x >= cancelX && ev.x < cancelX + static_cast<int>(cancelLbl.size()) && ev.y == btnY);
+                    if (onImport) hoverImport = true;
+                    if (onCancel) hoverCancel = true;
+                    if (ev.pressed && ev.button == 0) {
+                        if (onImport) {
+                            focusIdx = 2;
+                        } else if (onCancel) {
+                            focusIdx = 3;
+                        }
+                    }
+                    if (ev.pressed && ev.button == 0) {
+                        if (onImport) {
+                            // trigger import same as Enter on Import
+                            try {
+                                int tw = std::stoi(widthStr);
+                                surface.drawText(dx + 2, dy + dh - 2, "Converting...", theme.focusFg, theme.panel);
+                                painter.present(surface);
+                                RawImage raw = ImageLoader::load(filePath);
+                                if (raw.valid) {
+                                    AdvancedImageConverter::Options opts;
+                                    opts.targetWidth = tw;
+                                    double aspect = 0.5;
+                                    opts.targetHeight = std::max(1, (int)std::round((double)raw.height * tw * aspect / raw.width));
+                                    opts.quality = (qualityIdx == 1) ? AdvancedImageConverter::Options::Quality::High : AdvancedImageConverter::Options::Quality::Low;
+                                    AdvancedImageConverter converter;
+                                    ImageAsset asset = converter.convert(raw, opts, taskSystem);
+                                    std::string name = std::filesystem::path(filePath).stem().string();
+                                    manager.saveAsset(asset, name);
+                                    refreshList();
+                                }
+                            } catch (...) {}
+                            dialogRunning = false;
+                        } else if (onCancel) {
+                            dialogRunning = false;
+                        }
+                    }
+                }
                 if (ev.type == InputEvent::Type::Key) {
                     if (ev.key == InputKey::Escape) {
                         dialogRunning = false;
@@ -317,7 +383,7 @@ namespace UI {
                             try {
                                 int tw = std::stoi(widthStr);
                                 
-                                surface.drawText(dx + 2, dy + 10, "Converting...", theme.focusFg, theme.panel);
+                                surface.drawText(dx + 2, dy + dh - 2, "Converting...", theme.focusFg, theme.panel);
                                 painter.present(surface);
                                 
                                 RawImage raw = ImageLoader::load(filePath);
@@ -397,26 +463,37 @@ void AssetManagerScreen::showInfoDialog(const ImageAsset& asset) {
         }
     }
 
-    int dw = std::min(60, w - 6);
-    int dh = static_cast<int>(lines.size()) + 6;
+    int dw = std::min(64, w - 6);
+    int dh = std::min(h - 4, static_cast<int>(lines.size()) + 7);
     int dx = (w - dw) / 2;
     int dy = (h - dh) / 2;
     BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
 
     bool running = true;
+    bool hoverOk = false, hoverClose = false;
     while (running) {
         drawMainUI();
         surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
-        surface.drawText(dx + 2, dy, " Image Info ", theme.title, theme.panel);
-        int ly = dy + 2;
+        surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
+        surface.drawText(dx + 2, dy + 1, "Image Info", theme.title, theme.background);
+        int ly = dy + 3;
         for (const auto& L : lines) {
+            if (ly >= dy + dh - 3) break;
             surface.drawText(dx + 2, ly++, L, theme.itemFg, theme.panel);
         }
-        // OK button
+        // Buttons
         std::string ok = "[ OK ]";
-        int okx = dx + (dw - static_cast<int>(ok.size())) / 2;
-        int oky = dy + dh - 2;
-        surface.drawText(okx, oky, ok, theme.title, theme.accent);
+        std::string close = "[ Close ]";
+        int okx = dx + (dw / 2) - static_cast<int>(ok.size()) - 1;
+        int closex = dx + (dw / 2) + 1;
+        int btnY = dy + dh - 2;
+        auto drawBtn = [&](const std::string& lbl, int x, bool hot){
+            RGBColor fg = hot ? theme.focusFg : theme.title;
+            RGBColor bg = hot ? theme.focusBg : theme.accent;
+            surface.drawText(x, btnY, lbl, fg, bg);
+        };
+        drawBtn(ok, okx, hoverOk);
+        drawBtn(close, closex, hoverClose);
         painter.present(surface);
 
         auto events = input->pollEvents();
@@ -426,10 +503,12 @@ void AssetManagerScreen::showInfoDialog(const ImageAsset& asset) {
                     running = false; break;
                 }
             } else if (ev.type == InputEvent::Type::Mouse) {
+                bool onOk = (ev.x >= okx && ev.x < okx + static_cast<int>(ok.size()) && ev.y == btnY);
+                bool onClose = (ev.x >= closex && ev.x < closex + static_cast<int>(close.size()) && ev.y == btnY);
+                hoverOk = onOk;
+                hoverClose = onClose;
                 if (ev.button == 0 && ev.pressed) {
-                    if (ev.x >= okx && ev.x < okx + static_cast<int>(ok.size()) && ev.y == oky) { running = false; break; }
-                    // anywhere click closes too
-                    running = false; break;
+                    if (onOk || onClose) { running = false; break; }
                 }
             }
         }

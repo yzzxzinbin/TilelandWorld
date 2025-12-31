@@ -42,6 +42,10 @@ private:
     int listX{0}, listY{0}, listW{0}, listH{0};
     int buttonOpenX{0}, buttonDeleteX{0}, buttonInfoX{0};
 
+    enum class HoverButton { None, Open, Delete, Info };
+    int hoverRow{-1};
+    HoverButton hoverButton{HoverButton::None};
+
     void refreshList();
     void drawMainUI(); // Renamed from render() to avoid confusion with present()
     void importAsset();
