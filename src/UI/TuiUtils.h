@@ -34,6 +34,8 @@ std::vector<std::string> wordWrap(const std::string& text, size_t maxWidth);
 // Color helpers
 RGBColor blendColor(const RGBColor& from, const RGBColor& to, double t);
 RGBColor lightenColor(const RGBColor& c, double ratio);
+RGBColor hsvToRgb(double h, double s, double v);
+void rgbToHsv(const RGBColor& rgb, double& h, double& s, double& v);
 
 } // namespace TuiUtils
 } // namespace UI

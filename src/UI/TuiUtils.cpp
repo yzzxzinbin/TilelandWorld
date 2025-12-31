@@ -1,6 +1,7 @@
 #include "TuiUtils.h"
 #include <cctype>
 #include <algorithm>
+#include <cmath>
 
 namespace TilelandWorld {
 namespace UI {
@@ -201,6 +202,58 @@ RGBColor lightenColor(const RGBColor& c, double ratio) {
         return static_cast<uint8_t>(std::clamp(val, 0, 255));
     };
     return { lift(c.r), lift(c.g), lift(c.b) };
+}
+
+RGBColor hsvToRgb(double h, double s, double v) {
+    double hh = std::fmod(h, 360.0);
+    if (hh < 0) hh += 360.0;
+    double ss = std::clamp(s, 0.0, 1.0);
+    double vv = std::clamp(v, 0.0, 1.0);
+
+    double c = vv * ss;
+    double x = c * (1.0 - std::fabs(std::fmod(hh / 60.0, 2.0) - 1.0));
+    double m = vv - c;
+
+    double r = 0, g = 0, b = 0;
+    if (hh < 60) { r = c; g = x; b = 0; }
+    else if (hh < 120) { r = x; g = c; b = 0; }
+    else if (hh < 180) { r = 0; g = c; b = x; }
+    else if (hh < 240) { r = 0; g = x; b = c; }
+    else if (hh < 300) { r = x; g = 0; b = c; }
+    else { r = c; g = 0; b = x; }
+
+    auto toByte = [&](double vch) {
+        int val = static_cast<int>((vch + m) * 255.0 + 0.5);
+        return static_cast<uint8_t>(std::clamp(val, 0, 255));
+    };
+    return { toByte(r), toByte(g), toByte(b) };
+}
+
+void rgbToHsv(const RGBColor& rgb, double& h, double& s, double& v) {
+    double r = rgb.r / 255.0;
+    double g = rgb.g / 255.0;
+    double b = rgb.b / 255.0;
+
+    double maxc = std::max({r, g, b});
+    double minc = std::min({r, g, b});
+    double delta = maxc - minc;
+
+    v = maxc;
+    s = (maxc <= 0.0) ? 0.0 : (delta / maxc);
+
+    if (delta < 1e-6) {
+        h = 0.0;
+        return;
+    }
+
+    if (maxc == r) {
+        h = 60.0 * std::fmod(((g - b) / delta), 6.0);
+    } else if (maxc == g) {
+        h = 60.0 * (((b - r) / delta) + 2.0);
+    } else {
+        h = 60.0 * (((r - g) / delta) + 4.0);
+    }
+    if (h < 0.0) h += 360.0;
 }
 
 } // namespace TuiUtils

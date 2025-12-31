@@ -1,0 +1,568 @@
+#include "YuiEditorScreen.h"
+#include "TuiUtils.h"
+#include <algorithm>
+#include <sstream>
+#include <iomanip>
+#include <thread>
+#include <cmath>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+namespace {
+    const TilelandWorld::UI::BoxStyle kFrame{"╭","╮","╰","╯","─","│"};
+    TilelandWorld::RGBColor darken(const TilelandWorld::RGBColor& c, double factor) {
+        double f = std::clamp(factor, 0.0, 1.0);
+        return {
+            static_cast<uint8_t>(std::max(0.0, c.r * f)),
+            static_cast<uint8_t>(std::max(0.0, c.g * f)),
+            static_cast<uint8_t>(std::max(0.0, c.b * f))
+        };
+    }
+
+    std::string encodeUtf8(char32_t cp) {
+        std::string out;
+        if (cp <= 0x7F) {
+            out.push_back(static_cast<char>(cp));
+        } else if (cp <= 0x7FF) {
+            out.push_back(static_cast<char>(0xC0 | ((cp >> 6) & 0x1F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else if (cp <= 0xFFFF) {
+            out.push_back(static_cast<char>(0xE0 | ((cp >> 12) & 0x0F)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else if (cp <= 0x10FFFF) {
+            out.push_back(static_cast<char>(0xF0 | ((cp >> 18) & 0x07)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+        return out;
+    }
+}
+
+namespace TilelandWorld {
+namespace UI {
+
+YuiEditorScreen::YuiEditorScreen(AssetManager& manager_, std::string assetName_, ImageAsset asset_)
+    : manager(manager_), assetName(std::move(assetName_)), working(std::move(asset_)), surface(100, 40) {
+}
+
+void YuiEditorScreen::show() {
+    input.setRestoreOnExit(false); // keep VT/mouse mode intact for caller
+    input.start();
+    bool running = true;
+    while (running) {
+        renderFrame();
+        painter.present(surface, true, 1, 1);
+
+        auto events = input.pollEvents();
+        if (events.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            continue;
+        }
+        for (const auto& ev : events) {
+            if (ev.type == InputEvent::Type::Mouse) {
+                handleMouse(ev, running);
+            } else if (ev.type == InputEvent::Type::Key) {
+                handleKey(ev, running);
+            }
+            if (!running) break;
+        }
+    }
+    manager.saveAsset(working, assetName);
+    painter.reset();
+    input.stop();
+}
+
+void YuiEditorScreen::renderFrame() {
+#ifdef _WIN32
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) {
+        int consoleWidth = std::max(60, static_cast<int>(info.srWindow.Right - info.srWindow.Left + 1));
+        int consoleHeight = std::max(24, static_cast<int>(info.srWindow.Bottom - info.srWindow.Top + 1));
+        surface.resize(consoleWidth, consoleHeight);
+    }
+#endif
+
+    surface.clear(theme.itemFg, theme.background, " ");
+    surface.fillRect(0, 0, surface.getWidth(), 1, theme.accent, theme.accent, " ");
+    surface.fillRect(0, surface.getHeight() - 1, surface.getWidth(), 1, theme.accent, theme.accent, " ");
+    surface.drawText(2, 1, "Unicode Image Editor - " + assetName + " | Q: save & back", {0,0,0}, theme.accent);
+    drawToolbar();
+
+    propPanelW = hasSelection ? 28 : 0;
+    canvasX = 2;
+    canvasY = 5;
+    canvasW = std::max(10, surface.getWidth() - canvasX - 2 - propPanelW);
+    canvasH = std::max(6, surface.getHeight() - canvasY - 3);
+
+    surface.fillRect(canvasX, canvasY, canvasW, canvasH, theme.itemFg, theme.panel, " ");
+    surface.drawFrame(canvasX, canvasY, canvasW, canvasH, kFrame, theme.itemFg, theme.panel);
+
+    drawCanvas();
+    drawScrollbars();
+    if (hasSelection) {
+        drawPropertyPanel();
+    }
+}
+
+void YuiEditorScreen::drawToolbar() {
+    int y = 3;
+    std::string hand = activeTool == Tool::Hand ? "[ Hand ]" : "  Hand  ";
+    std::string prop = activeTool == Tool::Property ? "[ Property ]" : "  Property  ";
+    int x = 2;
+    auto drawBtn = [&](const std::string& label, bool active) {
+        RGBColor bg = active ? darken(theme.accent, 0.6) : theme.accent;
+        RGBColor fg = active ? RGBColor{255,255,255} : theme.title;
+        surface.drawText(x, y, label, fg, bg);
+        x += static_cast<int>(label.size()) + 2;
+    };
+    drawBtn(hand, activeTool == Tool::Hand);
+    drawBtn(prop, activeTool == Tool::Property);
+    surface.drawText(x, y, "Space: toggle tool | Mouse wheel: scroll | Drag (hand): pan", theme.hintFg, theme.background);
+}
+
+void YuiEditorScreen::drawCanvas() {
+    clampScroll();
+    int viewW = canvasW - 2; // leave frame lines
+    int viewH = canvasH - 2;
+    int startX = scrollX;
+    int startY = scrollY;
+    hoverValid = hoverValid && hoverX >= startX && hoverY >= startY && hoverX < startX + viewW && hoverY < startY + viewH;
+
+    for (int vy = 0; vy < viewH; ++vy) {
+        int ay = startY + vy;
+        for (int vx = 0; vx < viewW; ++vx) {
+            int ax = startX + vx;
+            RGBColor bg = theme.panel;
+            RGBColor fg = theme.itemFg;
+            std::string glyph = " ";
+            if (ax >= 0 && ax < working.getWidth() && ay >= 0 && ay < working.getHeight()) {
+                const auto& cell = working.getCell(ax, ay);
+                glyph = cell.character.empty() ? " " : cell.character;
+                fg = cell.fg;
+                bg = cell.bg;
+                if (hoverValid && ax == hoverX && ay == hoverY) {
+                    fg = TuiUtils::blendColor(fg, {255,255,255}, 0.2);
+                    bg = TuiUtils::blendColor(bg, {255,255,255}, 0.2);
+                }
+                if (hasSelection && ax == selX && ay == selY) {
+                    bg = TuiUtils::blendColor(bg, theme.focusBg, 0.35);
+                }
+            }
+            surface.drawText(canvasX + 1 + vx, canvasY + 1 + vy, glyph, fg, bg);
+        }
+    }
+}
+
+void YuiEditorScreen::drawScrollbars() {
+    int viewW = canvasW - 2;
+    int viewH = canvasH - 2;
+    int contentW = std::max(1, working.getWidth());
+    int contentH = std::max(1, working.getHeight());
+    bool showH = contentW > viewW;
+    bool showV = contentH > viewH;
+
+    RGBColor trackColor{220, 220, 220};
+    RGBColor thumbColor{140, 140, 140};
+    RGBColor thumbActive{98, 98, 98};
+
+    // Horizontal
+    if (showH) {
+        int barY = canvasY + canvasH - 1;
+        int trackX = canvasX + 1;
+        int trackW = viewW;
+        surface.fillRect(trackX, barY, trackW, 1, trackColor, trackColor, " ");
+        int thumbW = std::max(2, trackW * viewW / contentW);
+        thumbW = std::min(thumbW, trackW); // avoid spill when very small diff
+        int thumbX = trackX + (trackW - thumbW) * scrollX / std::max(1, contentW - viewW);
+        RGBColor active = (draggingHThumb || hoverHThumb) ? thumbActive : thumbColor;
+        surface.fillRect(thumbX, barY, thumbW, 1, active, active, " ");
+    }
+
+    // Vertical
+    if (showV) {
+        int barX = canvasX + canvasW - 1;
+        int trackY = canvasY + 1;
+        int trackH = viewH;
+        surface.fillRect(barX, trackY, 1, trackH, trackColor, trackColor, " ");
+        int thumbH = std::max(2, trackH * viewH / contentH);
+        thumbH = std::min(thumbH, trackH);
+        int thumbY = trackY + (trackH - thumbH) * scrollY / std::max(1, contentH - viewH);
+        RGBColor active = (draggingVThumb || hoverVThumb) ? thumbActive : thumbColor;
+        surface.fillRect(barX, thumbY, 1, thumbH, active, active, " ");
+    }
+}
+
+void YuiEditorScreen::drawPropertyPanel() {
+    int x = surface.getWidth() - propPanelW - 2;
+    int y = canvasY;
+    int w = propPanelW;
+    int h = canvasH;
+    surface.fillRect(x, y, w, h, theme.itemFg, theme.panel, " ");
+    surface.drawFrame(x, y, w, h, kFrame, theme.itemFg, theme.panel);
+    surface.fillRect(x + 1, y + 1, w - 2, 1, theme.title, theme.background, " ");
+    surface.drawText(x + 2, y + 1, "Properties", theme.title, theme.background);
+
+    const auto& cell = working.getCell(selX, selY);
+    int line = y + 3;
+    surface.drawText(x + 2, line++, "Pos: (" + std::to_string(selX) + "," + std::to_string(selY) + ")", theme.itemFg, theme.panel);
+    surface.drawText(x + 2, line, "Glyph:", theme.itemFg, theme.panel);
+    surface.drawText(x + 10, line++, " [" + (cell.character.empty()?" ":cell.character) + "] ", theme.itemFg, theme.panel);
+    std::ostringstream fgss;
+    fgss << "FG: " << (int)cell.fg.r << "," << (int)cell.fg.g << "," << (int)cell.fg.b;
+    surface.drawText(x + 2, line++, fgss.str(), theme.itemFg, theme.panel);
+    std::ostringstream bgss;
+    bgss << "BG: " << (int)cell.bg.r << "," << (int)cell.bg.g << "," << (int)cell.bg.b;
+    surface.drawText(x + 2, line++, bgss.str(), theme.itemFg, theme.panel);
+    surface.drawText(x + 2, line++, "Click FG/BG to edit (HSV)", theme.hintFg, theme.panel);
+    surface.drawText(x + 2, line++, "Click glyph to change", theme.hintFg, theme.panel);
+}
+
+void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
+    int mx = ev.x;
+    int my = ev.y;
+    hoverHThumb = false;
+    hoverVThumb = false;
+    if (isInsideCanvas(mx, my)) {
+        int localX = mx - (canvasX + 1);
+        int localY = my - (canvasY + 1);
+        hoverX = scrollX + localX;
+        hoverY = scrollY + localY;
+        hoverValid = true;
+    } else {
+        hoverValid = false;
+    }
+
+    if (ev.wheel != 0) {
+        scrollY -= ev.wheel * 3;
+        clampScroll();
+    }
+
+    int viewW = canvasW - 2;
+    int viewH = canvasH - 2;
+    int contentW = std::max(1, working.getWidth());
+    int contentH = std::max(1, working.getHeight());
+    bool showH = contentW > viewW;
+    bool showV = contentH > viewH;
+    if (!showH) draggingHThumb = false;
+    if (!showV) draggingVThumb = false;
+
+    if (!ev.pressed && ev.button == 0 && ev.move) {
+        if (dragging && activeTool == Tool::Hand) {
+            scrollX = dragStartScrollX - (mx - dragStartX);
+            scrollY = dragStartScrollY - (my - dragStartY);
+            clampScroll();
+        } else if (draggingHThumb && showH) {
+            int trackW = viewW;
+            int trackX = canvasX + 1;
+            int thumbW = std::max(2, trackW * viewW / contentW);
+            thumbW = std::min(thumbW, trackW);
+            int trackSpan = std::max(1, trackW - thumbW);
+            int delta = mx - dragThumbStartX;
+            int newThumbX = std::clamp(dragThumbStartOffsetX + delta, 0, trackSpan);
+            scrollX = newThumbX * std::max(1, contentW - viewW) / trackSpan;
+            clampScroll();
+        } else if (draggingVThumb && showV) {
+            int trackH = viewH;
+            int trackY = canvasY + 1;
+            int thumbH = std::max(2, trackH * viewH / contentH);
+            thumbH = std::min(thumbH, trackH);
+            int trackSpan = std::max(1, trackH - thumbH);
+            int delta = my - dragThumbStartY;
+            int newThumbY = std::clamp(dragThumbStartOffsetY + delta, 0, trackSpan);
+            scrollY = newThumbY * std::max(1, contentH - viewH) / trackSpan;
+            clampScroll();
+        }
+        return;
+    }
+
+    if (ev.button == 0 && ev.pressed) {
+        if (isInsideCanvas(mx, my)) {
+            int localX = mx - (canvasX + 1);
+            int localY = my - (canvasY + 1);
+            int ax = scrollX + localX;
+            int ay = scrollY + localY;
+            if (activeTool == Tool::Hand) {
+                dragging = true;
+                dragStartX = mx;
+                dragStartY = my;
+                dragStartScrollX = scrollX;
+                dragStartScrollY = scrollY;
+            } else if (activeTool == Tool::Property) {
+                if (ax >= 0 && ax < working.getWidth() && ay >= 0 && ay < working.getHeight()) {
+                    selX = ax;
+                    selY = ay;
+                    hasSelection = true;
+                }
+            }
+        } else {
+            dragging = false;
+        }
+    }
+
+    if (ev.button == 0 && !ev.pressed) {
+        dragging = false;
+        draggingHThumb = false;
+        draggingVThumb = false;
+    }
+
+    if (hasSelection && ev.button == 0 && ev.pressed) {
+        // check property panel interactions
+        int px = surface.getWidth() - propPanelW - 2;
+        int py = canvasY;
+        if (mx >= px && mx < px + propPanelW && my >= py && my < py + canvasH) {
+            int lineGlyph = py + 4;
+            int lineFg = lineGlyph + 1;
+            int lineBg = lineFg + 1;
+            if (my == lineGlyph && mx >= px + 10 && mx < px + propPanelW - 2) {
+                std::string glyph = working.getCell(selX, selY).character;
+                if (openGlyphDialog(glyph, glyph)) {
+                    ImageCell c = working.getCell(selX, selY);
+                    c.character = glyph.empty() ? " " : glyph;
+                    working.setCell(selX, selY, c);
+                }
+            } else if (my == lineFg) {
+                RGBColor newColor = working.getCell(selX, selY).fg;
+                if (openColorPicker(newColor, newColor)) {
+                    ImageCell c = working.getCell(selX, selY);
+                    c.fg = newColor;
+                    working.setCell(selX, selY, c);
+                }
+            } else if (my == lineBg) {
+                RGBColor newColor = working.getCell(selX, selY).bg;
+                if (openColorPicker(newColor, newColor)) {
+                    ImageCell c = working.getCell(selX, selY);
+                    c.bg = newColor;
+                    working.setCell(selX, selY, c);
+                }
+            }
+        }
+    }
+
+    // Scrollbar interactions
+    int barY = canvasY + canvasH - 1;
+    int trackX = canvasX + 1;
+    int trackW = viewW;
+    int barX = canvasX + canvasW - 1;
+    int trackY = canvasY + 1;
+    int trackH = viewH;
+
+    if (ev.move) {
+        if (showH && my == barY && mx >= trackX && mx < trackX + trackW) {
+            int thumbW = std::max(2, trackW * viewW / contentW);
+            thumbW = std::min(thumbW, trackW);
+            int thumbX = trackX + (trackW - thumbW) * scrollX / std::max(1, contentW - viewW);
+            hoverHThumb = (mx >= thumbX && mx < thumbX + thumbW);
+        }
+        if (showV && mx == barX && my >= trackY && my < trackY + trackH) {
+            int thumbH = std::max(2, trackH * viewH / contentH);
+            thumbH = std::min(thumbH, trackH);
+            int thumbY = trackY + (trackH - thumbH) * scrollY / std::max(1, contentH - viewH);
+            hoverVThumb = (my >= thumbY && my < thumbY + thumbH);
+        }
+    }
+
+    if (ev.button == 0 && ev.pressed) {
+        // Horizontal bar
+        if (showH && my == barY && mx >= trackX && mx < trackX + trackW) {
+            int thumbW = std::max(2, trackW * viewW / contentW);
+            thumbW = std::min(thumbW, trackW);
+            int thumbX = trackX + (trackW - thumbW) * scrollX / std::max(1, contentW - viewW);
+            if (mx >= thumbX && mx < thumbX + thumbW) {
+                draggingHThumb = true;
+                dragThumbStartX = mx;
+                dragThumbStartOffsetX = thumbX - trackX;
+            } else {
+                int trackSpan = std::max(1, trackW - thumbW);
+                int pos = std::clamp(mx - trackX - thumbW / 2, 0, trackSpan);
+                scrollX = pos * std::max(1, contentW - viewW) / trackSpan;
+                clampScroll();
+            }
+        }
+        // Vertical bar
+        if (showV && mx == barX && my >= trackY && my < trackY + trackH) {
+            int thumbH = std::max(2, trackH * viewH / contentH);
+            thumbH = std::min(thumbH, trackH);
+            int thumbY = trackY + (trackH - thumbH) * scrollY / std::max(1, contentH - viewH);
+            if (my >= thumbY && my < thumbY + thumbH) {
+                draggingVThumb = true;
+                dragThumbStartY = my;
+                dragThumbStartOffsetY = thumbY - trackY;
+            } else {
+                int trackSpan = std::max(1, trackH - thumbH);
+                int pos = std::clamp(my - trackY - thumbH / 2, 0, trackSpan);
+                scrollY = pos * std::max(1, contentH - viewH) / trackSpan;
+                clampScroll();
+            }
+        }
+    }
+}
+
+void YuiEditorScreen::handleKey(const InputEvent& ev, bool& running) {
+    if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
+        running = false;
+        return;
+    }
+
+    if (ev.key == InputKey::Character && ev.ch == ' ') {
+        activeTool = (activeTool == Tool::Hand) ? Tool::Property : Tool::Hand;
+        return;
+    }
+
+    if (ev.key == InputKey::ArrowUp) { scrollY -= 2; clampScroll(); }
+    if (ev.key == InputKey::ArrowDown) { scrollY += 2; clampScroll(); }
+    if (ev.key == InputKey::ArrowLeft) { scrollX -= 2; clampScroll(); }
+    if (ev.key == InputKey::ArrowRight) { scrollX += 2; clampScroll(); }
+}
+
+void YuiEditorScreen::clampScroll() {
+    int viewW = canvasW - 2;
+    int viewH = canvasH - 2;
+    int maxX = std::max(0, working.getWidth() - viewW);
+    int maxY = std::max(0, working.getHeight() - viewH);
+    scrollX = std::clamp(scrollX, 0, maxX);
+    scrollY = std::clamp(scrollY, 0, maxY);
+}
+
+bool YuiEditorScreen::isInsideCanvas(int x, int y) const {
+    return x >= canvasX + 1 && x < canvasX + canvasW - 1 && y >= canvasY + 1 && y < canvasY + canvasH - 1;
+}
+
+bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
+    double h=0, s=0, v=0;
+    TuiUtils::rgbToHsv(initial, h, s, v);
+    bool running = true;
+    bool accepted = false;
+    const int boxW = 78;
+    const int boxH = 28;
+    const int svW = 54;
+    const int svH = 22;
+    while (running) {
+        renderFrame();
+
+        int dx = (surface.getWidth() - boxW) / 2;
+        int dy = (surface.getHeight() - boxH) / 2;
+        surface.drawFrame(dx, dy, boxW, boxH, kFrame, theme.itemFg, theme.panel);
+        surface.fillRect(dx + 1, dy + 1, boxW - 2, 1, theme.title, theme.background, " ");
+        surface.drawText(dx + 2, dy + 1, "HSV Picker", theme.title, theme.background);
+
+        int svX = dx + 2;
+        int svY = dy + 3;
+        // Draw SV plane for current hue
+        for (int py = 0; py < svH; ++py) {
+            double vv = 1.0 - static_cast<double>(py) / std::max(1, svH - 1);
+            for (int px = 0; px < svW; ++px) {
+                double ss = static_cast<double>(px) / std::max(1, svW - 1);
+                RGBColor c = TuiUtils::hsvToRgb(h, ss, vv);
+                surface.drawText(svX + px, svY + py, " ", c, c);
+            }
+        }
+
+        // Marker on SV plane
+        int markX = svX + static_cast<int>(std::round(s * (svW - 1)));
+        int markY = svY + static_cast<int>(std::round((1.0 - v) * (svH - 1)));
+        surface.drawText(markX, markY, "+", {0,0,0}, {255,255,255});
+
+        // Hue bar on the right
+        int hueX = svX + svW + 2;
+        int hueW = 4;
+        for (int py = 0; py < svH; ++py) {
+            double hh = 360.0 * static_cast<double>(py) / std::max(1, svH - 1);
+            RGBColor c = TuiUtils::hsvToRgb(hh, 1.0, 1.0);
+            surface.fillRect(hueX, svY + py, hueW, 1, c, c, " ");
+        }
+        int hueMarkY = svY + static_cast<int>(std::round(h / 360.0 * (svH - 1)));
+        surface.fillRect(hueX, hueMarkY, hueW, 1, {255,255,255}, {0,0,0}, " ");
+
+        RGBColor preview = TuiUtils::hsvToRgb(h, s, v);
+        surface.drawText(dx + 2, dy + svH + 4, "Preview", theme.itemFg, theme.panel);
+        surface.fillRect(dx + 2, dy + svH + 5, boxW - 4, 1, preview, preview, " ");
+        std::ostringstream rgbss;
+        rgbss << "RGB: " << (int)preview.r << "," << (int)preview.g << "," << (int)preview.b;
+        surface.drawText(dx + 2, dy + svH + 6, rgbss.str(), theme.itemFg, theme.panel);
+        surface.drawText(dx + 2, dy + svH + 8, "Click square: S/V | Click bar: H | Wheel: H | Enter: OK | Esc: cancel", theme.hintFg, theme.panel);
+
+        painter.present(surface, true, 1, 1);
+
+        auto events = input.pollEvents();
+        if (events.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            continue;
+        }
+        for (const auto& ev : events) {
+            if (ev.type == InputEvent::Type::Key) {
+                if (ev.key == InputKey::Escape) { running = false; break; }
+                if (ev.key == InputKey::Enter) { accepted = true; running = false; break; }
+            } else if (ev.type == InputEvent::Type::Mouse) {
+                if (ev.button == 0 && ev.pressed) {
+                    if (ev.x >= svX && ev.x < svX + svW && ev.y >= svY && ev.y < svY + svH) {
+                        s = static_cast<double>(ev.x - svX) / std::max(1, svW - 1);
+                        v = 1.0 - static_cast<double>(ev.y - svY) / std::max(1, svH - 1);
+                    } else if (ev.x >= hueX && ev.x < hueX + hueW && ev.y >= svY && ev.y < svY + svH) {
+                        h = 360.0 * static_cast<double>(ev.y - svY) / std::max(1, svH - 1);
+                    }
+                }
+                if (ev.wheel != 0) {
+                    h = std::fmod(h + ev.wheel * 6.0 + 360.0, 360.0);
+                }
+            }
+        }
+    }
+    if (accepted) {
+        outColor = TuiUtils::hsvToRgb(h, s, v);
+    }
+    return accepted;
+}
+
+bool YuiEditorScreen::openGlyphDialog(const std::string& initial, std::string& outGlyph) {
+    std::string glyph = initial.empty() ? " " : initial;
+    bool running = true;
+    bool accepted = false;
+    while (running) {
+        renderFrame();
+        int boxW = 30;
+        int boxH = 8;
+        int dx = (surface.getWidth() - boxW) / 2;
+        int dy = (surface.getHeight() - boxH) / 2;
+        surface.drawFrame(dx, dy, boxW, boxH, kFrame, theme.itemFg, theme.panel);
+        surface.fillRect(dx + 1, dy + 1, boxW - 2, 1, theme.title, theme.background, " ");
+        surface.drawText(dx + 2, dy + 1, "Edit Glyph", theme.title, theme.background);
+        surface.drawText(dx + 2, dy + 3, "Current: [" + glyph + "]", theme.itemFg, theme.panel);
+        surface.drawText(dx + 2, dy + 5, "Type a character | Enter: OK | Esc: cancel | Backspace: clear", theme.hintFg, theme.panel);
+
+        painter.present(surface, true, 1, 1);
+
+        auto events = input.pollEvents();
+        if (events.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            continue;
+        }
+        for (const auto& ev : events) {
+            if (ev.type == InputEvent::Type::Key) {
+                if (ev.key == InputKey::Escape) { running = false; break; }
+                if (ev.key == InputKey::Enter) { accepted = true; running = false; break; }
+                if (ev.key == InputKey::Character) {
+                    if (ev.ch == '\b') {
+                        glyph = " ";
+                    } else {
+                        std::string enc = encodeUtf8(ev.ch);
+                        if (!enc.empty()) glyph = enc;
+                    }
+                }
+            } else if (ev.type == InputEvent::Type::Mouse) {
+                // Simple click anywhere just keeps focus; no-op
+                (void)ev;
+            }
+        }
+    }
+    if (accepted) {
+        outGlyph = glyph;
+    }
+    return accepted;
+}
+
+} // namespace UI
+} // namespace TilelandWorld

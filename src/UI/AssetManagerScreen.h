@@ -50,6 +50,7 @@ private:
     void drawMainUI(); // Renamed from render() to avoid confusion with present()
     void importAsset();
     void deleteCurrentAsset();
+    void openInEditor();
     void loadPreview();
     
     // Helper to draw the preview in a specific area

@@ -2,6 +2,7 @@
 #include "DirectoryBrowserScreen.h"
 #include "ToggleSwitch.h"
 #include "TuiUtils.h"
+#include "YuiEditorScreen.h"
 #include "../ImgAssetsInfrastructure/ImageLoader.h"
 #include <iostream>
 #include <filesystem>
@@ -91,8 +92,7 @@ namespace UI {
                                 if (onDelete) {
                                     deleteCurrentAsset();
                                 } else if (onOpen) {
-                                    // Stub for open: currently just reload preview
-                                    loadPreview();
+                                    openInEditor();
                                 } else if (onInfo) {
                                     if (!previewLoaded) loadPreview();
                                     if (previewLoaded) showInfoDialog(currentPreview);
@@ -177,6 +177,22 @@ namespace UI {
         if (assets.empty() || selectedIndex < 0) return;
         manager.deleteAsset(assets[selectedIndex].name);
         refreshList();
+    }
+
+    void AssetManagerScreen::openInEditor() {
+        if (assets.empty() || selectedIndex < 0 || selectedIndex >= static_cast<int>(assets.size())) return;
+        input->stop();
+        std::string name = assets[static_cast<size_t>(selectedIndex)].name;
+        ImageAsset asset = manager.loadAsset(name);
+        YuiEditorScreen editor(manager, name, asset);
+        editor.show();
+        refreshList();
+        // Recreate input controller to avoid any lingering console mode state
+        input.reset(); // ensure the previous controller restores before enabling a new one
+        input = std::make_unique<InputController>();
+        hoverButton = HoverButton::None;
+        hoverRow = -1;
+        input->start();
     }
 
     void AssetManagerScreen::drawMainUI() {
