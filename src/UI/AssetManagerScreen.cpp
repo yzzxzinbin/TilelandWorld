@@ -308,6 +308,9 @@ namespace UI {
     void AssetManagerScreen::deleteCurrentAsset() {
         std::string name = getSelectedAssetName();
         if (name.empty()) return;
+        if (!skipDeleteConfirm) {
+            if (!showDeleteConfirmDialog(name)) return;
+        }
         manager.deleteAsset(name);
         refreshList();
     }
@@ -653,6 +656,128 @@ namespace UI {
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
         }
 
+        return confirmed;
+    }
+
+    bool AssetManagerScreen::showDeleteConfirmDialog(const std::string& assetName) {
+        bool running = true;
+        bool confirmed = false;
+        bool hoverDelete = false, hoverCancel = false;
+        int mouseX = -1, mouseY = -1;
+        bool dontAskAgain = false;
+
+        int w = surface.getWidth();
+        int h = surface.getHeight();
+        int dw = 54;
+        int dh = 11;
+        int dx = (w - dw) / 2;
+        int dy = (h - dh) / 2;
+        BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
+        auto clampDialog = [&]() {
+            w = surface.getWidth();
+            h = surface.getHeight();
+            dx = std::clamp(dx, 0, std::max(0, w - dw));
+            dy = std::clamp(dy, 0, std::max(0, h - dh));
+        };
+        clampDialog();
+        bool dragging = false;
+        int dragStartX = 0, dragStartY = 0;
+        int dragOriginX = 0, dragOriginY = 0;
+
+        while (running) {
+            clampDialog();
+            drawMainUI();
+
+            surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
+            surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
+            surface.drawText(dx + 2, dy + 1, "Confirm Delete", theme.title, theme.background);
+            surface.drawText(dx + 2, dy + 3, "Delete asset:", theme.itemFg, theme.panel);
+            surface.drawText(dx + 2, dy + 4, "  " + assetName, theme.hintFg, theme.panel);
+
+            std::string checkbox = dontAskAgain ? "[x] Don't ask again (session)" : "[ ] Don't ask again (session)";
+            int checkY = dy + 6;
+            int checkX = dx + 2;
+            surface.drawText(checkX, checkY, checkbox, theme.itemFg, theme.panel);
+
+            std::string delLbl = "[ Delete ]";
+            std::string cancelLbl = "[ Cancel ]";
+            int delX = dx + 6;
+            int cancelX = dx + dw - static_cast<int>(cancelLbl.size()) - 6;
+            int btnY = dy + dh - 2;
+            auto drawBtn = [&](const std::string& lbl, int x, bool hot){
+                RGBColor baseBg = theme.accent;
+                RGBColor bg = hot ? darken(baseBg, 0.6) : baseBg;
+                RGBColor fg = hot ? RGBColor{255,255,255} : theme.title;
+                surface.drawText(x, btnY, lbl, fg, bg);
+            };
+            drawBtn(delLbl, delX, hoverDelete);
+            drawBtn(cancelLbl, cancelX, hoverCancel);
+
+            auto updateHover = [&](){
+                if (mouseX < 0 || mouseY < 0) {
+                    hoverDelete = hoverCancel = false;
+                    return;
+                }
+                hoverDelete = (mouseX >= delX && mouseX < delX + static_cast<int>(delLbl.size()) && mouseY == btnY);
+                hoverCancel = (mouseX >= cancelX && mouseX < cancelX + static_cast<int>(cancelLbl.size()) && mouseY == btnY);
+            };
+            updateHover();
+
+            painter.present(surface);
+
+            auto events = input->pollEvents();
+            for (const auto& ev : events) {
+                if (ev.type == InputEvent::Type::Key) {
+                    if (ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
+                        running = false;
+                    } else if (ev.key == InputKey::Enter) {
+                        confirmed = true;
+                        running = false;
+                    } else if (ev.key == InputKey::Character && (ev.ch == ' ')) {
+                        dontAskAgain = !dontAskAgain;
+                    }
+                } else if (ev.type == InputEvent::Type::Mouse) {
+                    mouseX = ev.x;
+                    mouseY = ev.y;
+                    if (dragging) {
+                        dx = dragOriginX + (ev.x - dragStartX);
+                        dy = dragOriginY + (ev.y - dragStartY);
+                        clampDialog();
+                    }
+                    bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + dw - 1);
+                    bool onCheckbox = (ev.y == checkY && ev.x >= checkX && ev.x < checkX + static_cast<int>(checkbox.size()));
+                    bool onDel = (ev.x >= delX && ev.x < delX + static_cast<int>(delLbl.size()) && ev.y == btnY);
+                    bool onCancel = (ev.x >= cancelX && ev.x < cancelX + static_cast<int>(cancelLbl.size()) && ev.y == btnY);
+                    if (ev.pressed && ev.button == 0) {
+                        if (onTitle) {
+                            dragging = true;
+                            dragStartX = ev.x;
+                            dragStartY = ev.y;
+                            dragOriginX = dx;
+                            dragOriginY = dy;
+                        }
+                        if (onCheckbox) {
+                            dontAskAgain = !dontAskAgain;
+                        }
+                        if (onDel) {
+                            confirmed = true;
+                            running = false;
+                        } else if (onCancel) {
+                            running = false;
+                        }
+                    }
+                    if (ev.button == 0 && !ev.pressed && !ev.move) {
+                        dragging = false;
+                    }
+                }
+            }
+            updateHover();
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+
+        if (confirmed && dontAskAgain) {
+            skipDeleteConfirm = true;
+        }
         return confirmed;
     }
 

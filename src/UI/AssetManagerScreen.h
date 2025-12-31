@@ -32,6 +32,9 @@ private:
     int selectedIndex = 0; // Index within filteredIndices
     int listScrollOffset = 0;
 
+    // Delete confirmation preference (per session)
+    bool skipDeleteConfirm{false};
+
     // Caret blink for text fields
     bool searchCaretOn{true};
     std::chrono::steady_clock::time_point searchCaretLastToggle{std::chrono::steady_clock::now()};
@@ -67,6 +70,7 @@ private:
     void drawMainUI(); // Renamed from render() to avoid confusion with present()
     void importAsset();
     void deleteCurrentAsset();
+    bool showDeleteConfirmDialog(const std::string& assetName);
     void openInEditor();
     void renameCurrentAsset();
     void loadPreview();
