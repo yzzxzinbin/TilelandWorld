@@ -80,7 +80,7 @@ int main() {
                 return 0;
             }
             if (action == TilelandWorld::UI::MainMenuScreen::Action::AssetManager) {
-                TilelandWorld::UI::AssetManagerScreen assetScreen;
+                TilelandWorld::UI::AssetManagerScreen assetScreen(settings.assetDirectory);
                 assetScreen.show();
                 continue;
             }

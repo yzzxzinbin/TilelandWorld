@@ -48,13 +48,14 @@ namespace UI {
         return out;
     }
 
-    AssetManagerScreen::AssetManagerScreen() 
-        : manager("res/Assets"), 
+    AssetManagerScreen::AssetManagerScreen(const std::string& assetDir) 
+        : manager(assetDir), 
           surface(80, 24), 
           painter(),
           input(std::make_unique<InputController>()),
           taskSystem(4) // Use 4 threads or auto
     {
+        lastImportPath = manager.getRootDir();
         refreshList();
         searchCaretLastToggle = std::chrono::steady_clock::now();
     }

@@ -26,6 +26,9 @@ struct Settings {
 
     // Saves
     std::string saveDirectory{"saves"};
+
+    // Assets
+    std::string assetDirectory{"res/Assets"};
 };
 
 class SettingsManager {

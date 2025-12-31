@@ -70,6 +70,7 @@ Settings SettingsManager::load(const std::string& path) {
         maybeSet<int>(key, value, "viewHeight", cfg.viewHeight);
 
         maybeSet<std::string>(key, value, "saveDirectory", cfg.saveDirectory);
+        maybeSet<std::string>(key, value, "assetDirectory", cfg.assetDirectory);
     }
 
     return cfg;
@@ -92,6 +93,7 @@ bool SettingsManager::save(const Settings& s, const std::string& path) {
     out << "viewHeight=" << s.viewHeight << "\n";
 
     out << "saveDirectory=" << s.saveDirectory << "\n";
+    out << "assetDirectory=" << s.assetDirectory << "\n";
 
     return true;
 }

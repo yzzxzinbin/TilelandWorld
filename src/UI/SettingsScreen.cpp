@@ -134,6 +134,16 @@ void SettingsScreen::buildItems() {
         {}, 0,0,0,false
     });
 
+    items.push_back(Item{
+        "Asset directory",
+        ItemType::Directory,
+        [this](int dir){ (void)dir; },
+        [this](){ return working.assetDirectory; },
+        {},
+        [this](){ openAssetDirectoryPicker(); },
+        {}, 0,0,0,false
+    });
+
     toggleStates.assign(items.size(), ToggleSwitchState{});
     for (size_t i = 0; i < items.size(); ++i) {
         if (items[i].type == ItemType::Toggle && items[i].isOn) {
@@ -409,6 +419,23 @@ void SettingsScreen::openDirectoryPicker() {
     std::string chosen = browser.show();
     if (!chosen.empty()) {
         working.saveDirectory = chosen;
+    }
+
+    if (activeInput) {
+        activeInput->start();
+    }
+}
+
+void SettingsScreen::openAssetDirectoryPicker() {
+    painter.reset();
+    if (activeInput) {
+        activeInput->stop();
+    }
+
+    DirectoryBrowserScreen browser(working.assetDirectory);
+    std::string chosen = browser.show();
+    if (!chosen.empty()) {
+        working.assetDirectory = chosen;
     }
 
     if (activeInput) {

@@ -14,7 +14,7 @@ namespace UI {
 
 class AssetManagerScreen {
 public:
-    AssetManagerScreen();
+    explicit AssetManagerScreen(const std::string& assetDir = "res/Assets");
     
     // Show the screen and block until user exits
     void show();

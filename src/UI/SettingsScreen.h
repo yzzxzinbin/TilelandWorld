@@ -79,6 +79,7 @@ private:
     void cancelEdit();
     void markToggleAnimation(size_t idx);
     void openDirectoryPicker();
+    void openAssetDirectoryPicker();
     void apply();
 };
 
