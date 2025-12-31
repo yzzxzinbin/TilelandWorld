@@ -94,7 +94,7 @@ void YuiEditorScreen::renderFrame() {
 
     propPanelW = hasSelection ? 28 : 0;
     canvasX = 2;
-    canvasY = 3;
+    canvasY = 5; // leave a blank row below the toolbar
     canvasW = std::max(10, surface.getWidth() - canvasX - 2 - propPanelW);
     canvasH = std::max(6, surface.getHeight() - canvasY - 1);
 
@@ -108,7 +108,7 @@ void YuiEditorScreen::renderFrame() {
     }
 }
 
-static constexpr int kToolbarY = 2;
+static constexpr int kToolbarY = 3; // leave a blank line above the toolbar
 
 void YuiEditorScreen::drawToolbar() {
     int y = kToolbarY;
@@ -519,11 +519,21 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
     const int svH = 28;
     const int boxW = svW + 16; // room for hue bar + padding
     const int boxH = svH + 8;  // header + preview/RGB/hint lines
+    int dx = (surface.getWidth() - boxW) / 2;
+    int dy = (surface.getHeight() - boxH) / 2;
+    auto clampDialog = [&]() {
+        int sw = surface.getWidth();
+        int sh = surface.getHeight();
+        dx = std::clamp(dx, 0, std::max(0, sw - boxW));
+        dy = std::clamp(dy, 0, std::max(0, sh - boxH));
+    };
+    clampDialog();
+    bool dragging = false;
+    int dragStartX = 0, dragStartY = 0;
+    int dragOriginX = 0, dragOriginY = 0;
     while (running) {
+        clampDialog();
         renderFrame();
-
-        int dx = (surface.getWidth() - boxW) / 2;
-        int dy = (surface.getHeight() - boxH) / 2;
         surface.drawFrame(dx, dy, boxW, boxH, kFrame, theme.itemFg, theme.panel);
         surface.fillRect(dx + 1, dy + 1, boxW - 2, 1, theme.title, theme.background, " ");
         surface.drawText(dx + 2, dy + 1, "HSV Picker", theme.title, theme.background);
@@ -560,7 +570,7 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
         int previewY = dy + svH + 4;
         surface.drawText(dx + 2, previewY, "Preview", theme.itemFg, theme.panel);
         int swatchX = dx + 12;
-        int swatchW = boxW - (swatchX - dx) - 2;
+        int swatchW = std::max(0, boxW - (swatchX - dx) - 2 - 6); // shorten preview bar by 6 cells
         surface.fillRect(swatchX, previewY, swatchW, 1, preview, preview, " ");
         std::ostringstream rgbss;
         rgbss << "RGB: " << (int)preview.r << "," << (int)preview.g << "," << (int)preview.b;
@@ -579,7 +589,20 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
                 if (ev.key == InputKey::Enter) { accepted = true; running = false; break; }
                 if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) { running = false; break; }
             } else if (ev.type == InputEvent::Type::Mouse) {
+                if (dragging) {
+                    dx = dragOriginX + (ev.x - dragStartX);
+                    dy = dragOriginY + (ev.y - dragStartY);
+                    clampDialog();
+                }
+                bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + boxW - 1);
                 if (ev.button == 0 && ev.pressed) {
+                    if (onTitle) {
+                        dragging = true;
+                        dragStartX = ev.x;
+                        dragStartY = ev.y;
+                        dragOriginX = dx;
+                        dragOriginY = dy;
+                    }
                     if (ev.x >= svX && ev.x < svX + svW && ev.y >= svY && ev.y < svY + svH) {
                         s = static_cast<double>(ev.x - svX) / std::max(1, svW - 1);
                         v = 1.0 - static_cast<double>(ev.y - svY) / std::max(1, svH - 1);
@@ -589,6 +612,9 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
                 }
                 if (ev.wheel != 0) {
                     h = std::fmod(h + ev.wheel * 6.0 + 360.0, 360.0);
+                }
+                if (ev.button == 0 && !ev.pressed && !ev.move) {
+                    dragging = false;
                 }
             }
         }
@@ -618,10 +644,21 @@ bool YuiEditorScreen::openGlyphDialog(const std::string& initial, std::string& o
     int gridW = cols * slotW - 1;
     int boxW = std::max(48, gridW + 4);
     int boxH = 8 + rows; // title + presets + custom + hint
+    int dx = (surface.getWidth() - boxW) / 2;
+    int dy = (surface.getHeight() - boxH) / 2;
+    auto clampDialog = [&]() {
+        int sw = surface.getWidth();
+        int sh = surface.getHeight();
+        dx = std::clamp(dx, 0, std::max(0, sw - boxW));
+        dy = std::clamp(dy, 0, std::max(0, sh - boxH));
+    };
+    clampDialog();
+    bool dragging = false;
+    int dragStartX = 0, dragStartY = 0;
+    int dragOriginX = 0, dragOriginY = 0;
     while (running) {
+        clampDialog();
         renderFrame();
-        int dx = (surface.getWidth() - boxW) / 2;
-        int dy = (surface.getHeight() - boxH) / 2;
         surface.drawFrame(dx, dy, boxW, boxH, kFrame, theme.itemFg, theme.panel);
         surface.fillRect(dx + 1, dy + 1, boxW - 2, 1, theme.title, theme.background, " ");
         surface.drawText(dx + 2, dy + 1, "Edit Glyph", theme.title, theme.background);
@@ -663,7 +700,20 @@ bool YuiEditorScreen::openGlyphDialog(const std::string& initial, std::string& o
                     }
                 }
             } else if (ev.type == InputEvent::Type::Mouse) {
+                if (dragging) {
+                    dx = dragOriginX + (ev.x - dragStartX);
+                    dy = dragOriginY + (ev.y - dragStartY);
+                    clampDialog();
+                }
+                bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + boxW - 1);
                 if (ev.button == 0 && ev.pressed) {
+                    if (onTitle) {
+                        dragging = true;
+                        dragStartX = ev.x;
+                        dragStartY = ev.y;
+                        dragOriginX = dx;
+                        dragOriginY = dy;
+                    }
                     int gx0 = dx + 2;
                     int gy0 = dy + 4;
                     int gridH = rows;
@@ -677,6 +727,9 @@ bool YuiEditorScreen::openGlyphDialog(const std::string& initial, std::string& o
                             }
                         }
                     }
+                }
+                if (ev.button == 0 && !ev.pressed && !ev.move) {
+                    dragging = false;
                 }
             }
         }

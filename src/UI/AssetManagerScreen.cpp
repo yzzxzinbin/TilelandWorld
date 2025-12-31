@@ -56,6 +56,7 @@ namespace UI {
           taskSystem(4) // Use 4 threads or auto
     {
         refreshList();
+        searchCaretLastToggle = std::chrono::steady_clock::now();
     }
 
     void AssetManagerScreen::show() {
@@ -65,6 +66,11 @@ namespace UI {
         std::cout << "\x1b[?25l"; // Hide cursor
 
         while (running) {
+            auto now = std::chrono::steady_clock::now();
+            if (now - searchCaretLastToggle >= std::chrono::milliseconds(500)) {
+                searchCaretOn = !searchCaretOn;
+                searchCaretLastToggle = now;
+            }
             drawMainUI();
             painter.present(surface);
             
@@ -400,10 +406,11 @@ namespace UI {
             displayQuery = displayQuery.substr(displayQuery.size() - maxSearchChars);
         }
         RGBColor drawFg = fieldFg;
-        bool showCaret = searchFocused || searchHover;
+        bool activeField = (searchFocused || searchHover);
+        bool showCaret = activeField && searchCaretOn;
         if (showCaret) {
             displayQuery.push_back('|');
-        } else if (displayQuery.empty()) {
+        } else if (!activeField && displayQuery.empty()) {
             displayQuery = "type to filter";
             drawFg = theme.hintFg;
         }
@@ -490,17 +497,35 @@ namespace UI {
         bool fieldFocused = true;
         std::string errorMsg;
         int mouseX = -1, mouseY = -1;
+        bool caretOn = true;
+        auto caretLastToggle = std::chrono::steady_clock::now();
+
+        int w = surface.getWidth();
+        int h = surface.getHeight();
+        int dw = 50;
+        int dh = 10;
+        int dx = (w - dw) / 2;
+        int dy = (h - dh) / 2;
+        BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
+        auto clampDialog = [&]() {
+            w = surface.getWidth();
+            h = surface.getHeight();
+            dx = std::clamp(dx, 0, std::max(0, w - dw));
+            dy = std::clamp(dy, 0, std::max(0, h - dh));
+        };
+        clampDialog();
+        bool dragging = false;
+        int dragStartX = 0, dragStartY = 0;
+        int dragOriginX = 0, dragOriginY = 0;
 
         while (running) {
+            auto now = std::chrono::steady_clock::now();
+            if (now - caretLastToggle >= std::chrono::milliseconds(500)) {
+                caretOn = !caretOn;
+                caretLastToggle = now;
+            }
+            clampDialog();
             drawMainUI();
-
-            int w = surface.getWidth();
-            int h = surface.getHeight();
-            int dw = 50;
-            int dh = 10;
-            int dx = (w - dw) / 2;
-            int dy = (h - dh) / 2;
-            BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
 
             surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
             surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
@@ -518,7 +543,7 @@ namespace UI {
             if (static_cast<int>(displayName.size()) > maxChars) {
                 displayName = displayName.substr(displayName.size() - maxChars);
             }
-            if (fieldFocused) displayName.push_back('|');
+            if (fieldFocused && caretOn) displayName.push_back('|');
             if (static_cast<int>(displayName.size()) > maxChars) {
                 displayName = displayName.substr(displayName.size() - maxChars);
             }
@@ -583,16 +608,32 @@ namespace UI {
                 if (ev.type == InputEvent::Type::Mouse) {
                     mouseX = ev.x;
                     mouseY = ev.y;
+                    if (dragging) {
+                        dx = dragOriginX + (ev.x - dragStartX);
+                        dy = dragOriginY + (ev.y - dragStartY);
+                        clampDialog();
+                    }
                     bool onField = (ev.y == fieldY && ev.x >= fieldX && ev.x < fieldX + fieldW);
                     bool onOk = (ev.x >= okX && ev.x < okX + static_cast<int>(okLbl.size()) && ev.y == btnY);
                     bool onCancel = (ev.x >= cancelX && ev.x < cancelX + static_cast<int>(cancelLbl.size()) && ev.y == btnY);
+                    bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + dw - 1);
                     if (ev.pressed && ev.button == 0) {
+                        if (onTitle) {
+                            dragging = true;
+                            dragStartX = ev.x;
+                            dragStartY = ev.y;
+                            dragOriginX = dx;
+                            dragOriginY = dy;
+                        }
                         fieldFocused = onField;
                         if (onOk) {
                             tryConfirm();
                         } else if (onCancel) {
                             running = false;
                         }
+                    }
+                    if (ev.button == 0 && !ev.pressed && !ev.move) {
+                        dragging = false;
                     }
                 } else if (ev.type == InputEvent::Type::Key) {
                     if (ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
@@ -882,11 +923,21 @@ void AssetManagerScreen::showInfoDialog(const ImageAsset& asset) {
     int dy = (h - dh) / 2;
     BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
 
+    auto clampDialog = [&]() {
+        dx = std::clamp(dx, 0, std::max(0, w - dw));
+        dy = std::clamp(dy, 0, std::max(0, h - dh));
+    };
+    clampDialog();
+
     bool running = true;
     bool hoverOk = false, hoverClose = false;
     int mouseX = -1;
     int mouseY = -1;
+    bool dragging = false;
+    int dragStartX = 0, dragStartY = 0;
+    int dragOriginX = 0, dragOriginY = 0;
     while (running) {
+        clampDialog();
         drawMainUI();
         surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
         surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
@@ -930,10 +981,26 @@ void AssetManagerScreen::showInfoDialog(const ImageAsset& asset) {
             } else if (ev.type == InputEvent::Type::Mouse) {
                 mouseX = ev.x;
                 mouseY = ev.y;
+                if (dragging) {
+                    dx = dragOriginX + (ev.x - dragStartX);
+                    dy = dragOriginY + (ev.y - dragStartY);
+                    clampDialog();
+                }
                 bool onOk = (ev.x >= okx && ev.x < okx + static_cast<int>(ok.size()) && ev.y == btnY);
                 bool onClose = (ev.x >= closex && ev.x < closex + static_cast<int>(close.size()) && ev.y == btnY);
+                bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + dw - 1);
                 if (ev.button == 0 && ev.pressed) {
+                    if (onTitle) {
+                        dragging = true;
+                        dragStartX = ev.x;
+                        dragStartY = ev.y;
+                        dragOriginX = dx;
+                        dragOriginY = dy;
+                    }
                     if (onOk || onClose) { running = false; break; }
+                }
+                if (ev.button == 0 && !ev.pressed && !ev.move) {
+                    dragging = false;
                 }
             }
         }

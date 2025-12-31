@@ -32,6 +32,10 @@ private:
     int selectedIndex = 0; // Index within filteredIndices
     int listScrollOffset = 0;
 
+    // Caret blink for text fields
+    bool searchCaretOn{true};
+    std::chrono::steady_clock::time_point searchCaretLastToggle{std::chrono::steady_clock::now()};
+
     // Search filter
     std::string searchQuery;
     bool searchFocused{false};
