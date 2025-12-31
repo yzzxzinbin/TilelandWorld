@@ -24,6 +24,9 @@ struct Settings {
     // Rendering optimizations
     bool enableDiffRendering{false};
 
+    // Rendering backend
+    bool useFmtRenderer{false};
+
     // Saves
     std::string saveDirectory{"saves"};
 

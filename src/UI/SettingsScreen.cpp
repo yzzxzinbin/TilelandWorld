@@ -31,46 +31,50 @@ SettingsScreen::SettingsScreen(Settings& settings)
 void SettingsScreen::buildItems() {
     items.clear();
 
+    size_t idx = items.size();
     items.push_back(Item{
         "FPS limit",
         ItemType::Number,
         [this](int dir){ working.targetFpsLimit = clampDouble(working.targetFpsLimit + dir * 5.0, 30.0, 1440.0); },
         [this](){ return std::to_string(static_cast<int>(working.targetFpsLimit)); },
         {},
-        [this](){ startNumericEdit(0); },
+        [this, idx](){ startNumericEdit(idx); },
         [this](double v){ working.targetFpsLimit = clampDouble(v, 30.0, 1440.0); },
         30.0, 1440.0, 5.0, true
     });
 
+    idx = items.size();
     items.push_back(Item{
         "Target TPS",
         ItemType::Number,
         [this](int dir){ working.targetTps = clampDouble(working.targetTps + dir * 1.0, 10.0, 240.0); },
         [this](){ return std::to_string(static_cast<int>(working.targetTps)); },
         {},
-        [this](){ startNumericEdit(1); },
+        [this, idx](){ startNumericEdit(idx); },
         [this](double v){ working.targetTps = clampDouble(v, 10.0, 240.0); },
         10.0, 240.0, 1.0, true
     });
 
+    idx = items.size();
     items.push_back(Item{
         "Stats overlay alpha",
         ItemType::Float,
         [this](int dir){ working.statsOverlayAlpha = clampDouble(working.statsOverlayAlpha + dir * 0.05, 0.0, 1.0); },
         [this](){ std::ostringstream ss; ss << std::fixed << std::setprecision(2) << working.statsOverlayAlpha; return ss.str(); },
         {},
-        [this](){ startNumericEdit(2); },
+        [this, idx](){ startNumericEdit(idx); },
         [this](double v){ working.statsOverlayAlpha = clampDouble(v, 0.0, 1.0); },
         0.0, 1.0, 0.05, false
     });
 
+    idx = items.size();
     items.push_back(Item{
         "Mouse cross alpha",
         ItemType::Float,
         [this](int dir){ working.mouseCrossAlpha = clampDouble(working.mouseCrossAlpha + dir * 0.05, 0.0, 1.0); },
         [this](){ std::ostringstream ss; ss << std::fixed << std::setprecision(2) << working.mouseCrossAlpha; return ss.str(); },
         {},
-        [this](){ startNumericEdit(3); },
+        [this, idx](){ startNumericEdit(idx); },
         [this](double v){ working.mouseCrossAlpha = clampDouble(v, 0.0, 1.0); },
         0.0, 1.0, 0.05, false
     });
@@ -103,23 +107,34 @@ void SettingsScreen::buildItems() {
     });
 
     items.push_back(Item{
+        "Renderer API (fmt)",
+        ItemType::Toggle,
+        [this](int dir){ (void)dir; working.useFmtRenderer = !working.useFmtRenderer; },
+        [this](){ return working.useFmtRenderer ? "fmt" : "std"; },
+        [this](){ return working.useFmtRenderer; },
+        {}, {},0,0,0,false
+    });
+
+    idx = items.size();
+    items.push_back(Item{
         "View width",
         ItemType::Number,
         [this](int dir){ working.viewWidth = clampInt(working.viewWidth + dir * 2, 16, 200); },
         [this](){ return std::to_string(working.viewWidth); },
         {},
-        [this](){ startNumericEdit(7); },
+        [this, idx](){ startNumericEdit(idx); },
         [this](double v){ working.viewWidth = clampInt(static_cast<int>(v), 16, 200); },
         16.0, 200.0, 2.0, true
     });
 
+    idx = items.size();
     items.push_back(Item{
         "View height",
         ItemType::Number,
         [this](int dir){ working.viewHeight = clampInt(working.viewHeight + dir * 2, 16, 120); },
         [this](){ return std::to_string(working.viewHeight); },
         {},
-        [this](){ startNumericEdit(8); },
+        [this, idx](){ startNumericEdit(idx); },
         [this](double v){ working.viewHeight = clampInt(static_cast<int>(v), 16, 120); },
         16.0, 120.0, 2.0, true
     });

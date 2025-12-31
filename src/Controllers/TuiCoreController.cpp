@@ -38,6 +38,7 @@ namespace TilelandWorld {
 
         // 3. 初始化渲染器
         renderer = std::make_unique<TuiRenderer>(map, mapMutex, settings.statsOverlayAlpha, settings.enableStatsOverlay, settings.enableDiffRendering, settings.targetFpsLimit);
+        renderer->setBackend(settings.useFmtRenderer ? RendererBackend::Fmt : RendererBackend::Std);
 
         // 4. 初始化输入控制器
         inputController = std::make_unique<InputController>();
@@ -404,6 +405,13 @@ namespace TilelandWorld {
         });
 
         settingsOverlayItems.push_back(RuntimeSettingItem{
+            "Renderer API (fmt)",
+            RuntimeSettingItem::Kind::Toggle,
+            [this](int) { settingsOverlayWorking.useFmtRenderer = !settingsOverlayWorking.useFmtRenderer; },
+            [this]() { return settingsOverlayWorking.useFmtRenderer ? "fmt" : "std"; }
+        });
+
+        settingsOverlayItems.push_back(RuntimeSettingItem{
             "View width",
             RuntimeSettingItem::Kind::Number,
             [this](int dir) {
@@ -493,6 +501,7 @@ namespace TilelandWorld {
         targetTps = settings.targetTps;
 
         if (renderer) {
+            renderer->setBackend(settings.useFmtRenderer ? RendererBackend::Fmt : RendererBackend::Std);
             renderer->applyRuntimeSettings(settings.statsOverlayAlpha, settings.enableStatsOverlay, settings.enableDiffRendering, settings.targetFpsLimit);
         }
 

@@ -7,6 +7,7 @@
 #include <cmath>
 #include <algorithm>
 #include <array>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -142,6 +143,11 @@ namespace TilelandWorld
         enableStatsOverlay.store(enableStats);
         enableDiffOutput.store(enableDiff);
         targetFpsCap.store(std::max(1.0, fpsCap));
+    }
+
+    void TuiRenderer::setBackend(RendererBackend backend)
+    {
+        useFmtBackend.store(backend == RendererBackend::Fmt);
     }
 
     void TuiRenderer::setUiLayer(std::shared_ptr<const UI::TuiSurface> layer, double alphaBg)
@@ -364,6 +370,18 @@ namespace TilelandWorld
 
     void TuiRenderer::drawToConsole(const ViewState &state, std::shared_ptr<const UI::TuiSurface> overlay, double overlayAlpha)
     {
+        if (useFmtBackend.load())
+        {
+            drawToConsoleFmt(state, std::move(overlay), overlayAlpha);
+        }
+        else
+        {
+            drawToConsoleStd(state, std::move(overlay), overlayAlpha);
+        }
+    }
+
+    void TuiRenderer::drawToConsoleStd(const ViewState &state, std::shared_ptr<const UI::TuiSurface> overlay, double overlayAlpha)
+    {
         bool useOverlay = overlay && overlayAlpha > 0.0001;
         int overlayWidth = 0;
         int overlayHeight = 0;
@@ -541,7 +559,7 @@ namespace TilelandWorld
                 return; // 完全相同的帧，跳过输出
             }
 
-            drawDiffToConsole(frameLines, statusLine);
+            drawDiffToConsoleStd(frameLines, statusLine);
             lastFrameHash = frameHash;
             return;
         }
@@ -565,7 +583,7 @@ namespace TilelandWorld
         std::cout.flush();
     }
 
-    void TuiRenderer::drawDiffToConsole(const std::vector<std::string> &lines, const std::string &statusLine)
+    void TuiRenderer::drawDiffToConsoleStd(const std::vector<std::string> &lines, const std::string &statusLine)
     {
         bool sizeChanged = lastFrameLines.size() != lines.size();
         if (sizeChanged)

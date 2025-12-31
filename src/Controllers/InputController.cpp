@@ -43,6 +43,19 @@ namespace TilelandWorld {
     void InputController::start()
     {
         if (running) return;
+
+        {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            eventQueue.clear();
+            buffer.clear();
+        }
+
+#ifdef _WIN32
+        if (hIn != INVALID_HANDLE_VALUE) {
+            FlushConsoleInputBuffer(hIn);
+        }
+#endif
+
         running = true;
         readerThread = std::thread(&InputController::readerLoop, this);
     }
@@ -82,11 +95,19 @@ namespace TilelandWorld {
         char buf[256];
         while (running)
         {
+            DWORD waitRes = WaitForSingleObject(hIn, 50); // small timeout to allow clean shutdown
+            if (!running) break;
+            if (waitRes == WAIT_TIMEOUT) {
+                continue; // no input yet
+            }
+            if (waitRes == WAIT_FAILED) {
+                break;
+            }
+
             if (!ReadFile(hIn, buf, sizeof(buf), &read, nullptr)) {
                 break;
             }
             if (read == 0) {
-                // Sleep(0);
                 continue;
             }
             buffer.append(buf, buf + read);

@@ -15,6 +15,8 @@
 
 namespace TilelandWorld {
 
+    enum class RendererBackend { Std, Fmt };
+
     // 渲染用的视图状态快照
     struct ViewState {
         int viewX;
@@ -36,6 +38,9 @@ namespace TilelandWorld {
         void start();
         // 停止渲染线程
         void stop();
+
+        // 切换渲染输出 API（std / fmt）
+        void setBackend(RendererBackend backend);
 
         // 更新视图参数 (由逻辑线程调用)
         void updateViewState(int x, int y, int z, int w, int h, size_t modifiedCount, double tps);
@@ -69,6 +74,7 @@ namespace TilelandWorld {
         std::atomic<bool> enableStatsOverlay{true};
         std::atomic<bool> enableDiffOutput{false};
         std::atomic<double> targetFpsCap{360.0};
+        std::atomic<bool> useFmtBackend{false};
 
         // 渲染缓冲区 (本地副本)
         std::vector<Tile> tileBuffer;
@@ -95,7 +101,10 @@ namespace TilelandWorld {
         // 内部辅助
         void copyMapData(const ViewState& state);
         void drawToConsole(const ViewState& state, std::shared_ptr<const UI::TuiSurface> overlay, double overlayAlpha);
-        void drawDiffToConsole(const std::vector<std::string>& lines, const std::string& statusLine);
+        void drawToConsoleStd(const ViewState& state, std::shared_ptr<const UI::TuiSurface> overlay, double overlayAlpha);
+        void drawToConsoleFmt(const ViewState& state, std::shared_ptr<const UI::TuiSurface> overlay, double overlayAlpha);
+        void drawDiffToConsoleStd(const std::vector<std::string>& lines, const std::string& statusLine);
+        void drawDiffToConsoleFmt(const std::vector<std::string>& lines, const std::string& statusLine);
         std::shared_ptr<UI::TuiSurface> buildStatsOverlay(const ViewState& state) const;
         static RGBColor blendColor(const RGBColor& top, const RGBColor& bottom, double alpha);
         
