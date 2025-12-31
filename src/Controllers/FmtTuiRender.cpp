@@ -192,29 +192,7 @@ void TuiRenderer::drawToConsoleFmt(const ViewState& state, std::shared_ptr<const
         buf.append(s.data(), s.data() + s.size());
     };
 
-    fmt::memory_buffer status;
-    appendStr(status, "\x1b[0m");
-    appendStr(status, "\x1b[");
-    appendStr(status, std::to_string(state.height + 2));
-    appendStr(status, ";1H\x1b[K");
-
-    appendStr(status, "Pos: (");
-    appendStr(status, std::to_string(state.viewX));
-    appendStr(status, ", ");
-    appendStr(status, std::to_string(state.viewY));
-    appendStr(status, ", ");
-    appendStr(status, std::to_string(state.currentZ));
-    appendStr(status, ") | Modified: ");
-    appendStr(status, std::to_string(state.modifiedChunkCount));
-    appendStr(status, " | FPS: ");
-
-    std::string fpsStr = std::to_string(currentFps);
-    appendStr(status, fpsStr.substr(0, fpsStr.find('.') + 2));
-
-    appendStr(status, " | TPS: ");
-    std::string tpsStr = std::to_string(state.tps);
-    appendStr(status, tpsStr.substr(0, tpsStr.find('.') + 2));
-
+    fmt::memory_buffer status; // kept empty: renderer no longer emits bottom status text
     std::string statusLine = fmt::to_string(status);
 
     if (enableDiffOutput.load())
@@ -237,7 +215,6 @@ void TuiRenderer::drawToConsoleFmt(const ViewState& state, std::shared_ptr<const
     {
         output.append(line.data(), line.data() + line.size());
     }
-    output.append(statusLine.data(), statusLine.data() + statusLine.size());
 
     fmt::print("{}", std::string_view(output.data(), output.size()));
     std::fflush(stdout);
@@ -261,11 +238,6 @@ void TuiRenderer::drawDiffToConsoleFmt(const std::vector<std::string>& lines, co
         {
             diffOutput.append(lines[i].data(), lines[i].data() + lines[i].size());
         }
-    }
-
-    if (sizeChanged || statusLine != lastStatusLine)
-    {
-        diffOutput.append(statusLine.data(), statusLine.data() + statusLine.size());
     }
 
     fmt::print("{}", std::string_view(diffOutput.data(), diffOutput.size()));

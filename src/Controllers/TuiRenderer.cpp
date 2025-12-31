@@ -525,31 +525,7 @@ namespace TilelandWorld
             frameLines[static_cast<size_t>(y)] = std::move(line);
         }
 
-        // 底部信息栏
-        std::string statusLine;
-        statusLine.reserve(128);
-        statusLine.append("\x1b[0m");
-        statusLine.append("\x1b[");
-        statusLine.append(std::to_string(state.height + 2));
-        statusLine.append(";1H\x1b[K");
-
-        statusLine.append("Pos: (");
-        statusLine.append(std::to_string(state.viewX));
-        statusLine.append(", ");
-        statusLine.append(std::to_string(state.viewY));
-        statusLine.append(", ");
-        statusLine.append(std::to_string(state.currentZ));
-        statusLine.append(") | Modified: ");
-        statusLine.append(std::to_string(state.modifiedChunkCount));
-        statusLine.append(" | FPS: ");
-
-        // 简单的 float 转 string，避免 stringstream
-        std::string fpsStr = std::to_string(currentFps);
-        statusLine.append(fpsStr.substr(0, fpsStr.find('.') + 2));
-
-        statusLine.append(" | TPS: ");
-        std::string tpsStr = std::to_string(state.tps);
-        statusLine.append(tpsStr.substr(0, tpsStr.find('.') + 2));
+        std::string statusLine; // now empty: renderer no longer emits bottom status text
 
         if (enableDiffOutput.load())
         {
@@ -577,7 +553,6 @@ namespace TilelandWorld
         {
             outputBuffer.append(line);
         }
-        outputBuffer.append(statusLine);
 
         std::cout.write(outputBuffer.data(), outputBuffer.size());
         std::cout.flush();
@@ -601,11 +576,6 @@ namespace TilelandWorld
             {
                 diffOutput.append(lines[i]);
             }
-        }
-
-        if (sizeChanged || statusLine != lastStatusLine)
-        {
-            diffOutput.append(statusLine);
         }
 
         std::cout.write(diffOutput.data(), diffOutput.size());
@@ -639,7 +609,8 @@ namespace TilelandWorld
         std::string tpsStr = std::to_string(state.tps);
         tpsStr = tpsStr.substr(0, tpsStr.find('.') + 2);
 
-        std::string text = "FPS: " + fpsStr + " | TPS: " + tpsStr + " | Modified: " + std::to_string(state.modifiedChunkCount);
+        std::string text = "Pos: (" + std::to_string(state.viewX) + ", " + std::to_string(state.viewY) + ", " + std::to_string(state.currentZ) + ") | "
+            "FPS: " + fpsStr + " | TPS: " + tpsStr + " | Modified: " + std::to_string(state.modifiedChunkCount);
         // 仅填充与文本长度相匹配的区域，避免整行覆盖
         int barWidth = std::min(static_cast<int>(surface->getWidth()), static_cast<int>(text.size()) + 4);
         surface->fillRect(0, 0, barWidth, barHeight, fg, bg, " ");
