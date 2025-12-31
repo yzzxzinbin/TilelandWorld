@@ -27,6 +27,9 @@ void ToggleSwitch::render(TuiSurface& surface, int x, int y, bool on, const Togg
     double pos = on ? moveProgress : (1.0 - moveProgress);
     int indicatorX = leftBound + static_cast<int>(pos * span + 0.5);
 
+    int offLabelPos = x + 1;
+    int onLabelPos = x + trackLen - static_cast<int>(style.onLabel.size()) - 1;
+
     RGBColor trackBase = style.trackBase;
     RGBColor startColor = state.previousOn ? style.indicatorOn : style.indicatorOff;
     RGBColor targetColor = on ? style.indicatorOn : style.indicatorOff;
@@ -39,16 +42,19 @@ void ToggleSwitch::render(TuiSurface& surface, int x, int y, bool on, const Togg
 
     surface.fillRect(x, y, trackLen, 1, trackBase, trackBase, " ");
 
-    surface.drawText(x + 1, y, "OFF", style.labelDim, trackBase);
-    surface.drawText(x + trackLen - 4, y, "ON", style.labelDim, trackBase);
+    surface.drawText(offLabelPos, y, style.offLabel, style.labelDim, trackBase);
+    surface.drawText(onLabelPos, y, style.onLabel, style.labelDim, trackBase);
 
     surface.fillRect(indicatorX, y, indicatorWidth, 1, indicatorColor, indicatorColor, " ");
 
-    if (indicatorX <= x + 1 && indicatorX + indicatorWidth > x + 1) {
-        surface.drawText(x + 1, y, "OFF", style.labelBright, indicatorColor);
+    int indicatorEnd = indicatorX + indicatorWidth;
+    int offEnd = offLabelPos + static_cast<int>(style.offLabel.size());
+    int onEnd = onLabelPos + static_cast<int>(style.onLabel.size());
+    if (indicatorX <= offLabelPos && indicatorEnd > offLabelPos) {
+        surface.drawText(offLabelPos, y, style.offLabel, style.labelBright, indicatorColor);
     }
-    if (indicatorX <= x + trackLen - 4 && indicatorX + indicatorWidth > x + trackLen - 4) {
-        surface.drawText(x + trackLen - 4, y, "ON", style.labelBright, indicatorColor);
+    if (indicatorX <= onLabelPos && indicatorEnd > onLabelPos) {
+        surface.drawText(onLabelPos, y, style.onLabel, style.labelBright, indicatorColor);
     }
 }
 

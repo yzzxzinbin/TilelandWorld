@@ -337,6 +337,11 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
                     scrollOffset = 0;
                     refreshEntries();
                 }
+                else if (doubleClick && !entries[idx].isDir && showFilesMode)
+                {
+                    result = entries[idx].fullPath.string();
+                    running = false;
+                }
             }
         }
     }

@@ -4,6 +4,7 @@
 
 #include "AnsiTui.h"
 #include <chrono>
+#include <string>
 
 namespace TilelandWorld {
 namespace UI {
@@ -16,6 +17,8 @@ struct ToggleSwitchStyle {
     RGBColor indicatorOff{210, 70, 70};
     RGBColor labelDim{80, 85, 100};
     RGBColor labelBright{255, 255, 255};
+    std::string offLabel{"OFF"};
+    std::string onLabel{"ON"};
     double moveDurationMs{200.0};
     double colorDelayMs{80.0};
     double colorDurationMs{220.0};

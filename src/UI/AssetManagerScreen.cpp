@@ -1,5 +1,6 @@
 #include "AssetManagerScreen.h"
 #include "DirectoryBrowserScreen.h"
+#include "ToggleSwitch.h"
 #include "TuiUtils.h"
 #include "../ImgAssetsInfrastructure/ImageLoader.h"
 #include <iostream>
@@ -11,6 +12,7 @@
 #include <map>
 #include <sstream>
 #include <iomanip>
+#include <chrono>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -24,6 +26,15 @@ namespace {
 
 namespace TilelandWorld {
 namespace UI {
+
+    static RGBColor darken(const RGBColor& c, double factor) {
+        double f = std::max(0.0, std::min(1.0, factor));
+        return RGBColor{
+            static_cast<uint8_t>(std::max(0.0, c.r * f)),
+            static_cast<uint8_t>(std::max(0.0, c.g * f)),
+            static_cast<uint8_t>(std::max(0.0, c.b * f))
+        };
+    }
 
     AssetManagerScreen::AssetManagerScreen() 
         : manager("res/Assets"), 
@@ -242,8 +253,9 @@ namespace UI {
             if (focused) {
                 auto btnColor = [&](HoverButton hb) {
                     bool hot = (hoverRow == i && hoverButton == hb);
-                    RGBColor bbg = hot ? theme.focusBg : theme.accent;
-                    RGBColor bfg = hot ? theme.focusFg : white;
+                    RGBColor baseBg = theme.accent;
+                    RGBColor bbg = hot ? darken(baseBg, 0.9) : baseBg;
+                    RGBColor bfg = theme.title;
                     return std::make_pair(bfg, bbg);
                 };
                 auto [fgOpen, bgOpen] = btnColor(HoverButton::Open);
@@ -273,8 +285,11 @@ namespace UI {
         int qualityIdx = 1; // 0: Low, 1: High
         int focusIdx = 0; // 0:W, 1:Quality, 2:Import, 3:Cancel
         bool hoverImport = false, hoverCancel = false;
+        ToggleSwitchState qualityToggleState{};
         
         bool dialogRunning = true;
+        int mouseX = -1;
+        int mouseY = -1;
         input->start(); 
 
         while (dialogRunning) {
@@ -309,7 +324,11 @@ namespace UI {
             drawField(0, widthStr, lineY);
             lineY++;
             drawLabel("Quality", lineY);
-            drawField(1, (qualityIdx == 1 ? "High" : "Low"), lineY);
+            int toggleX = fieldX;
+            ToggleSwitchStyle tstyle{};
+            tstyle.offLabel = "LOW";
+            tstyle.onLabel = "HIGH";
+            ToggleSwitch::render(surface, toggleX, lineY, qualityIdx == 1, qualityToggleState, tstyle);
             
             // Buttons
             std::string importLbl = "[ Import ]";
@@ -318,12 +337,27 @@ namespace UI {
             int cancelX = dx + dw - static_cast<int>(cancelLbl.size()) - 6;
             int btnY = dy + dh - 3;
             auto drawBtn = [&](const std::string& lbl, int x, bool hot, bool focus){
-                RGBColor fg = hot || focus ? theme.focusFg : theme.title;
-                RGBColor bg = hot || focus ? theme.focusBg : theme.accent;
+                RGBColor baseBg = theme.accent;
+                RGBColor bg = hot || focus ? darken(baseBg, 0.9) : baseBg;
+                RGBColor fg = theme.title;
                 surface.drawText(x, btnY, lbl, fg, bg);
             };
             drawBtn(importLbl, importX, hoverImport, focusIdx == 2);
             drawBtn(cancelLbl, cancelX, hoverCancel, focusIdx == 3);
+
+            auto updateHover = [&](){
+                if (mouseX < 0 || mouseY < 0) {
+                    hoverImport = hoverCancel = false;
+                    qualityToggleState.hover = qualityToggleState.hot = false;
+                    return;
+                }
+                hoverImport = (mouseX >= importX && mouseX < importX + static_cast<int>(importLbl.size()) && mouseY == btnY);
+                hoverCancel = (mouseX >= cancelX && mouseX < cancelX + static_cast<int>(cancelLbl.size()) && mouseY == btnY);
+                bool onToggle = (mouseY == lineY && mouseX >= toggleX && mouseX < toggleX + tstyle.trackLen + 2);
+                qualityToggleState.hover = onToggle;
+                qualityToggleState.hot = onToggle;
+            };
+            updateHover();
             
             painter.present(surface);
             
@@ -331,10 +365,24 @@ namespace UI {
             auto events = input->pollEvents();
             for (const auto& ev : events) {
                 if (ev.type == InputEvent::Type::Mouse) {
+                    mouseX = ev.x;
+                    mouseY = ev.y;
                     bool onImport = (ev.x >= importX && ev.x < importX + static_cast<int>(importLbl.size()) && ev.y == btnY);
                     bool onCancel = (ev.x >= cancelX && ev.x < cancelX + static_cast<int>(cancelLbl.size()) && ev.y == btnY);
-                    if (onImport) hoverImport = true;
-                    if (onCancel) hoverCancel = true;
+                    bool onWidth = (ev.y == dy + 3 && ev.x >= fieldX && ev.x < fieldX + static_cast<int>(widthStr.size()) + 2);
+                    bool onToggle = (ev.y == lineY && ev.x >= toggleX && ev.x < toggleX + tstyle.trackLen + 2);
+                    // focus text/toggle by click
+                    if (ev.button == 0 && ev.pressed) {
+                        if (onWidth) {
+                            focusIdx = 0;
+                        } else if (onToggle) {
+                            focusIdx = 1;
+                            bool wasOn = (qualityIdx == 1);
+                            qualityIdx = 1 - qualityIdx;
+                            qualityToggleState.previousOn = wasOn;
+                            qualityToggleState.lastToggle = std::chrono::steady_clock::now();
+                        }
+                    }
                     if (ev.pressed && ev.button == 0) {
                         if (onImport) {
                             focusIdx = 2;
@@ -369,6 +417,7 @@ namespace UI {
                         }
                     }
                 }
+                updateHover();
                 if (ev.type == InputEvent::Type::Key) {
                     if (ev.key == InputKey::Escape) {
                         dialogRunning = false;
@@ -415,7 +464,10 @@ namespace UI {
                         }
                     } else if (ev.key == InputKey::ArrowLeft || ev.key == InputKey::ArrowRight) {
                         if (focusIdx == 1) {
+                            bool wasOn = (qualityIdx == 1);
                             qualityIdx = 1 - qualityIdx; // Toggle 0/1
+                            qualityToggleState.previousOn = wasOn;
+                            qualityToggleState.lastToggle = std::chrono::steady_clock::now();
                         }
                     }
                 }
@@ -471,6 +523,8 @@ void AssetManagerScreen::showInfoDialog(const ImageAsset& asset) {
 
     bool running = true;
     bool hoverOk = false, hoverClose = false;
+    int mouseX = -1;
+    int mouseY = -1;
     while (running) {
         drawMainUI();
         surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
@@ -488,12 +542,22 @@ void AssetManagerScreen::showInfoDialog(const ImageAsset& asset) {
         int closex = dx + (dw / 2) + 1;
         int btnY = dy + dh - 2;
         auto drawBtn = [&](const std::string& lbl, int x, bool hot){
-            RGBColor fg = hot ? theme.focusFg : theme.title;
-            RGBColor bg = hot ? theme.focusBg : theme.accent;
+            RGBColor baseBg = theme.accent;
+            RGBColor bg = hot ? darken(baseBg, 0.9) : baseBg;
+            RGBColor fg = theme.title;
             surface.drawText(x, btnY, lbl, fg, bg);
         };
         drawBtn(ok, okx, hoverOk);
         drawBtn(close, closex, hoverClose);
+        auto updateHover = [&](){
+            if (mouseX < 0 || mouseY < 0) {
+                hoverOk = hoverClose = false;
+                return;
+            }
+            hoverOk = (mouseX >= okx && mouseX < okx + static_cast<int>(ok.size()) && mouseY == btnY);
+            hoverClose = (mouseX >= closex && mouseX < closex + static_cast<int>(close.size()) && mouseY == btnY);
+        };
+        updateHover();
         painter.present(surface);
 
         auto events = input->pollEvents();
@@ -503,15 +567,16 @@ void AssetManagerScreen::showInfoDialog(const ImageAsset& asset) {
                     running = false; break;
                 }
             } else if (ev.type == InputEvent::Type::Mouse) {
+                mouseX = ev.x;
+                mouseY = ev.y;
                 bool onOk = (ev.x >= okx && ev.x < okx + static_cast<int>(ok.size()) && ev.y == btnY);
                 bool onClose = (ev.x >= closex && ev.x < closex + static_cast<int>(close.size()) && ev.y == btnY);
-                hoverOk = onOk;
-                hoverClose = onClose;
                 if (ev.button == 0 && ev.pressed) {
                     if (onOk || onClose) { running = false; break; }
                 }
             }
         }
+        updateHover();
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
