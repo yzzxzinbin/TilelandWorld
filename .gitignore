@@ -10,3 +10,4 @@ GetStart.md
 Doxyfile
 *.csv
 /cmake
+/src/third_party

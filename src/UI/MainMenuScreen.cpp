@@ -28,7 +28,7 @@ namespace {
 
 MainMenuScreen::MainMenuScreen()
     : surface(96, 32),
-      menu({"Start Game", "Settings", "Quit"}, theme) {
+      menu({"Start Game", "Settings", "Asset Manager", "Quit"}, theme) {
     // 重新应用主题，确保菜单使用已初始化的 theme（成员顺序已调整）。
     menu.setTitle("Tileland World");
     menu.setSubtitle("Click or arrows + Enter · Q exits");
@@ -147,6 +147,7 @@ void MainMenuScreen::handleKey(int key, bool& running, Action& result) {
         selectedIndex = menu.getSelected();
         if (selectedIndex == 0) result = Action::Start;
         else if (selectedIndex == 1) result = Action::Settings;
+        else if (selectedIndex == 2) result = Action::AssetManager;
         else result = Action::Quit;
         running = false;
     } else if (key == 'q' || key == 'Q') {

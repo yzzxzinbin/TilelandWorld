@@ -25,7 +25,8 @@ namespace {
     }
 }
 
-DirectoryBrowserScreen::DirectoryBrowserScreen(std::string initialPath)
+DirectoryBrowserScreen::DirectoryBrowserScreen(std::string initialPath, bool showFiles, std::string extensionFilter)
+    : showFilesMode(showFiles), extensionFilter(extensionFilter)
 {
     try {
         currentPath = std::filesystem::weakly_canonical(std::filesystem::path(initialPath));
@@ -106,6 +107,7 @@ void DirectoryBrowserScreen::refreshEntries()
     }
 
     std::vector<Entry> dirs;
+    std::vector<Entry> files;
     for (const auto& entry : std::filesystem::directory_iterator(currentPath))
     {
         if (entry.is_directory())
@@ -116,10 +118,22 @@ void DirectoryBrowserScreen::refreshEntries()
             e.isDir = true;
             dirs.push_back(std::move(e));
         }
+        else if (showFilesMode && entry.is_regular_file())
+        {
+            if (extensionFilter.empty() || entry.path().extension() == extensionFilter) {
+                Entry e;
+                e.name = entry.path().filename().string();
+                e.fullPath = entry.path();
+                e.isDir = false;
+                files.push_back(std::move(e));
+            }
+        }
     }
     std::sort(dirs.begin(), dirs.end(), [](const Entry& a, const Entry& b){ return a.name < b.name; });
+    std::sort(files.begin(), files.end(), [](const Entry& a, const Entry& b){ return a.name < b.name; });
 
     entries.insert(entries.end(), dirs.begin(), dirs.end());
+    entries.insert(entries.end(), files.begin(), files.end());
     clampSelection();
 }
 
@@ -249,12 +263,17 @@ void DirectoryBrowserScreen::handleKey(int ch, bool& running, std::string& resul
                 result = currentPath.string();
                 running = false;
             }
-            else
+            else if (entries[selected].isDir)
             {
                 currentPath = entries[selected].fullPath;
                 selected = 0;
                 scrollOffset = 0;
                 refreshEntries();
+            }
+            else if (showFilesMode)
+            {
+                result = entries[selected].fullPath.string();
+                running = false;
             }
         }
     }

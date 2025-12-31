@@ -23,6 +23,7 @@ namespace TilelandWorld {
         ArrowRight,
         Enter,
         Escape,
+        Tab,
         Character
     };
 

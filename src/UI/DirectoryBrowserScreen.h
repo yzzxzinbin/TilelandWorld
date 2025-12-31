@@ -13,8 +13,8 @@ namespace UI {
 
 class DirectoryBrowserScreen {
 public:
-    explicit DirectoryBrowserScreen(std::string initialPath);
-    // 返回选中的目录；若用户取消则返回空字符串
+    explicit DirectoryBrowserScreen(std::string initialPath, bool showFiles = false, std::string extensionFilter = "");
+    // 返回选中的目录或文件；若用户取消则返回空字符串
     std::string show();
 
 private:
@@ -28,6 +28,9 @@ private:
     std::vector<Entry> entries;
     size_t selected{0};
     int scrollOffset{0};
+    
+    bool showFilesMode{false};
+    std::string extensionFilter; // e.g. ".bmp"
 
     TuiSurface surface;
     TuiPainter painter;

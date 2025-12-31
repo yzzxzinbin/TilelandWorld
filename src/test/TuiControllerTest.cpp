@@ -5,6 +5,7 @@
 #include "../UI/MainMenuScreen.h"
 #include "../UI/SettingsScreen.h"
 #include "../UI/SaveManagerScreen.h"
+#include "../UI/AssetManagerScreen.h"
 #include "../BinaryFileInfrastructure/MapSerializer.h"
 #include "../Settings.h"
 #include <iostream>
@@ -77,6 +78,11 @@ int main() {
                 LOG_INFO("User exited from main menu.");
                 Logger::getInstance().shutdown();
                 return 0;
+            }
+            if (action == TilelandWorld::UI::MainMenuScreen::Action::AssetManager) {
+                TilelandWorld::UI::AssetManagerScreen assetScreen;
+                assetScreen.show();
+                continue;
             }
             if (action == TilelandWorld::UI::MainMenuScreen::Action::Settings) {
                 TilelandWorld::UI::SettingsScreen settingsScreen(settings);

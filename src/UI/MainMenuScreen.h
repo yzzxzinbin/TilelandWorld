@@ -13,7 +13,7 @@ class MainMenuScreen {
 public:
     MainMenuScreen();
 
-    enum class Action { Start, Settings, Quit };
+    enum class Action { Start, Settings, AssetManager, Quit };
 
     // 显示主菜单，返回用户选择
     Action show();

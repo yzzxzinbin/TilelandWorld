@@ -128,6 +128,11 @@ namespace TilelandWorld {
                 buffer.erase(0, 1);
                 continue;
             }
+            if (c == '\t') {
+                emitKey(InputKey::Tab);
+                buffer.erase(0, 1);
+                continue;
+            }
             if (c == 0x7F || c == 0x08) {
                 emitKey(InputKey::Character, '\b');
                 buffer.erase(0, 1);
