@@ -89,14 +89,14 @@ void YuiEditorScreen::renderFrame() {
     surface.clear(theme.itemFg, theme.background, " ");
     surface.fillRect(0, 0, surface.getWidth(), 1, theme.accent, theme.accent, " ");
     surface.fillRect(0, surface.getHeight() - 1, surface.getWidth(), 1, theme.accent, theme.accent, " ");
-    surface.drawText(2, 1, "Unicode Image Editor - " + assetName + " | Q: save & back", {0,0,0}, theme.accent);
+    surface.drawText(2, 1, "Unicode Image Editor - " + assetName, {0,0,0}, theme.accent);
     drawToolbar();
 
     propPanelW = hasSelection ? 28 : 0;
     canvasX = 2;
-    canvasY = 5;
+    canvasY = 3;
     canvasW = std::max(10, surface.getWidth() - canvasX - 2 - propPanelW);
-    canvasH = std::max(6, surface.getHeight() - canvasY - 3);
+    canvasH = std::max(6, surface.getHeight() - canvasY - 1);
 
     surface.fillRect(canvasX, canvasY, canvasW, canvasH, theme.itemFg, theme.panel, " ");
     surface.drawFrame(canvasX, canvasY, canvasW, canvasH, kFrame, theme.itemFg, theme.panel);
@@ -108,8 +108,10 @@ void YuiEditorScreen::renderFrame() {
     }
 }
 
+static constexpr int kToolbarY = 2;
+
 void YuiEditorScreen::drawToolbar() {
-    int y = 3;
+    int y = kToolbarY;
     std::string hand = activeTool == Tool::Hand ? "[ Hand ]" : "  Hand  ";
     std::string prop = activeTool == Tool::Property ? "[ Property ]" : "  Property  ";
     int x = 2;
@@ -121,7 +123,7 @@ void YuiEditorScreen::drawToolbar() {
     };
     drawBtn(hand, activeTool == Tool::Hand);
     drawBtn(prop, activeTool == Tool::Property);
-    surface.drawText(x, y, "Space: toggle tool | Mouse wheel: scroll | Drag (hand): pan", theme.hintFg, theme.background);
+    surface.drawText(x, y, "Space: toggle tool | Mouse wheel: scroll | Drag (hand): pan | Q: save & back", theme.hintFg, theme.background);
 }
 
 void YuiEditorScreen::drawCanvas() {
@@ -226,6 +228,29 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     int my = ev.y;
     hoverHThumb = false;
     hoverVThumb = false;
+    // Toolbar button hit-test
+    if (my == kToolbarY) {
+        int x = 2;
+        std::string handLabel = activeTool == Tool::Hand ? "[ Hand ]" : "  Hand  ";
+        std::string propLabel = activeTool == Tool::Property ? "[ Property ]" : "  Property  ";
+        int handStart = x;
+        int handEnd = handStart + static_cast<int>(handLabel.size());
+        x = handEnd + 2;
+        int propStart = x;
+        int propEnd = propStart + static_cast<int>(propLabel.size());
+
+        if (ev.button == 0 && ev.pressed) {
+            if (mx >= handStart && mx < handEnd) {
+                activeTool = Tool::Hand;
+                dragging = false;
+            } else if (mx >= propStart && mx < propEnd) {
+                activeTool = Tool::Property;
+                dragging = false;
+            }
+        }
+        // Do not treat toolbar clicks as canvas interactions
+        if (ev.button == 0 && ev.pressed) return;
+    }
     if (isInsideCanvas(mx, my)) {
         int localX = mx - (canvasX + 1);
         int localY = my - (canvasY + 1);
@@ -436,10 +461,10 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
     TuiUtils::rgbToHsv(initial, h, s, v);
     bool running = true;
     bool accepted = false;
-    const int boxW = 78;
-    const int boxH = 28;
-    const int svW = 54;
-    const int svH = 22;
+    const int svW = 64;
+    const int svH = 28;
+    const int boxW = svW + 16; // room for hue bar + padding
+    const int boxH = svH + 8;  // header + preview/RGB/hint lines
     while (running) {
         renderFrame();
 
@@ -478,12 +503,15 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
         surface.fillRect(hueX, hueMarkY, hueW, 1, {255,255,255}, {0,0,0}, " ");
 
         RGBColor preview = TuiUtils::hsvToRgb(h, s, v);
-        surface.drawText(dx + 2, dy + svH + 4, "Preview", theme.itemFg, theme.panel);
-        surface.fillRect(dx + 2, dy + svH + 5, boxW - 4, 1, preview, preview, " ");
+        int previewY = dy + svH + 4;
+        surface.drawText(dx + 2, previewY, "Preview", theme.itemFg, theme.panel);
+        int swatchX = dx + 12;
+        int swatchW = boxW - (swatchX - dx) - 2;
+        surface.fillRect(swatchX, previewY, swatchW, 1, preview, preview, " ");
         std::ostringstream rgbss;
         rgbss << "RGB: " << (int)preview.r << "," << (int)preview.g << "," << (int)preview.b;
-        surface.drawText(dx + 2, dy + svH + 6, rgbss.str(), theme.itemFg, theme.panel);
-        surface.drawText(dx + 2, dy + svH + 8, "Click square: S/V | Click bar: H | Wheel: H | Enter: OK | Esc: cancel", theme.hintFg, theme.panel);
+        surface.drawText(dx + 2, dy + svH + 5, rgbss.str(), theme.itemFg, theme.panel);
+        surface.drawText(dx + 2, dy + svH + 6, "Click square: S/V | Click bar: H | Wheel: H | Enter: OK | Q: cancel", theme.hintFg, theme.panel);
 
         painter.present(surface, true, 1, 1);
 
@@ -494,8 +522,8 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
         }
         for (const auto& ev : events) {
             if (ev.type == InputEvent::Type::Key) {
-                if (ev.key == InputKey::Escape) { running = false; break; }
                 if (ev.key == InputKey::Enter) { accepted = true; running = false; break; }
+                if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) { running = false; break; }
             } else if (ev.type == InputEvent::Type::Mouse) {
                 if (ev.button == 0 && ev.pressed) {
                     if (ev.x >= svX && ev.x < svX + svW && ev.y >= svY && ev.y < svY + svH) {
@@ -521,17 +549,44 @@ bool YuiEditorScreen::openGlyphDialog(const std::string& initial, std::string& o
     std::string glyph = initial.empty() ? " " : initial;
     bool running = true;
     bool accepted = false;
+    const std::vector<std::string> presets = {
+        // Horizontal 1/8 blocks
+        "▁","▂","▃","▄","▅","▆","▇","█",
+        // Vertical 1/8 blocks
+        "▏","▎","▍","▌","▋","▊","▉","█",
+        // Quadrant blocks (six)
+        "▘","▝","▖","▗","▚","▞"
+    };
+    const int cols = 8;
+    const int cellW = 3;
+    const int slotW = cellW + 1;
+    int rows = static_cast<int>((presets.size() + cols - 1) / cols);
+    int gridW = cols * slotW - 1;
+    int boxW = std::max(48, gridW + 4);
+    int boxH = 8 + rows; // title + presets + custom + hint
     while (running) {
         renderFrame();
-        int boxW = 30;
-        int boxH = 8;
         int dx = (surface.getWidth() - boxW) / 2;
         int dy = (surface.getHeight() - boxH) / 2;
         surface.drawFrame(dx, dy, boxW, boxH, kFrame, theme.itemFg, theme.panel);
         surface.fillRect(dx + 1, dy + 1, boxW - 2, 1, theme.title, theme.background, " ");
         surface.drawText(dx + 2, dy + 1, "Edit Glyph", theme.title, theme.background);
-        surface.drawText(dx + 2, dy + 3, "Current: [" + glyph + "]", theme.itemFg, theme.panel);
-        surface.drawText(dx + 2, dy + 5, "Type a character | Enter: OK | Esc: cancel | Backspace: clear", theme.hintFg, theme.panel);
+        surface.drawText(dx + 2, dy + 3, "Presets (click to select):", theme.itemFg, theme.panel);
+
+        int gx = dx + 2;
+        int gy = dy + 4;
+        for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
+            int cx = gx + (i % cols) * slotW;
+            int cy = gy + (i / cols);
+            bool isCur = (glyph == presets[i]);
+            RGBColor fg = isCur ? theme.background : theme.itemFg;
+            RGBColor bg = isCur ? theme.title : theme.panel;
+            surface.drawText(cx, cy, " " + presets[i] + " ", fg, bg);
+        }
+
+        int customY = gy + rows + 1;
+        surface.drawText(dx + 2, customY, "Custom: [" + glyph + "]", theme.itemFg, theme.panel);
+        surface.drawText(dx + 2, customY + 1, "Enter: OK | Esc/Q: cancel", theme.hintFg, theme.panel);
 
         painter.present(surface, true, 1, 1);
 
@@ -543,6 +598,7 @@ bool YuiEditorScreen::openGlyphDialog(const std::string& initial, std::string& o
         for (const auto& ev : events) {
             if (ev.type == InputEvent::Type::Key) {
                 if (ev.key == InputKey::Escape) { running = false; break; }
+                if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) { running = false; break; }
                 if (ev.key == InputKey::Enter) { accepted = true; running = false; break; }
                 if (ev.key == InputKey::Character) {
                     if (ev.ch == '\b') {
@@ -553,8 +609,21 @@ bool YuiEditorScreen::openGlyphDialog(const std::string& initial, std::string& o
                     }
                 }
             } else if (ev.type == InputEvent::Type::Mouse) {
-                // Simple click anywhere just keeps focus; no-op
-                (void)ev;
+                if (ev.button == 0 && ev.pressed) {
+                    int gx0 = dx + 2;
+                    int gy0 = dy + 4;
+                    int gridH = rows;
+                    if (ev.x >= gx0 && ev.x < gx0 + gridW && ev.y >= gy0 && ev.y < gy0 + gridH) {
+                        int col = (ev.x - gx0) / slotW;
+                        int row = (ev.y - gy0);
+                        if (col >= 0 && col < cols && row >= 0 && row < rows) {
+                            int idx = row * cols + col;
+                            if (idx >= 0 && idx < static_cast<int>(presets.size())) {
+                                glyph = presets[static_cast<size_t>(idx)];
+                            }
+                        }
+                    }
+                }
             }
         }
     }
