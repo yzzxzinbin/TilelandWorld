@@ -3,6 +3,7 @@
 #include "ImageConverter.h"
 #include <filesystem>
 #include <algorithm>
+#include <system_error>
 
 namespace fs = std::filesystem;
 
@@ -47,6 +48,22 @@ namespace TilelandWorld {
             return fs::remove(p);
         }
         return false;
+    }
+
+    bool AssetManager::renameAsset(const std::string& oldName, const std::string& newName) {
+        if (oldName.empty() || newName.empty()) return false;
+        if (oldName == newName) return true;
+
+        fs::path oldPath = fs::path(rootDir) / (oldName + ".tlimg");
+        fs::path newPath = fs::path(rootDir) / (newName + ".tlimg");
+
+        if (!fs::exists(oldPath) || fs::exists(newPath)) {
+            return false;
+        }
+
+        std::error_code ec;
+        fs::rename(oldPath, newPath, ec);
+        return !ec;
     }
 
     ImageAsset AssetManager::loadAsset(const std::string& assetName) const {

@@ -228,9 +228,16 @@ void YuiEditorScreen::drawPropertyPanel() {
     int btnY = y + h - 2;
     int okX = x + 2;
     int cancelX = x + w - 2 - static_cast<int>(cancelLabel.size());
+    RGBColor cancelHoverBg{255, 192, 203};
     auto paintBtn = [&](int bx, const std::string& label, bool hover){
+        bool isCancel = (label == cancelLabel);
         RGBColor fg = hover ? theme.background : theme.itemFg;
-        RGBColor bg = hover ? theme.focusBg : theme.panel;
+        RGBColor bg;
+        if (hover && isCancel) {
+            bg = cancelHoverBg;
+        } else {
+            bg = hover ? theme.focusBg : theme.panel;
+        }
         surface.drawText(bx, btnY, label, fg, bg);
     };
     paintBtn(okX, okLabel, hoverConfirm);

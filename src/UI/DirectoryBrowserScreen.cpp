@@ -167,7 +167,7 @@ void DirectoryBrowserScreen::renderFrame()
     surface.fillRect(0, 0, surface.getWidth(), 1, theme.accent, theme.accent, " ");
     surface.fillRect(0, surface.getHeight() - 1, surface.getWidth(), 1, theme.accent, theme.accent, " ");
 
-    std::string title = "Choose Save Directory";
+    std::string title = showFilesMode ? "Choose File" : "Choose Save Directory";
     surface.drawCenteredText(0, 1, surface.getWidth(), title, theme.title, theme.background);
     surface.drawCenteredText(0, 2, surface.getWidth(), currentPath.string(), theme.subtitle, theme.background);
 

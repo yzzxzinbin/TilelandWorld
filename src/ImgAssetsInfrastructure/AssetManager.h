@@ -29,6 +29,9 @@ namespace TilelandWorld {
         // Delete an asset file
         bool deleteAsset(const std::string& assetName);
 
+        // Rename an existing asset file (stem only, without extension)
+        bool renameAsset(const std::string& oldName, const std::string& newName);
+
         // Load an asset by name
         ImageAsset loadAsset(const std::string& assetName) const;
 

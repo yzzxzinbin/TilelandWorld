@@ -28,7 +28,14 @@ private:
     TaskSystem taskSystem;
 
     std::vector<AssetManager::FileEntry> assets;
-    int selectedIndex = 0;
+    std::vector<int> filteredIndices;
+    int selectedIndex = 0; // Index within filteredIndices
+    int listScrollOffset = 0;
+
+    // Search filter
+    std::string searchQuery;
+    bool searchFocused{false};
+    bool searchHover{false};
     
     // Preview
     ImageAsset currentPreview;
@@ -40,17 +47,24 @@ private:
 
     // Layout cache for mouse hit-testing
     int listX{0}, listY{0}, listW{0}, listH{0};
-    int buttonOpenX{0}, buttonDeleteX{0}, buttonInfoX{0};
+    int searchFieldX{0}, searchFieldY{0}, searchFieldW{0};
+    int buttonOpenX{0}, buttonRenameX{0}, buttonDeleteX{0}, buttonInfoX{0};
 
-    enum class HoverButton { None, Open, Delete, Info };
+    enum class HoverButton { None, Open, Rename, Delete, Info };
     int hoverRow{-1};
     HoverButton hoverButton{HoverButton::None};
 
-    void refreshList();
+    void refreshList(const std::string& preferredSelection = "");
+    void applyFilter(const std::string& preferredSelection = "");
+    std::string getSelectedAssetName() const;
+    static bool isValidAssetName(const std::string& name);
+    void ensureSelectionVisible();
+    bool showRenameDialog(const std::string& currentName, std::string& outName);
     void drawMainUI(); // Renamed from render() to avoid confusion with present()
     void importAsset();
     void deleteCurrentAsset();
     void openInEditor();
+    void renameCurrentAsset();
     void loadPreview();
     
     // Helper to draw the preview in a specific area

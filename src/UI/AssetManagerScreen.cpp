@@ -15,6 +15,7 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <cctype>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -22,8 +23,9 @@
 
 namespace {
     const std::string kOpenBtnLabel = "[Open]";
-    const std::string kDeleteBtnLabel = "[Delete]";
-    const std::string kInfoBtnLabel = "[Info]";
+    const std::string kRenameBtnLabel = "[Re]";
+    const std::string kDeleteBtnLabel = "[Del]";
+    const std::string kInfoBtnLabel = "[Inf]";
 }
 
 namespace TilelandWorld {
@@ -36,6 +38,14 @@ namespace UI {
             static_cast<uint8_t>(std::max(0.0, c.g * f)),
             static_cast<uint8_t>(std::max(0.0, c.b * f))
         };
+    }
+
+    static std::string toLowerCopy(const std::string& s) {
+        std::string out = s;
+        std::transform(out.begin(), out.end(), out.begin(), [](unsigned char ch){
+            return static_cast<char>(std::tolower(ch));
+        });
+        return out;
     }
 
     AssetManagerScreen::AssetManagerScreen() 
@@ -61,38 +71,53 @@ namespace UI {
             auto events = input->pollEvents();
             for (const auto& ev : events) {
                 if (ev.type == InputEvent::Type::Mouse) {
-                    if (!assets.empty() && ev.wheel != 0) {
+                    int filteredCount = static_cast<int>(filteredIndices.size());
+                    if (filteredCount > 0 && ev.wheel != 0) {
                         int delta = (ev.wheel > 0) ? -1 : 1;
-                        int maxIndex = std::max(0, static_cast<int>(assets.size()) - 1);
+                        int maxIndex = std::max(0, filteredCount - 1);
                         selectedIndex = std::clamp(selectedIndex + delta, 0, maxIndex);
+                        ensureSelectionVisible();
                         loadPreview();
+                    }
+
+                    bool onSearchField = (ev.y == searchFieldY && ev.x >= searchFieldX && ev.x < searchFieldX + searchFieldW);
+                    searchHover = onSearchField;
+                    if (ev.pressed && ev.button == 0) {
+                        searchFocused = onSearchField;
                     }
 
                     bool insideList = (ev.x >= listX && ev.x < listX + listW && ev.y >= listY && ev.y < listY + listH);
                     hoverRow = -1;
                     hoverButton = HoverButton::None;
-                    if (insideList && !assets.empty()) {
-                        int row = ev.y - listY;
-                        if (row >= 0 && row < static_cast<int>(assets.size())) {
+                    if (insideList && filteredCount > 0) {
+                        int row = listScrollOffset + (ev.y - listY);
+                        if (row >= 0 && row < filteredCount) {
                             hoverRow = row;
                             if (row != selectedIndex && ev.move) {
                                 selectedIndex = row;
+                                ensureSelectionVisible();
                                 loadPreview();
                             }
+
                             bool onOpen = ev.x >= buttonOpenX && ev.x < buttonOpenX + static_cast<int>(kOpenBtnLabel.size());
+                            bool onRename = ev.x >= buttonRenameX && ev.x < buttonRenameX + static_cast<int>(kRenameBtnLabel.size());
                             bool onDelete = ev.x >= buttonDeleteX && ev.x < buttonDeleteX + static_cast<int>(kDeleteBtnLabel.size());
                             bool onInfo = ev.x >= buttonInfoX && ev.x < buttonInfoX + static_cast<int>(kInfoBtnLabel.size());
                             if (onOpen) hoverButton = HoverButton::Open;
+                            else if (onRename) hoverButton = HoverButton::Rename;
                             else if (onDelete) hoverButton = HoverButton::Delete;
                             else if (onInfo) hoverButton = HoverButton::Info;
 
                             if (ev.pressed) {
                                 selectedIndex = row;
+                                ensureSelectionVisible();
                                 loadPreview();
                                 if (onDelete) {
                                     deleteCurrentAsset();
                                 } else if (onOpen) {
                                     openInEditor();
+                                } else if (onRename) {
+                                    renameCurrentAsset();
                                 } else if (onInfo) {
                                     if (!previewLoaded) loadPreview();
                                     if (previewLoaded) showInfoDialog(currentPreview);
@@ -104,19 +129,42 @@ namespace UI {
                         hoverRow = -1;
                     }
                 } else if (ev.type == InputEvent::Type::Key) {
+                    if (searchFocused) {
+                        if (ev.key == InputKey::Character && ev.ch == '\b') {
+                            if (!searchQuery.empty()) {
+                                searchQuery.pop_back();
+                                std::string prevName = getSelectedAssetName();
+                                applyFilter(prevName);
+                            }
+                            continue;
+                        } else if (ev.key == InputKey::Character && std::isprint(static_cast<unsigned char>(ev.ch))) {
+                            searchQuery.push_back(ev.ch);
+                            std::string prevName = getSelectedAssetName();
+                            applyFilter(prevName);
+                            continue;
+                        } else if (ev.key == InputKey::Enter) {
+                            searchFocused = false;
+                            continue;
+                        }
+                    }
+
                     if (ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
                         running = false;
                     } else if (ev.key == InputKey::ArrowUp) {
                         if (selectedIndex > 0) selectedIndex--;
+                        ensureSelectionVisible();
                         loadPreview();
                     } else if (ev.key == InputKey::ArrowDown) {
-                        if (selectedIndex < static_cast<int>(assets.size()) - 1) selectedIndex++;
+                        if (selectedIndex < static_cast<int>(filteredIndices.size()) - 1) selectedIndex++;
+                        ensureSelectionVisible();
                         loadPreview();
                     } else if (ev.key == InputKey::Character) {
                         if (ev.ch == 'i' || ev.ch == 'I') {
                             importAsset();
                         } else if (ev.ch == 'd' || ev.ch == 'D') {
                             deleteCurrentAsset();
+                        } else if (ev.ch == 'r' || ev.ch == 'R') {
+                            renameCurrentAsset();
                         }
                     }
                 }
@@ -129,22 +177,100 @@ namespace UI {
         std::cout << "\x1b[?25h"; // Show cursor
     }
 
-    void AssetManagerScreen::refreshList() {
+    void AssetManagerScreen::refreshList(const std::string& preferredSelection) {
+        std::string desired = preferredSelection.empty() ? getSelectedAssetName() : preferredSelection;
         assets = manager.listAssets();
-        if (selectedIndex >= static_cast<int>(assets.size())) {
-            selectedIndex = std::max(0, static_cast<int>(assets.size()) - 1);
+        applyFilter(desired);
+    }
+
+    void AssetManagerScreen::applyFilter(const std::string& preferredSelection) {
+        filteredIndices.clear();
+        std::string needle = toLowerCopy(searchQuery);
+
+        for (size_t i = 0; i < assets.size(); ++i) {
+            std::string hay = toLowerCopy(assets[i].name);
+            if (needle.empty() || hay.find(needle) != std::string::npos) {
+                filteredIndices.push_back(static_cast<int>(i));
+            }
         }
+
+        if (filteredIndices.empty()) {
+            selectedIndex = 0;
+            previewLoaded = false;
+            lastPreviewName.clear();
+            hoverRow = -1;
+            hoverButton = HoverButton::None;
+            listScrollOffset = 0;
+            return;
+        }
+
+        hoverRow = -1;
+        hoverButton = HoverButton::None;
+        listScrollOffset = 0;
+
+        if (!preferredSelection.empty()) {
+            for (size_t i = 0; i < filteredIndices.size(); ++i) {
+                if (assets[filteredIndices[i]].name == preferredSelection) {
+                    selectedIndex = static_cast<int>(i);
+                    loadPreview();
+                    ensureSelectionVisible();
+                    return;
+                }
+            }
+        }
+
+        selectedIndex = std::clamp(selectedIndex, 0, static_cast<int>(filteredIndices.size()) - 1);
+        ensureSelectionVisible();
         loadPreview();
     }
 
+    void AssetManagerScreen::ensureSelectionVisible() {
+        int total = static_cast<int>(filteredIndices.size());
+        selectedIndex = std::clamp(selectedIndex, 0, std::max(0, total - 1));
+        int visible = std::max(1, listH);
+        int maxOffset = std::max(0, total - visible);
+        listScrollOffset = std::clamp(listScrollOffset, 0, maxOffset);
+        if (selectedIndex < listScrollOffset) {
+            listScrollOffset = selectedIndex;
+        } else if (selectedIndex >= listScrollOffset + visible) {
+            listScrollOffset = selectedIndex - visible + 1;
+            listScrollOffset = std::clamp(listScrollOffset, 0, maxOffset);
+        }
+    }
+
+    std::string AssetManagerScreen::getSelectedAssetName() const {
+        if (selectedIndex < 0 || selectedIndex >= static_cast<int>(filteredIndices.size())) return "";
+        int assetIdx = filteredIndices[selectedIndex];
+        if (assetIdx < 0 || assetIdx >= static_cast<int>(assets.size())) return "";
+        return assets[assetIdx].name;
+    }
+
+    bool AssetManagerScreen::isValidAssetName(const std::string& name) {
+        if (name.empty()) return false;
+        for (char ch : name) {
+            if (!(std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '-')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     void AssetManagerScreen::loadPreview() {
-        if (assets.empty() || selectedIndex < 0 || selectedIndex >= static_cast<int>(assets.size())) {
+        if (filteredIndices.empty() || selectedIndex < 0 || selectedIndex >= static_cast<int>(filteredIndices.size())) {
             previewLoaded = false;
+            lastPreviewName.clear();
             return;
         }
         
-        const auto& entry = assets[selectedIndex];
-        if (entry.name != lastPreviewName) {
+        int assetIdx = filteredIndices[selectedIndex];
+        if (assetIdx < 0 || assetIdx >= static_cast<int>(assets.size())) {
+            previewLoaded = false;
+            lastPreviewName.clear();
+            return;
+        }
+        
+        const auto& entry = assets[assetIdx];
+        if (!previewLoaded || entry.name != lastPreviewName) {
             currentPreview = manager.loadAsset(entry.name);
             lastPreviewName = entry.name;
             previewLoaded = true;
@@ -174,19 +300,36 @@ namespace UI {
     }
 
     void AssetManagerScreen::deleteCurrentAsset() {
-        if (assets.empty() || selectedIndex < 0) return;
-        manager.deleteAsset(assets[selectedIndex].name);
+        std::string name = getSelectedAssetName();
+        if (name.empty()) return;
+        manager.deleteAsset(name);
         refreshList();
     }
 
+    void AssetManagerScreen::renameCurrentAsset() {
+        std::string currentName = getSelectedAssetName();
+        if (currentName.empty()) return;
+
+        std::string newName;
+        if (!showRenameDialog(currentName, newName)) return;
+        if (newName == currentName) return;
+
+        if (!manager.renameAsset(currentName, newName)) {
+            refreshList(currentName);
+            return;
+        }
+
+        refreshList(newName);
+    }
+
     void AssetManagerScreen::openInEditor() {
-        if (assets.empty() || selectedIndex < 0 || selectedIndex >= static_cast<int>(assets.size())) return;
+        std::string name = getSelectedAssetName();
+        if (name.empty()) return;
         input->stop();
-        std::string name = assets[static_cast<size_t>(selectedIndex)].name;
         ImageAsset asset = manager.loadAsset(name);
         YuiEditorScreen editor(manager, name, asset);
         editor.show();
-        refreshList();
+        refreshList(name);
         // Recreate input controller to avoid any lingering console mode state
         input.reset(); // ensure the previous controller restores before enabling a new one
         input = std::make_unique<InputController>();
@@ -218,8 +361,7 @@ namespace UI {
         surface.fillRect(0, h - 1, w, 1, theme.title, theme.accent, " ");
         surface.drawText(2, 1, "Image Assets", {0, 0, 0}, theme.accent);
         surface.drawText(w - 18, 1, "Tileland World", {0, 0, 0}, theme.accent);
-        surface.drawText(2, 3, "Up/Down: select | I: import | D: delete | Esc: back", theme.hintFg, theme.background);
-        surface.drawText(2, h - 1, "[I] Import  [D] Delete  [Esc] Back", theme.hintFg, theme.accent);
+        surface.drawText(2, 3, "Up/Down: select | I: import | R: rename | D: delete | Esc: back", theme.hintFg, theme.background);
 
         // Layout
         int padding = 2;
@@ -242,46 +384,88 @@ namespace UI {
         int listInnerW = std::max(0, listWOuter - 2);
         int listInnerH = std::max(0, contentH - 4);
 
-        listX = listInnerX;
-        listY = listInnerY;
-        listW = listInnerW;
-        listH = listInnerH;
+        // Search row
+        std::string searchLabel = "Search:";
+        surface.fillRect(listInnerX, listInnerY, listInnerW, 1, theme.itemFg, theme.panel, " ");
+        surface.drawText(listInnerX + 1, listInnerY, searchLabel, theme.itemFg, theme.panel);
+        searchFieldX = listInnerX + 2 + static_cast<int>(searchLabel.size());
+        searchFieldY = listInnerY;
+        searchFieldW = std::max(10, listInnerW - (searchFieldX - listInnerX) - 1);
+        RGBColor fieldFg = theme.focusFg;
+        RGBColor fieldBg = theme.focusBg;
+        surface.fillRect(searchFieldX, searchFieldY, searchFieldW, 1, fieldFg, fieldBg, " ");
+        std::string displayQuery = searchQuery;
+        int maxSearchChars = std::max(0, searchFieldW - 2);
+        if (static_cast<int>(displayQuery.size()) > maxSearchChars) {
+            displayQuery = displayQuery.substr(displayQuery.size() - maxSearchChars);
+        }
+        RGBColor drawFg = fieldFg;
+        bool showCaret = searchFocused || searchHover;
+        if (showCaret) {
+            displayQuery.push_back('|');
+        } else if (displayQuery.empty()) {
+            displayQuery = "type to filter";
+            drawFg = theme.hintFg;
+        }
+        if (static_cast<int>(displayQuery.size()) > maxSearchChars) {
+            displayQuery = displayQuery.substr(displayQuery.size() - maxSearchChars);
+        }
+        surface.drawText(searchFieldX + 1, searchFieldY, displayQuery, drawFg, fieldBg);
 
-        int buttonsWidth = static_cast<int>(kOpenBtnLabel.size() + 1 + kDeleteBtnLabel.size() + 1 + kInfoBtnLabel.size());
+        int rowsStartY = listInnerY + 2;
+        listX = listInnerX;
+        listY = rowsStartY;
+        listW = listInnerW;
+        listH = std::max(0, listInnerH - 2);
+        ensureSelectionVisible();
+
+        int buttonsWidth = static_cast<int>(kOpenBtnLabel.size() + 1 + kRenameBtnLabel.size() + 1 + kDeleteBtnLabel.size() + 1 + kInfoBtnLabel.size());
         int buttonsStart = std::max(listInnerX + 4, listInnerX + listInnerW - buttonsWidth);
         buttonOpenX = buttonsStart;
-        buttonDeleteX = buttonOpenX + static_cast<int>(kOpenBtnLabel.size()) + 1;
+        buttonRenameX = buttonOpenX + static_cast<int>(kOpenBtnLabel.size()) + 1;
+        buttonDeleteX = buttonRenameX + static_cast<int>(kRenameBtnLabel.size()) + 1;
         buttonInfoX = buttonDeleteX + static_cast<int>(kDeleteBtnLabel.size()) + 1;
 
         RGBColor white{255,255,255};
         RGBColor black{0,0,0};
-        for (int i = 0; i < static_cast<int>(assets.size()) && i < listInnerH; ++i) {
-            int rowY = listInnerY + i;
-            bool focused = (i == selectedIndex);
+        int totalRows = static_cast<int>(filteredIndices.size());
+        int visibleRows = std::min(totalRows, listH);
+        int start = std::min(listScrollOffset, std::max(0, totalRows - visibleRows));
+        for (int i = 0; i < visibleRows; ++i) {
+            int rowIndex = start + i;
+            int rowY = listY + i;
+            bool focused = (rowIndex == selectedIndex);
             RGBColor fg = focused ? black : theme.itemFg;
             RGBColor bg = focused ? white : theme.panel;
             surface.fillRect(listInnerX, rowY, listInnerW, 1, fg, bg, " ");
 
+            int assetIdx = filteredIndices[rowIndex];
             int textLimit = std::max(0, buttonOpenX - (listInnerX + 1) - 1);
-            std::string name = assets[i].name;
+            std::string name = assets[assetIdx].name;
             name = TuiUtils::trimToUtf8VisualWidth(name, static_cast<size_t>(std::max(0, textLimit)));
             surface.drawText(listInnerX + 1, rowY, name, fg, bg);
 
             if (focused) {
                 auto btnColor = [&](HoverButton hb) {
-                    bool hot = (hoverRow == i && hoverButton == hb);
+                    bool hot = (hoverRow == rowIndex && hoverButton == hb);
                     RGBColor baseBg = theme.accent;
                     RGBColor bbg = hot ? darken(baseBg, 0.6) : baseBg;
                     RGBColor bfg = hot ? RGBColor{255,255,255} : theme.title;
                     return std::make_pair(bfg, bbg);
                 };
                 auto [fgOpen, bgOpen] = btnColor(HoverButton::Open);
+                auto [fgRename, bgRename] = btnColor(HoverButton::Rename);
                 auto [fgDel, bgDel] = btnColor(HoverButton::Delete);
                 auto [fgInfo, bgInfo] = btnColor(HoverButton::Info);
                 surface.drawText(buttonOpenX, rowY, kOpenBtnLabel, fgOpen, bgOpen);
+                surface.drawText(buttonRenameX, rowY, kRenameBtnLabel, fgRename, bgRename);
                 surface.drawText(buttonDeleteX, rowY, kDeleteBtnLabel, fgDel, bgDel);
                 surface.drawText(buttonInfoX, rowY, kInfoBtnLabel, fgInfo, bgInfo);
             }
+        }
+
+        if (visibleRows == 0) {
+            surface.drawText(listInnerX + 1, listY, searchQuery.empty() ? "No assets found" : "No assets match filter", theme.hintFg, theme.panel);
         }
 
         // Preview panel
@@ -293,8 +477,142 @@ namespace UI {
         if (previewLoaded) {
             drawPreview(prevX + 2, contentY + 3, prevW - 4, contentH - 5);
         } else {
-            surface.drawText(prevX + 2, contentY + 3, "No preview available", theme.hintFg, theme.panel);
+            std::string previewMsg = filteredIndices.empty() ? "No assets to preview" : "No preview available";
+            surface.drawText(prevX + 2, contentY + 3, previewMsg, theme.hintFg, theme.panel);
         }
+    }
+
+    bool AssetManagerScreen::showRenameDialog(const std::string& currentName, std::string& outName) {
+        outName = currentName;
+        bool running = true;
+        bool confirmed = false;
+        bool hoverOk = false, hoverCancel = false;
+        bool fieldFocused = true;
+        std::string errorMsg;
+        int mouseX = -1, mouseY = -1;
+
+        while (running) {
+            drawMainUI();
+
+            int w = surface.getWidth();
+            int h = surface.getHeight();
+            int dw = 50;
+            int dh = 10;
+            int dx = (w - dw) / 2;
+            int dy = (h - dh) / 2;
+            BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
+
+            surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
+            surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
+            surface.drawText(dx + 2, dy + 1, "Rename Asset", theme.title, theme.background);
+            surface.drawText(dx + 2, dy + 2, "Current: " + currentName, theme.hintFg, theme.panel);
+
+            int fieldX = dx + 2;
+            int fieldY = dy + 4;
+            int fieldW = dw - 4;
+            RGBColor fg = fieldFocused ? theme.focusFg : theme.itemFg;
+            RGBColor bg = fieldFocused ? theme.focusBg : theme.panel;
+            surface.fillRect(fieldX, fieldY, fieldW, 1, fg, bg, " ");
+            std::string displayName = outName;
+            int maxChars = std::max(0, fieldW - 2);
+            if (static_cast<int>(displayName.size()) > maxChars) {
+                displayName = displayName.substr(displayName.size() - maxChars);
+            }
+            if (fieldFocused) displayName.push_back('|');
+            if (static_cast<int>(displayName.size()) > maxChars) {
+                displayName = displayName.substr(displayName.size() - maxChars);
+            }
+            surface.drawText(fieldX + 1, fieldY, displayName, fg, bg);
+
+            if (!errorMsg.empty()) {
+                surface.drawText(dx + 2, fieldY + 2, errorMsg, theme.hintFg, theme.panel);
+            }
+
+            std::string okLbl = "[ OK ]";
+            std::string cancelLbl = "[ Cancel ]";
+            int okX = dx + (dw / 2) - static_cast<int>(okLbl.size()) - 1;
+            int cancelX = dx + (dw / 2) + 1;
+            int btnY = dy + dh - 2;
+            auto drawBtn = [&](const std::string& lbl, int x, bool hot){
+                RGBColor baseBg = theme.accent;
+                RGBColor bgBtn = hot ? darken(baseBg, 0.6) : baseBg;
+                RGBColor fgBtn = hot ? RGBColor{255,255,255} : theme.title;
+                surface.drawText(x, btnY, lbl, fgBtn, bgBtn);
+            };
+            drawBtn(okLbl, okX, hoverOk);
+            drawBtn(cancelLbl, cancelX, hoverCancel);
+
+            auto updateHover = [&]() {
+                if (mouseX < 0 || mouseY < 0) {
+                    hoverOk = hoverCancel = false;
+                    return;
+                }
+                hoverOk = (mouseX >= okX && mouseX < okX + static_cast<int>(okLbl.size()) && mouseY == btnY);
+                hoverCancel = (mouseX >= cancelX && mouseX < cancelX + static_cast<int>(cancelLbl.size()) && mouseY == btnY);
+            };
+            updateHover();
+
+            painter.present(surface);
+
+            auto tryConfirm = [&]() {
+                std::string trimmed = outName;
+                while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.front()))) trimmed.erase(trimmed.begin());
+                while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.back()))) trimmed.pop_back();
+                outName = trimmed;
+
+                if (!isValidAssetName(outName)) {
+                    errorMsg = "Use letters, numbers, - or _";
+                    return;
+                }
+
+                bool nameExists = std::any_of(assets.begin(), assets.end(), [&](const auto& e){
+                    return e.name == outName && e.name != currentName;
+                });
+                if (nameExists) {
+                    errorMsg = "Name already exists";
+                    return;
+                }
+
+                errorMsg.clear();
+                confirmed = true;
+                running = false;
+            };
+
+            auto events = input->pollEvents();
+            for (const auto& ev : events) {
+                if (ev.type == InputEvent::Type::Mouse) {
+                    mouseX = ev.x;
+                    mouseY = ev.y;
+                    bool onField = (ev.y == fieldY && ev.x >= fieldX && ev.x < fieldX + fieldW);
+                    bool onOk = (ev.x >= okX && ev.x < okX + static_cast<int>(okLbl.size()) && ev.y == btnY);
+                    bool onCancel = (ev.x >= cancelX && ev.x < cancelX + static_cast<int>(cancelLbl.size()) && ev.y == btnY);
+                    if (ev.pressed && ev.button == 0) {
+                        fieldFocused = onField;
+                        if (onOk) {
+                            tryConfirm();
+                        } else if (onCancel) {
+                            running = false;
+                        }
+                    }
+                } else if (ev.type == InputEvent::Type::Key) {
+                    if (ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
+                        running = false;
+                    } else if (ev.key == InputKey::Enter) {
+                        tryConfirm();
+                    } else if (ev.key == InputKey::Character && fieldFocused) {
+                        if (ev.ch == '\b') {
+                            if (!outName.empty()) outName.pop_back();
+                        } else if (std::isprint(static_cast<unsigned char>(ev.ch))) {
+                            outName.push_back(ev.ch);
+                        }
+                    }
+                }
+            }
+            updateHover();
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+
+        return confirmed;
     }
 
     void AssetManagerScreen::showImportDialog(const std::string& filePath) {
@@ -426,14 +744,7 @@ namespace UI {
                                     ImageAsset asset = converter.convert(raw, opts, taskSystem);
                                     std::string name = std::filesystem::path(filePath).stem().string();
                                     manager.saveAsset(asset, name);
-                                    refreshList();
-                                    for (size_t idx = 0; idx < assets.size(); ++idx) {
-                                        if (assets[idx].name == name) {
-                                            selectedIndex = static_cast<int>(idx);
-                                            loadPreview();
-                                            break;
-                                        }
-                                    }
+                                    refreshList(name);
                                 }
                             } catch (...) {}
                             dialogRunning = false;
@@ -474,14 +785,7 @@ namespace UI {
                                     
                                     std::string name = std::filesystem::path(filePath).stem().string();
                                     manager.saveAsset(asset, name);
-                                    refreshList();
-                                    for (size_t idx = 0; idx < assets.size(); ++idx) {
-                                        if (assets[idx].name == name) {
-                                            selectedIndex = static_cast<int>(idx);
-                                            loadPreview();
-                                            break;
-                                        }
-                                    }
+                                    refreshList(name);
                                 }
                             } catch (...) {}
                             dialogRunning = false;
