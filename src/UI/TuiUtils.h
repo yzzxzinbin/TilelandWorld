@@ -19,6 +19,9 @@ struct Utf8CharInfo {
 // Decode a single UTF-8 codepoint starting at pos; returns byte length and visual width (does not strip ANSI).
 Utf8CharInfo nextUtf8Char(const std::string& s, size_t pos);
 
+// Encode a single UTF-32 codepoint into a UTF-8 string.
+std::string encodeUtf8(char32_t cp);
+
 // Strip ANSI escape sequences from text.
 std::string stripAnsiEscape(const std::string& s);
 

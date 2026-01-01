@@ -20,26 +20,6 @@ namespace {
             static_cast<uint8_t>(std::max(0.0, c.b * f))
         };
     }
-
-    std::string encodeUtf8(char32_t cp) {
-        std::string out;
-        if (cp <= 0x7F) {
-            out.push_back(static_cast<char>(cp));
-        } else if (cp <= 0x7FF) {
-            out.push_back(static_cast<char>(0xC0 | ((cp >> 6) & 0x1F)));
-            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else if (cp <= 0xFFFF) {
-            out.push_back(static_cast<char>(0xE0 | ((cp >> 12) & 0x0F)));
-            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else if (cp <= 0x10FFFF) {
-            out.push_back(static_cast<char>(0xF0 | ((cp >> 18) & 0x07)));
-            out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        }
-        return out;
-    }
 }
 
 namespace TilelandWorld {
@@ -737,7 +717,7 @@ bool YuiEditorScreen::openGlyphDialog(const std::string& initial, std::string& o
                     if (ev.ch == '\b') {
                         glyph = " ";
                     } else {
-                        std::string enc = encodeUtf8(ev.ch);
+                        std::string enc = TuiUtils::encodeUtf8(ev.ch);
                         if (!enc.empty()) glyph = enc;
                     }
                 }
