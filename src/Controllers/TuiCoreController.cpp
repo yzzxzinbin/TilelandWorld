@@ -46,6 +46,7 @@ namespace TilelandWorld {
         // 视图尺寸与 TPS 从设置读取
         viewWidth = settings.viewWidth;
         viewHeight = settings.viewHeight;
+        refreshAutoViewSize();
         targetTps = settings.targetTps;
     }
 
@@ -67,6 +68,8 @@ namespace TilelandWorld {
     void TuiCoreController::initialize() {
         setupConsole();
         std::cout << "\x1b[?25l" << std::flush;
+
+        refreshAutoViewSize();
 
         if (inputController) inputController->start();
         
@@ -126,6 +129,7 @@ namespace TilelandWorld {
         #endif
 
         while (running) {
+            refreshAutoViewSize();
             #ifdef _WIN32
             LARGE_INTEGER startTick;
             QueryPerformanceCounter(&startTick);
@@ -405,6 +409,13 @@ namespace TilelandWorld {
         });
 
         settingsOverlayItems.push_back(RuntimeSettingItem{
+            "Auto view size",
+            RuntimeSettingItem::Kind::Toggle,
+            [this](int) { settingsOverlayWorking.autoViewSize = !settingsOverlayWorking.autoViewSize; },
+            [this]() { return settingsOverlayWorking.autoViewSize ? "On" : "Off"; }
+        });
+
+        settingsOverlayItems.push_back(RuntimeSettingItem{
             "Renderer API (fmt)",
             RuntimeSettingItem::Kind::Toggle,
             [this](int) { settingsOverlayWorking.useFmtRenderer = !settingsOverlayWorking.useFmtRenderer; },
@@ -498,6 +509,7 @@ namespace TilelandWorld {
         settings = settingsOverlayWorking;
         viewWidth = settings.viewWidth;
         viewHeight = settings.viewHeight;
+        refreshAutoViewSize();
         targetTps = settings.targetTps;
 
         if (renderer) {
@@ -601,5 +613,34 @@ namespace TilelandWorld {
     
     void TuiCoreController::clearScreen() { std::cout << "\x1b[2J\x1b[H" << std::flush; }
     void TuiCoreController::showCursor() { std::cout << "\x1b[?25h" << std::flush; }
+
+    void TuiCoreController::refreshAutoViewSize() {
+        if (!settings.autoViewSize) return;
+#ifdef _WIN32
+        CONSOLE_SCREEN_BUFFER_INFO info;
+        if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) {
+            int consoleWidth = std::max(2, info.srWindow.Right - info.srWindow.Left + 1);
+            int consoleHeight = std::max(1, info.srWindow.Bottom - info.srWindow.Top + 1);
+            int newViewWidth = std::max(8, consoleWidth / 2); // two columns per tile
+            int newViewHeight = std::max(8, consoleHeight);
+            if (newViewWidth != viewWidth || newViewHeight != viewHeight) {
+                viewWidth = newViewWidth;
+                viewHeight = newViewHeight;
+                // Keep persisted settings in sync so turning off auto sizing doesn't jump back
+                settings.viewWidth = viewWidth;
+                settings.viewHeight = viewHeight;
+                if (settingsOverlayActive) {
+                    settingsOverlayWorking.viewWidth = viewWidth;
+                    settingsOverlayWorking.viewHeight = viewHeight;
+                }
+                if (settingsOverlayActive) {
+                    rebuildSettingsOverlay();
+                } else {
+                    rebuildMouseOverlay();
+                }
+            }
+        }
+#endif
+    }
 
 }

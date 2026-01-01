@@ -109,6 +109,7 @@ namespace TilelandWorld {
         void applySettingsWorking();
         void adjustSettingsSelection(int delta);
         void adjustSettingsValue(int dir);
+        void refreshAutoViewSize();
         
         // 2. 预加载逻辑
         void preloadChunks();

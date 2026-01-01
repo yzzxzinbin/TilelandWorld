@@ -32,6 +32,9 @@ struct Settings {
 
     // Assets
     std::string assetDirectory{"res/Assets"};
+    
+    // View sizing
+    bool autoViewSize{false};
 };
 
 class SettingsManager {

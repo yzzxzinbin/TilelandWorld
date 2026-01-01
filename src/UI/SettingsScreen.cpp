@@ -107,6 +107,15 @@ void SettingsScreen::buildItems() {
     });
 
     items.push_back(Item{
+        "Auto view size",
+        ItemType::Toggle,
+        [this](int dir){ (void)dir; working.autoViewSize = !working.autoViewSize; },
+        [this](){ return working.autoViewSize ? "On" : "Off"; },
+        [this](){ return working.autoViewSize; },
+        {}, {},0,0,0,false
+    });
+
+    items.push_back(Item{
         "Renderer API (fmt)",
         ItemType::Toggle,
         [this](int dir){ (void)dir; working.useFmtRenderer = !working.useFmtRenderer; },
