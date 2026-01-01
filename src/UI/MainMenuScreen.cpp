@@ -1,5 +1,6 @@
 #include "MainMenuScreen.h"
 #include "TuiUtils.h"
+#include "UnicodeTableScreen.h"
 #include <algorithm>
 #include <thread>
 #include <vector>
@@ -28,7 +29,7 @@ namespace {
 
 MainMenuScreen::MainMenuScreen()
     : surface(96, 32),
-      menu({"Start Game", "Settings", "Asset Manager", "Quit"}, theme) {
+      menu({"Start Game", "Settings", "Asset Manager", "Unicode Table", "Quit"}, theme) {
     // 重新应用主题，确保菜单使用已初始化的 theme（成员顺序已调整）。
     menu.setTitle("Tileland World");
     menu.setSubtitle("Click or arrows + Enter · Q exits");
@@ -148,6 +149,7 @@ void MainMenuScreen::handleKey(int key, bool& running, Action& result) {
         if (selectedIndex == 0) result = Action::Start;
         else if (selectedIndex == 1) result = Action::Settings;
         else if (selectedIndex == 2) result = Action::AssetManager;
+        else if (selectedIndex == 3) result = Action::UnicodeTable;
         else result = Action::Quit;
         running = false;
     } else if (key == 'q' || key == 'Q') {

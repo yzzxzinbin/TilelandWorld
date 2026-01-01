@@ -6,6 +6,7 @@
 #include "../UI/SettingsScreen.h"
 #include "../UI/SaveManagerScreen.h"
 #include "../UI/AssetManagerScreen.h"
+#include "../UI/UnicodeTableScreen.h"
 #include "../BinaryFileInfrastructure/MapSerializer.h"
 #include "../Settings.h"
 #include <iostream>
@@ -91,6 +92,11 @@ int main() {
                     SettingsManager::save(settings, cfgPath);
                     LOG_INFO("Settings saved.");
                 }
+                continue;
+            }
+            if (action == TilelandWorld::UI::MainMenuScreen::Action::UnicodeTable) {
+                TilelandWorld::UI::UnicodeTableScreen unicodeScreen;
+                unicodeScreen.show();
                 continue;
             }
         }
