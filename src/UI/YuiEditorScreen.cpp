@@ -491,10 +491,51 @@ void YuiEditorScreen::handleKey(const InputEvent& ev, bool& running) {
         return;
     }
 
-    if (ev.key == InputKey::ArrowUp) { scrollY -= 2; clampScroll(); }
-    if (ev.key == InputKey::ArrowDown) { scrollY += 2; clampScroll(); }
-    if (ev.key == InputKey::ArrowLeft) { scrollX -= 2; clampScroll(); }
-    if (ev.key == InputKey::ArrowRight) { scrollX += 2; clampScroll(); }
+    if (activeTool == Tool::Property) {
+        bool moved = false;
+        if (!hasSelection) {
+            int viewW = canvasW - 2;
+            int viewH = canvasH - 2;
+            selX = std::clamp(scrollX + viewW / 2, 0, working.getWidth() - 1);
+            selY = std::clamp(scrollY + viewH / 2, 0, working.getHeight() - 1);
+            hasSelection = true;
+            moved = true;
+        }
+
+        if (ev.key == InputKey::ArrowUp) { selY--; moved = true; }
+        else if (ev.key == InputKey::ArrowDown) { selY++; moved = true; }
+        else if (ev.key == InputKey::ArrowLeft) { selX--; moved = true; }
+        else if (ev.key == InputKey::ArrowRight) { selX++; moved = true; }
+
+        if (moved) {
+            selX = std::clamp(selX, 0, working.getWidth() - 1);
+            selY = std::clamp(selY, 0, working.getHeight() - 1);
+            
+            // Update staged cell
+            originalCell = working.getCell(selX, selY);
+            stagedCell = originalCell;
+            hasStaged = true;
+
+            // Sync hover for the "highlight" effect requested
+            hoverX = selX;
+            hoverY = selY;
+            hoverValid = true;
+
+            // Ensure visible
+            int viewW = canvasW - 2;
+            int viewH = canvasH - 2;
+            if (selX < scrollX) scrollX = selX;
+            else if (selX >= scrollX + viewW) scrollX = selX - viewW + 1;
+            if (selY < scrollY) scrollY = selY;
+            else if (selY >= scrollY + viewH) scrollY = selY - viewH + 1;
+            clampScroll();
+        }
+    } else {
+        if (ev.key == InputKey::ArrowUp) { scrollY -= 2; clampScroll(); }
+        if (ev.key == InputKey::ArrowDown) { scrollY += 2; clampScroll(); }
+        if (ev.key == InputKey::ArrowLeft) { scrollX -= 2; clampScroll(); }
+        if (ev.key == InputKey::ArrowRight) { scrollX += 2; clampScroll(); }
+    }
 }
 
 void YuiEditorScreen::clampScroll() {
@@ -564,7 +605,8 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
             surface.fillRect(hueX, svY + py, hueW, 1, c, c, " ");
         }
         int hueMarkY = svY + static_cast<int>(std::round(h / 360.0 * (svH - 1)));
-        surface.fillRect(hueX, hueMarkY, hueW, 1, {255,255,255}, {0,0,0}, " ");
+        RGBColor curHueColor = TuiUtils::hsvToRgb(h, 1.0, 1.0);
+        surface.drawText(hueX, hueMarkY, " << ", {255,255,255}, curHueColor);
 
         RGBColor preview = TuiUtils::hsvToRgb(h, s, v);
         int previewY = dy + svH + 4;

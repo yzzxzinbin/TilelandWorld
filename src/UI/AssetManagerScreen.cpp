@@ -172,6 +172,8 @@ namespace UI {
                             deleteCurrentAsset();
                         } else if (ev.ch == 'r' || ev.ch == 'R') {
                             renameCurrentAsset();
+                        } else if (ev.ch == 'o' || ev.ch == 'O') {
+                            openInEditor();
                         }
                     }
                 }
