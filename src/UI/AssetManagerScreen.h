@@ -7,6 +7,7 @@
 #include "../ImgAssetsInfrastructure/AdvancedImageConverter.h"
 #include "../Controllers/InputController.h"
 #include "../Utils/TaskSystem.h"
+#include "TextField.h"
 #include <memory>
 
 namespace TilelandWorld {
@@ -35,14 +36,9 @@ private:
     // Delete confirmation preference (per session)
     bool skipDeleteConfirm{false};
 
-    // Caret blink for text fields
-    bool searchCaretOn{true};
-    std::chrono::steady_clock::time_point searchCaretLastToggle{std::chrono::steady_clock::now()};
-
     // Search filter
     std::string searchQuery;
-    bool searchFocused{false};
-    bool searchHover{false};
+    TextFieldState searchState;
     
     // Preview
     ImageAsset currentPreview;

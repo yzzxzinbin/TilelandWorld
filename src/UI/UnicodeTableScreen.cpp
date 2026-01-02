@@ -21,7 +21,7 @@ UnicodeTableScreen::UnicodeTableScreen()
     : surface(100, 40),
       input(std::make_unique<InputController>()) {
     initBlocks();
-    lastCaretToggle = std::chrono::steady_clock::now();
+    searchState.lastCaretToggle = std::chrono::steady_clock::now();
 }
 
 void UnicodeTableScreen::initBlocks() {
@@ -374,11 +374,7 @@ void UnicodeTableScreen::show() {
     std::cout << "\x1b[?25l" << "\x1b[2J\x1b[H" << std::flush;;
 
     while (running) {
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastCaretToggle).count() > 500) {
-            searchCaretOn = !searchCaretOn;
-            lastCaretToggle = now;
-        }
+        searchState.updateCaret();
 
         renderFrame();
         painter.present(surface);
@@ -422,10 +418,16 @@ void UnicodeTableScreen::renderFrame() {
     searchY = 3;
     searchW = 24;
     surface.drawText(searchX, searchY, "Search (Hex): ", theme.itemFg, theme.background);
-    int fieldX = searchX + 14;
-    surface.fillRect(fieldX, searchY, searchW, 1, theme.focusFg, searchFocused ? theme.focusBg : theme.panel, " ");
-    std::string dispSearch = searchQuery + (searchFocused && searchCaretOn ? "|" : "");
-    surface.drawText(fieldX + 1, searchY, dispSearch, theme.focusFg, searchFocused ? theme.focusBg : theme.panel);
+    
+    TextFieldStyle searchStyle;
+    searchStyle.width = searchW;
+    searchStyle.placeholder = "type hex code";
+    searchStyle.focusFg = theme.focusFg;
+    searchStyle.focusBg = theme.focusBg;
+    searchStyle.panelBg = theme.panel;
+    searchStyle.hintFg = theme.hintFg;
+    
+    TextField::render(surface, searchX + 14, searchY, searchQuery, searchState, searchStyle);
 
     // Layout (left block list + right grid)
     int padding = 4;
@@ -594,23 +596,30 @@ void UnicodeTableScreen::setAnchored(int px, int py, const std::string& g, const
 }
 
 void UnicodeTableScreen::handleKey(const InputEvent& ev, bool& running) {
-    if (searchFocused) {
-        if (ev.key == InputKey::Character) {
-            if (ev.ch == '\b') {
-                if (!searchQuery.empty()) searchQuery.pop_back();
-            } else if (std::isxdigit(ev.ch)) {
-                if (searchQuery.size() < 6) searchQuery.push_back(std::toupper(ev.ch));
+    if (searchState.focused) {
+        std::string oldQuery = searchQuery;
+        if (TextField::handleInput(ev, searchQuery, searchState)) {
+            // Post-process: ensure hex and length for Unicode search
+            if (ev.key == InputKey::Character && ev.ch >= 32 && !ev.ctrl) {
+                // Check if the last added character is valid hex
+                if (!searchQuery.empty()) {
+                    char last = searchQuery.back();
+                    if (!std::isxdigit(static_cast<unsigned char>(last)) || searchQuery.size() > 6) {
+                        searchQuery = oldQuery; // Revert if invalid
+                    } else {
+                        searchQuery.back() = std::toupper(static_cast<unsigned char>(last));
+                    }
+                }
             }
-        } else if (ev.key == InputKey::Enter) {
-            if (!searchQuery.empty()) {
+
+            // If enter was pressed, jump to code
+            if (ev.key == InputKey::Enter && !searchQuery.empty()) {
                 try {
                     char32_t code = std::stoul(searchQuery, nullptr, 16);
                     jumpToCode(code);
                 } catch (...) {}
             }
-            searchFocused = false;
-        } else if (ev.key == InputKey::Escape) {
-            searchFocused = false;
+            return;
         }
         return;
     }
@@ -630,9 +639,9 @@ void UnicodeTableScreen::handleKey(const InputEvent& ev, bool& running) {
             ensureBlockVisible();
         }
     } else if (ev.key == InputKey::Character && ev.ch == '\t') {
-        searchFocused = !searchFocused;
+        searchState.focused = !searchState.focused;
     } else if (ev.key == InputKey::Character && (ev.ch == 'f' || ev.ch == 'F' || ev.ch == '/')) {
-        searchFocused = true;
+        searchState.focused = true;
         searchQuery.clear();
     }
 }
@@ -646,10 +655,12 @@ void UnicodeTableScreen::handleMouse(const InputEvent& ev, bool& running) {
         }
     }
     
+    bool onSearch = (ev.y == searchY && ev.x >= searchX + 14 && ev.x < searchX + 14 + searchW);
+    searchState.hover = onSearch;
+
     if (ev.button == 0 && ev.pressed) {
-        if (ev.y == searchY && ev.x >= searchX + 14 && ev.x < searchX + 14 + searchW) {
-            searchFocused = true;
-        } else if (ev.x >= blockListX && ev.x < blockListX + blockListW && ev.y > blockListY && ev.y < blockListY + blockListH - 1) {
+        searchState.focused = onSearch;
+        if (ev.x >= blockListX && ev.x < blockListX + blockListW && ev.y > blockListY && ev.y < blockListY + blockListH - 1) {
             int idx = blockScrollOffset + (ev.y - blockListY - 1);
             if (idx >= 0 && idx < static_cast<int>(blocks.size())) {
                 selectedBlockIdx = idx;

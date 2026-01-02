@@ -3,6 +3,7 @@
 #define TILELANDWORLD_UI_UNICODETABLESCREEN_H
 
 #include "AnsiTui.h"
+#include "TextField.h"
 #include "../Controllers/InputController.h"
 #include <string>
 #include <vector>
@@ -36,9 +37,7 @@ private:
     int gridScrollOffset{0}; // in rows
     
     std::string searchQuery;
-    bool searchFocused{false};
-    bool searchCaretOn{true};
-    std::chrono::steady_clock::time_point lastCaretToggle;
+    TextFieldState searchState;
 
     // Layout cache
     int blockListX{0}, blockListY{0}, blockListW{0}, blockListH{0};

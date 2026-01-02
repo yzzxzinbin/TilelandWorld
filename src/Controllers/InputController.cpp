@@ -159,6 +159,18 @@ namespace TilelandWorld {
                 buffer.erase(0, 1);
                 continue;
             }
+
+            // Control characters (CTRL+A to CTRL+Z)
+            if (c >= 0x01 && c <= 0x1A) {
+                // 0x01 is CTRL+A, 0x02 is CTRL+B, etc.
+                // Exclude Tab (0x09), Enter (0x0D), and others already handled
+                if (c != 0x09 && c != 0x0D && c != 0x0A && c != 0x08) {
+                    emitKey(InputKey::Character, static_cast<char32_t>(c + 'A' - 1), true);
+                    buffer.erase(0, 1);
+                    continue;
+                }
+            }
+
             if (c >= 0x20 && c <= 0x7E) {
                 emitChar(static_cast<char32_t>(c));
                 buffer.erase(0, 1);

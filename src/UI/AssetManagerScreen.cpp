@@ -57,7 +57,7 @@ namespace UI {
     {
         lastImportPath = manager.getRootDir();
         refreshList();
-        searchCaretLastToggle = std::chrono::steady_clock::now();
+        searchState.lastCaretToggle = std::chrono::steady_clock::now();
     }
 
     void AssetManagerScreen::show() {
@@ -67,11 +67,7 @@ namespace UI {
         std::cout << "\x1b[?25l"; // Hide cursor
 
         while (running) {
-            auto now = std::chrono::steady_clock::now();
-            if (now - searchCaretLastToggle >= std::chrono::milliseconds(500)) {
-                searchCaretOn = !searchCaretOn;
-                searchCaretLastToggle = now;
-            }
+            searchState.updateCaret();
             drawMainUI();
             painter.present(surface);
             
@@ -88,9 +84,9 @@ namespace UI {
                     }
 
                     bool onSearchField = (ev.y == searchFieldY && ev.x >= searchFieldX && ev.x < searchFieldX + searchFieldW);
-                    searchHover = onSearchField;
+                    searchState.hover = onSearchField;
                     if (ev.pressed && ev.button == 0) {
-                        searchFocused = onSearchField;
+                        searchState.focused = onSearchField;
                     }
 
                     bool insideList = (ev.x >= listX && ev.x < listX + listW && ev.y >= listY && ev.y < listY + listH);
@@ -136,21 +132,10 @@ namespace UI {
                         hoverRow = -1;
                     }
                 } else if (ev.type == InputEvent::Type::Key) {
-                    if (searchFocused) {
-                        if (ev.key == InputKey::Character && ev.ch == '\b') {
-                            if (!searchQuery.empty()) {
-                                searchQuery.pop_back();
-                                std::string prevName = getSelectedAssetName();
-                                applyFilter(prevName);
-                            }
-                            continue;
-                        } else if (ev.key == InputKey::Character && std::isprint(static_cast<unsigned char>(ev.ch))) {
-                            searchQuery.push_back(ev.ch);
+                    if (searchState.focused) {
+                        if (TextField::handleInput(ev, searchQuery, searchState)) {
                             std::string prevName = getSelectedAssetName();
                             applyFilter(prevName);
-                            continue;
-                        } else if (ev.key == InputKey::Enter) {
-                            searchFocused = false;
                             continue;
                         }
                     }
@@ -403,27 +388,16 @@ namespace UI {
         searchFieldX = listInnerX + 2 + static_cast<int>(searchLabel.size());
         searchFieldY = listInnerY;
         searchFieldW = std::max(10, listInnerW - (searchFieldX - listInnerX) - 1);
-        RGBColor fieldFg = theme.focusFg;
-        RGBColor fieldBg = theme.focusBg;
-        surface.fillRect(searchFieldX, searchFieldY, searchFieldW, 1, fieldFg, fieldBg, " ");
-        std::string displayQuery = searchQuery;
-        int maxSearchChars = std::max(0, searchFieldW - 2);
-        if (static_cast<int>(displayQuery.size()) > maxSearchChars) {
-            displayQuery = displayQuery.substr(displayQuery.size() - maxSearchChars);
-        }
-        RGBColor drawFg = fieldFg;
-        bool activeField = (searchFocused || searchHover);
-        bool showCaret = activeField && searchCaretOn;
-        if (showCaret) {
-            displayQuery.push_back('|');
-        } else if (!activeField && displayQuery.empty()) {
-            displayQuery = "type to filter";
-            drawFg = theme.hintFg;
-        }
-        if (static_cast<int>(displayQuery.size()) > maxSearchChars) {
-            displayQuery = displayQuery.substr(displayQuery.size() - maxSearchChars);
-        }
-        surface.drawText(searchFieldX + 1, searchFieldY, displayQuery, drawFg, fieldBg);
+        
+        TextFieldStyle searchStyle;
+        searchStyle.width = searchFieldW;
+        searchStyle.placeholder = "type to filter";
+        searchStyle.focusFg = theme.focusFg;
+        searchStyle.focusBg = theme.focusBg;
+        searchStyle.panelBg = theme.panel;
+        searchStyle.hintFg = theme.hintFg;
+        
+        TextField::render(surface, searchFieldX, searchFieldY, searchQuery, searchState, searchStyle);
 
         int rowsStartY = listInnerY + 2;
         listX = listInnerX;
