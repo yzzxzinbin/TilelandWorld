@@ -2,6 +2,8 @@
 #include "TuiUtils.h"
 #include "../Controllers/InputController.h"
 #include <algorithm>
+#include <iostream>
+#include <cctype>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -35,8 +37,15 @@ namespace {
         return text;
     }
 #else
-    void setClipboardText(const std::string&) {}
-    std::string getClipboardText() { return ""; }
+    void setClipboardText(const std::string& text) {
+        // OSC 52: ESC ] 52 ; c ; <base64> BEL
+        std::string b64 = TuiUtils::base64Encode(text);
+        std::cout << "\x1b]52;c;" << b64 << "\x07" << std::flush;
+    }
+    std::string getClipboardText() { 
+        // OSC 52 读取较为复杂且通常被终端禁用，暂不实现
+        return ""; 
+    }
 #endif
 }
 
@@ -76,10 +85,12 @@ void TextField::render(TuiSurface& surface, int x, int y, const std::string& tex
     }
 }
 
-bool TextField::handleInput(const InputEvent& ev, std::string& text, TextFieldState& state) {
+bool TextField::handleInput(const InputEvent& ev, std::string& text, TextFieldState& state, const TextFieldStyle& style) {
     if (!state.focused) return false;
 
     if (ev.type != InputEvent::Type::Key) return false;
+
+    bool changed = false;
 
     if (ev.key == InputKey::Character) {
         if (ev.ctrl) {
@@ -95,44 +106,47 @@ bool TextField::handleInput(const InputEvent& ev, std::string& text, TextFieldSt
             } else if (c == 'v') {
                 std::string clip = getClipboardText();
                 if (!clip.empty()) {
+                    std::string filtered;
+                    for (char ch : clip) {
+                        if (style.charFilter && !style.charFilter((char32_t)ch)) continue;
+                        filtered.push_back(ch);
+                    }
+
                     if (state.hasSelection()) {
-                        text = clip;
+                        text = filtered;
                         state.clearSelection();
                     } else {
-                        text += clip;
+                        text += filtered;
                     }
-                    return true;
+                    changed = true;
                 }
-                return false;
             } else if (c == 'x') {
                 if (state.hasSelection()) {
                     setClipboardText(text);
                     text.clear();
                     state.clearSelection();
-                    return true;
+                    changed = true;
                 }
-                return false;
             }
-            return false;
-        }
-
-        if (ev.ch == '\b') {
+        } else if (ev.ch == '\b') {
             if (state.hasSelection()) {
                 text.clear();
                 state.clearSelection();
-                return true;
+                changed = true;
             } else if (!text.empty()) {
                 text.pop_back();
-                return true;
+                changed = true;
             }
         } else if (ev.ch >= 32) {
-            if (state.hasSelection()) {
-                text = (char)ev.ch;
-                state.clearSelection();
-                return true;
-            } else {
-                text.push_back((char)ev.ch);
-                return true;
+            if (!style.charFilter || style.charFilter(ev.ch)) {
+                if (state.hasSelection()) {
+                    text = (char)ev.ch;
+                    state.clearSelection();
+                    changed = true;
+                } else {
+                    text.push_back((char)ev.ch);
+                    changed = true;
+                }
             }
         }
     } else if (ev.key == InputKey::Enter || ev.key == InputKey::Escape) {
@@ -141,7 +155,16 @@ bool TextField::handleInput(const InputEvent& ev, std::string& text, TextFieldSt
         return true;
     }
 
-    return false;
+    if (changed) {
+        if (style.maxChars > 0 && text.size() > style.maxChars) {
+            text = text.substr(0, style.maxChars);
+        }
+        if (style.transform) {
+            text = style.transform(text);
+        }
+    }
+
+    return changed;
 }
 
 } // namespace UI

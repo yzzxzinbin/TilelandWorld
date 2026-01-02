@@ -5,6 +5,7 @@
 #include <sstream>
 #include <algorithm>
 #include <thread>
+#include <cctype>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -426,6 +427,15 @@ void UnicodeTableScreen::renderFrame() {
     searchStyle.focusBg = theme.focusBg;
     searchStyle.panelBg = theme.panel;
     searchStyle.hintFg = theme.hintFg;
+    searchStyle.maxChars = 6;
+    searchStyle.charFilter = [](char32_t cp) {
+        return std::isxdigit(static_cast<unsigned char>(cp)) != 0;
+    };
+    searchStyle.transform = [](const std::string& s) {
+        std::string out = s;
+        for (char& c : out) c = (char)std::toupper((unsigned char)c);
+        return out;
+    };
     
     TextField::render(surface, searchX + 14, searchY, searchQuery, searchState, searchStyle);
 
@@ -597,21 +607,18 @@ void UnicodeTableScreen::setAnchored(int px, int py, const std::string& g, const
 
 void UnicodeTableScreen::handleKey(const InputEvent& ev, bool& running) {
     if (searchState.focused) {
-        std::string oldQuery = searchQuery;
-        if (TextField::handleInput(ev, searchQuery, searchState)) {
-            // Post-process: ensure hex and length for Unicode search
-            if (ev.key == InputKey::Character && ev.ch >= 32 && !ev.ctrl) {
-                // Check if the last added character is valid hex
-                if (!searchQuery.empty()) {
-                    char last = searchQuery.back();
-                    if (!std::isxdigit(static_cast<unsigned char>(last)) || searchQuery.size() > 6) {
-                        searchQuery = oldQuery; // Revert if invalid
-                    } else {
-                        searchQuery.back() = std::toupper(static_cast<unsigned char>(last));
-                    }
-                }
-            }
+        TextFieldStyle searchStyle;
+        searchStyle.maxChars = 6;
+        searchStyle.charFilter = [](char32_t cp) {
+            return std::isxdigit(static_cast<unsigned char>(cp)) != 0;
+        };
+        searchStyle.transform = [](const std::string& s) {
+            std::string out = s;
+            for (char& c : out) c = (char)std::toupper((unsigned char)c);
+            return out;
+        };
 
+        if (TextField::handleInput(ev, searchQuery, searchState, searchStyle)) {
             // If enter was pressed, jump to code
             if (ev.key == InputKey::Enter && !searchQuery.empty()) {
                 try {

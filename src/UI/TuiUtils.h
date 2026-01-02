@@ -40,6 +40,9 @@ RGBColor lightenColor(const RGBColor& c, double ratio);
 RGBColor hsvToRgb(double h, double s, double v);
 void rgbToHsv(const RGBColor& rgb, double& h, double& s, double& v);
 
+// Base64 helpers for OSC 52 clipboard
+std::string base64Encode(const std::string& in);
+
 } // namespace TuiUtils
 } // namespace UI
 } // namespace TilelandWorld

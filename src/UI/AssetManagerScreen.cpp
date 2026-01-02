@@ -133,6 +133,8 @@ namespace UI {
                     }
                 } else if (ev.type == InputEvent::Type::Key) {
                     if (searchState.focused) {
+                        // 此处不需要改变样式以及添加过滤器和转换回调
+                        // 因此 handleInput() 使用默认构造的TextFieldStyle参数
                         if (TextField::handleInput(ev, searchQuery, searchState)) {
                             std::string prevName = getSelectedAssetName();
                             applyFilter(prevName);

@@ -6,6 +6,7 @@
 #include "../Controllers/InputController.h"
 #include <string>
 #include <chrono>
+#include <functional>
 
 namespace TilelandWorld {
 namespace UI {
@@ -19,6 +20,11 @@ struct TextFieldStyle {
     RGBColor hintFg{140, 150, 170};
     char caretChar{'|'};
     int blinkIntervalMs{500};
+
+    // 校验与约束
+    size_t maxChars{0}; // 0 表示无限制
+    std::function<bool(char32_t)> charFilter{nullptr}; // 字符过滤器，返回 false 则丢弃该字符
+    std::function<std::string(const std::string&)> transform{nullptr}; // 整体变换（如转大写）
 };
 
 struct TextFieldState {
@@ -77,7 +83,7 @@ public:
      * 处理输入事件（如字符输入、退格、CTRL+A等）
      * @return 如果文本内容发生了改变，返回 true
      */
-    static bool handleInput(const InputEvent& ev, std::string& text, TextFieldState& state);
+    static bool handleInput(const InputEvent& ev, std::string& text, TextFieldState& state, const TextFieldStyle& style = TextFieldStyle{});
 };
 
 } // namespace UI
