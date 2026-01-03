@@ -27,6 +27,7 @@ int main() {
         // 1. 设置加载与主菜单
         std::string cfgPath = "settings.cfg";
         Settings settings = SettingsManager::load(cfgPath);
+        Logger::getInstance().setLogLevel(settings.minLogLevel); // 应用日志等级设置
 
         while (true) {
             TilelandWorld::UI::MainMenuScreen mainMenu;

@@ -3,6 +3,7 @@
 #define TILELANDWORLD_SETTINGS_H
 
 #include <string>
+#include "Utils/Logger.h"
 
 namespace TilelandWorld {
 
@@ -11,6 +12,9 @@ struct Settings {
     double targetFpsLimit{360.0};
     double targetTps{60.0};
     double statsOverlayAlpha{0.10};
+
+    // Logging
+    LogLevel minLogLevel{LogLevel::LOG_INFO};
 
     // Viewport
     int viewWidth{64};

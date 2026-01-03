@@ -31,6 +31,15 @@ namespace {
     template <>
     void parseValue<std::string>(const std::string& text, std::string& out) { out = text; }
 
+    template <>
+    void parseValue<LogLevel>(const std::string& text, LogLevel& out) {
+        if (text == "DEBUG") out = LogLevel::LOG_DEBUG;
+        else if (text == "INFO") out = LogLevel::LOG_INFO;
+        else if (text == "WARN") out = LogLevel::LOG_WARNING;
+        else if (text == "ERROR") out = LogLevel::LOG_ERROR;
+        else if (text == "NONE") out = LogLevel::LOG_NONE;
+    }
+
     template <typename T>
     void maybeSet(const std::string& key, const std::string& value, const std::string& targetKey, T& out) {
         if (key == targetKey) {
@@ -62,6 +71,7 @@ Settings SettingsManager::load(const std::string& path) {
         maybeSet<double>(key, value, "targetTps", cfg.targetTps);
         maybeSet<double>(key, value, "statsOverlayAlpha", cfg.statsOverlayAlpha);
         maybeSet<double>(key, value, "mouseCrossAlpha", cfg.mouseCrossAlpha);
+        maybeSet<LogLevel>(key, value, "minLogLevel", cfg.minLogLevel);
         maybeSet<bool>(key, value, "enableStatsOverlay", cfg.enableStatsOverlay);
         maybeSet<bool>(key, value, "enableMouseCross", cfg.enableMouseCross);
         maybeSet<bool>(key, value, "enableDiffRendering", cfg.enableDiffRendering);
@@ -87,6 +97,18 @@ bool SettingsManager::save(const Settings& s, const std::string& path) {
     out << "targetTps=" << s.targetTps << "\n";
     out << "statsOverlayAlpha=" << s.statsOverlayAlpha << "\n";
     out << "mouseCrossAlpha=" << s.mouseCrossAlpha << "\n";
+    auto levelToStr = [](LogLevel l) {
+        switch(l) {
+            case LogLevel::LOG_DEBUG: return "DEBUG";
+            case LogLevel::LOG_INFO: return "INFO";
+            case LogLevel::LOG_WARNING: return "WARN";
+            case LogLevel::LOG_ERROR: return "ERROR";
+            case LogLevel::LOG_NONE: return "NONE";
+            default: return "INFO";
+        }
+    };
+    out << "minLogLevel=" << levelToStr(s.minLogLevel) << "\n";
+
     out << "enableStatsOverlay=" << (s.enableStatsOverlay ? "1" : "0") << "\n";
     out << "enableMouseCross=" << (s.enableMouseCross ? "1" : "0") << "\n";
     out << "enableDiffRendering=" << (s.enableDiffRendering ? "1" : "0") << "\n";

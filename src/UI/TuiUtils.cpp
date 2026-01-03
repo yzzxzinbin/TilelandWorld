@@ -60,7 +60,8 @@ Utf8CharInfo nextUtf8Char(const std::string& s, size_t pos) {
         (codepoint >= 0x2B00 && codepoint <= 0x2BFF)) {
         visual = 1;
     }
-    if (codepoint == 0x25CF || codepoint == 0x2022 || codepoint == 0x25B6) {
+    // Treat certain geometric/arrow symbols as width 1 (e.g., ●, •, ▶, ▲, ▼, ◀)
+    if (codepoint == 0x25CF || codepoint == 0x2022 || codepoint == 0x25B6 || codepoint == 0x25B2 || codepoint == 0x25BC || codepoint == 0x25C0) {
         visual = 1;
     }
 

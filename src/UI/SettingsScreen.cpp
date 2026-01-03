@@ -8,7 +8,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-#include "DirectoryBrowserScreen.h"
 
 namespace TilelandWorld {
 namespace UI {
@@ -168,7 +167,36 @@ void SettingsScreen::buildItems() {
         {}, 0,0,0,false
     });
 
+    items.push_back(Item{
+        "Log Level",
+        ItemType::Dropdown,
+        [this](int dir) {
+            int current = static_cast<int>(working.minLogLevel);
+            int next = current + dir;
+            if (next < 0) next = 4;
+            if (next > 4) next = 0;
+            working.minLogLevel = static_cast<LogLevel>(next);
+        },
+        [this](){
+            switch(working.minLogLevel) {
+                case LogLevel::LOG_DEBUG: return "DEBUG";
+                case LogLevel::LOG_INFO: return "INFO";
+                case LogLevel::LOG_WARNING: return "WARN";
+                case LogLevel::LOG_ERROR: return "ERROR";
+                case LogLevel::LOG_NONE: return "NONE";
+                default: return "INFO";
+            }
+        },
+        {}, {}, {},
+        0,0,0,false,
+        [this](int idx){
+            working.minLogLevel = static_cast<LogLevel>(idx);
+        },
+        {"DEBUG", "INFO", "WARN", "ERROR", "NONE"}
+    });
+
     toggleStates.assign(items.size(), ToggleSwitchState{});
+    dropdownStates.assign(items.size(), DropdownState{});
     for (size_t i = 0; i < items.size(); ++i) {
         if (items[i].type == ItemType::Toggle && items[i].isOn) {
             toggleStates[i].previousOn = items[i].isOn();
@@ -268,6 +296,23 @@ void SettingsScreen::renderFrame() {
             state.hover = (hoverToggleIndex == i);
             state.hot = (hoverToggleHot && hoverToggleIndex == i);
             ToggleSwitch::render(surface, listValueX, listStartY + static_cast<int>(i), items[i].isOn(), state, style);
+        } else if (items[i].type == ItemType::Dropdown) {
+            DropdownStyle style{};
+            style.width = 16;
+            style.focusFg = {0, 0, 0};
+            style.focusBg = {200, 230, 255};
+            style.panelBg = {18, 21, 28};
+            style.itemFg = {210, 215, 224};
+            style.accent = {96, 140, 255};
+            
+            int currentIdx = 0;
+            if (items[i].label == "Log Level") {
+                currentIdx = static_cast<int>(working.minLogLevel);
+            }
+            
+            DropdownState& dState = dropdownStates[i];
+            dState.focused = focus;
+            Dropdown::render(surface, listValueX, listStartY + static_cast<int>(i), items[i].dropdownOptions, currentIdx, dState, style);
         } else {
             surface.drawText(listValueX, listStartY + static_cast<int>(i), val, rowFg, rowBg);
         }
@@ -276,10 +321,30 @@ void SettingsScreen::renderFrame() {
 
 void SettingsScreen::apply() {
     target = working;
+    // 将需要在确认时才生效的运行时设置应用到系统
+    TilelandWorld::Logger::getInstance().setLogLevel(target.minLogLevel);
 }
 
 void SettingsScreen::handleKey(int key, bool& running, bool& accepted) {
     if (!running) return;
+
+    // 如果当前选中的是 Dropdown 且处于展开状态，优先处理
+    if (selected < items.size() && items[selected].type == ItemType::Dropdown && dropdownStates[selected].expanded) {
+        InputEvent ev;
+        ev.type = InputEvent::Type::Key;
+        if (key == kArrowUp) ev.key = InputKey::ArrowUp;
+        else if (key == kArrowDown) ev.key = InputKey::ArrowDown;
+        else if (key == 13) ev.key = InputKey::Enter;
+        else if (key == 27) ev.key = InputKey::Escape;
+        
+        int dummyIdx = 0;
+        if (items[selected].label == "Log Level") dummyIdx = static_cast<int>(working.minLogLevel);
+        
+        if (Dropdown::handleInput(ev, items[selected].dropdownOptions, dummyIdx, dropdownStates[selected])) {
+            if (items[selected].setDropdown) items[selected].setDropdown(dummyIdx);
+        }
+        return;
+    }
 
     // 编辑模式：仅处理数字输入/退格/提交
     if (editingIndex >= 0) {
@@ -303,11 +368,15 @@ void SettingsScreen::handleKey(int key, bool& running, bool& accepted) {
     } else if (key == kArrowDown || key == 's' || key == 'S') {
         selected = (selected + 1) % items.size();
     } else if (key == kArrowLeft || key == 'a' || key == 'A') {
-        items[selected].adjust(-1);
-        markToggleAnimation(selected);
+        if (items[selected].adjust) {
+            items[selected].adjust(-1);
+            markToggleAnimation(selected);
+        }
     } else if (key == kArrowRight || key == 'd' || key == 'D' || key == ' ') {
-        items[selected].adjust(1);
-        markToggleAnimation(selected);
+        if (items[selected].adjust) {
+            items[selected].adjust(1);
+            markToggleAnimation(selected);
+        }
     } else if (key == 13) { // Enter 保存
         accepted = true;
         running = false;
@@ -340,6 +409,21 @@ void SettingsScreen::handleMouse(const InputEvent& ev, bool& running, bool& acce
     if (!ev.pressed && !ev.move) return;
 
     int relY = ev.y - listStartY;
+    
+    // 优先处理 Dropdown 的鼠标事件
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (items[i].type == ItemType::Dropdown) {
+            int dummyIdx = 0;
+            if (items[i].label == "Log Level") dummyIdx = static_cast<int>(working.minLogLevel);
+            if (Dropdown::handleInput(ev, items[i].dropdownOptions, dummyIdx, dropdownStates[i])) {
+                if (items[i].setDropdown) items[i].setDropdown(dummyIdx);
+                return;
+            }
+            // 如果 Dropdown 展开了，拦截所有其他鼠标事件
+            if (dropdownStates[i].expanded) return;
+        }
+    }
+
     if (relY < 0 || relY >= static_cast<int>(items.size())) return;
     size_t idx = static_cast<size_t>(relY);
 

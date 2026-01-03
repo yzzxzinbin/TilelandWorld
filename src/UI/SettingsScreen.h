@@ -3,9 +3,12 @@
 #define TILELANDWORLD_UI_SETTINGSSCREEN_H
 
 #include "AnsiTui.h"
+#include "DirectoryBrowserScreen.h"
+#include "../Utils/Logger.h"
 #include "../Settings.h"
 #include "../Controllers/InputController.h"
 #include "ToggleSwitch.h"
+#include "Dropdown.h"
 #include "TuiUtils.h"
 #include <functional>
 #include <vector>
@@ -21,7 +24,7 @@ public:
     bool show();
 
 private:
-    enum class ItemType { Toggle, Number, Float, Directory };
+    enum class ItemType { Toggle, Number, Float, Directory, Dropdown };
 
     Settings& target;
     Settings working; // 可编辑副本
@@ -41,6 +44,8 @@ private:
         double maxVal{0.0};
         double step{1.0};
         bool isInt{false};
+        std::function<void(int)> setDropdown; // for Dropdown
+        std::vector<std::string> dropdownOptions;
     };
 
     std::vector<Item> items;
@@ -52,6 +57,9 @@ private:
     double editMin{0.0};
     double editMax{0.0};
     bool editIsInt{false};
+
+    // Dropdown 状态
+    std::vector<DropdownState> dropdownStates;
 
     // 布局缓存用于鼠标命中
     int listStartY{5};
