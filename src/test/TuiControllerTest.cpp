@@ -32,9 +32,7 @@ int main() {
     std::ostringstream envLine;
     envLine << "Env init: " << envStatic.envName
             << ", scaling=" << envStatic.scaling
-            << ", font(win)=" << envStatic.fontWidthWin << "x" << envStatic.fontHeightWin
-            << ", vt cells=" << envStatic.vtCols << "x" << envStatic.vtRows
-            << ", vt px=" << envStatic.vtPixW << "x" << envStatic.vtPixH;
+            << ", font(win)=" << envStatic.fontWidthWin << "x" << envStatic.fontHeightWin ;
     LOG_INFO(envLine.str());
 
     try {

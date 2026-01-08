@@ -1,4 +1,5 @@
 #include "InputController.h"
+#include "../Utils/EnvConfig.h"
 #include <algorithm>
 #include <cstring>
 
@@ -204,9 +205,58 @@ namespace TilelandWorld {
             return true;
         }
 
-        // Not an arrow; drop ESC and continue
+        // Try VT response (e.g., cell/pixel query)
+        if (tryParseVtResponse()) return true;
+
+        // Not an arrow or known CSI; drop ESC and continue
         buffer.erase(0, 1);
         return true;
+    }
+
+    bool InputController::tryParseVtResponse()
+    {
+        // Expecting ESC [ 8 ; r ; c t  OR  ESC [ 4 ; h ; w t
+        // Also possibly ESC [ < ... (handled by tryParseMouseSGR)
+        if (buffer.size() < 4) return false;
+
+        size_t tPos = buffer.find('t', 2);
+        if (tPos == std::string::npos) {
+            // If it's too long and no 't' is found, it's probably not a VT response
+            return false;
+        }
+
+        std::string seq = buffer.substr(2, tPos - 2);
+        size_t pos = 0;
+        int type = 0;
+        if (!parseInt(seq, pos, type)) return false;
+
+        if (type == 8) { // \x1b[8;r;ct
+            if (pos >= seq.size() || seq[pos] != ';') return false;
+            ++pos;
+            int r = 0, c = 0;
+            if (!parseInt(seq, pos, r)) return false;
+            if (pos >= seq.size() || seq[pos] != ';') return false;
+            ++pos;
+            if (!parseInt(seq, pos, c)) return false;
+
+            EnvConfig::getInstance().setVtDimensions(r, c, -1, -1);
+            buffer.erase(0, tPos + 1);
+            return true;
+        } else if (type == 4) { // \x1b[4;h;wt
+            if (pos >= seq.size() || seq[pos] != ';') return false;
+            ++pos;
+            int h = 0, w = 0;
+            if (!parseInt(seq, pos, h)) return false;
+            if (pos >= seq.size() || seq[pos] != ';') return false;
+            ++pos;
+            if (!parseInt(seq, pos, w)) return false;
+
+            EnvConfig::getInstance().setVtDimensions(-1, -1, w, h);
+            buffer.erase(0, tPos + 1);
+            return true;
+        }
+
+        return false;
     }
 
     bool InputController::tryParseMouseSGR()
@@ -240,6 +290,9 @@ namespace TilelandWorld {
         // Coordinates are 1-based per spec
         int col = std::max(0, x - 1);
         int row = std::max(0, y - 1);
+
+        // Update EnvConfig with raw VT cell position (1-based)
+        EnvConfig::getInstance().setMouseCellVt(static_cast<double>(x), static_cast<double>(y));
 
         emitMouse(col, row, button, press && !isWheel && !isMotion && !release, isMotion, wheel);
 

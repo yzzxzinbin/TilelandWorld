@@ -78,13 +78,13 @@ std::vector<AboutScreen::Entry> AboutScreen::buildEntries() {
         {"Uptime", formatTime(rt.uptimeSeconds)},
         {"VT enabled", st.vtEnabled ? "Yes" : "No"},
         {"Running in WT", st.isRunningInWT ? "Yes" : "No"},
-        {"Font (VT)", dbl2(st.vtFontW, st.vtFontH, 2)},
+        {"Font (VT)", dbl2(rt.vtFontW, rt.vtFontH, 2)},
         {"Font (Win)", dbl2(st.fontWidthWin, st.fontHeightWin, 0)},
         {"Font (calc)", dbl2(rt.calcFontW, rt.calcFontH)},
         {"Font (WT-calc)", dbl2(rt.wtFontW, rt.wtFontH)},
 
-        {"VT cells", dbl2(static_cast<double>(st.vtCols), static_cast<double>(st.vtRows), 0)},
-        {"VT pixels", dbl2(static_cast<double>(st.vtPixW), static_cast<double>(st.vtPixH), 0)},
+        {"VT cells", dbl2(static_cast<double>(rt.vtCols), static_cast<double>(rt.vtRows), 0)},
+        {"VT pixels", dbl2(static_cast<double>(rt.vtPixW), static_cast<double>(rt.vtPixH), 0)},
 
         {"Console size", std::to_string(rt.consoleCols) + " x " + std::to_string(rt.consoleRows)},
         {"Client rect", rectToString(rt.clientRect)},

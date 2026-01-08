@@ -36,12 +36,45 @@ bool EnvConfig::initialize() {
 }
 
 bool EnvConfig::refresh() {
-    if (!initialized) {
-        initialize();
-        return initialized;
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        if (!initialized) {
+            initialize();
+            return initialized;
+        }
+        updateRuntimeMetrics();
     }
-    updateRuntimeMetrics();
+
+    if (staticInfo.vtEnabled) {
+        // Asynchronously query dimensions. Responses will be parsed by InputController.
+        std::cout << "\x1b[18t\x1b[14t" << std::flush;
+    }
+
     return true;
+}
+
+void EnvConfig::setMouseCellVt(double x, double y) {
+    std::lock_guard<std::mutex> lock(dataMutex);
+    runtimeInfo.mouseCellVt.x = x;
+    runtimeInfo.mouseCellVt.y = y;
+}
+
+void EnvConfig::setVtDimensions(int rows, int cols, int pixW, int pixH) {
+    std::lock_guard<std::mutex> lock(dataMutex);
+    if (rows > 0) runtimeInfo.vtRows = rows;
+    if (cols > 0) runtimeInfo.vtCols = cols;
+    if (pixW > 0) runtimeInfo.vtPixW = pixW;
+    if (pixH > 0) runtimeInfo.vtPixH = pixH;
+    
+    if (runtimeInfo.vtCols > 0)
+        runtimeInfo.vtFontW = static_cast<double>(runtimeInfo.vtPixW) / runtimeInfo.vtCols;
+    if (runtimeInfo.vtRows > 0)
+        runtimeInfo.vtFontH = static_cast<double>(runtimeInfo.vtPixH) / runtimeInfo.vtRows;
+}
+
+EnvRuntimeInfo EnvConfig::getRuntimeInfo() const {
+    std::lock_guard<std::mutex> lock(dataMutex);
+    return runtimeInfo;
 }
 
 std::string EnvConfig::getProcessNameById(DWORD pid) const {
@@ -181,12 +214,7 @@ void EnvConfig::updateStaticMetrics() {
     // VT query for dimensions
     int vtRows = 0, vtCols = 0, vtPixW = 0, vtPixH = 0;
     if (queryVTDimensions(vtRows, vtCols, vtPixW, vtPixH)) {
-        staticInfo.vtRows = vtRows;
-        staticInfo.vtCols = vtCols;
-        staticInfo.vtPixW = vtPixW;
-        staticInfo.vtPixH = vtPixH;
-        staticInfo.vtFontW = (vtCols > 0) ? static_cast<double>(vtPixW) / vtCols : 0.0;
-        staticInfo.vtFontH = (vtRows > 0) ? static_cast<double>(vtPixH) / vtRows : 0.0;
+        setVtDimensions(vtRows, vtCols, vtPixW, vtPixH);
     }
 
     updateRuntimeMetrics();
@@ -291,8 +319,8 @@ void EnvConfig::updateRuntimeMetrics() {
     runtimeInfo.wtFontW = (cols > 0) ? static_cast<double>(runtimeInfo.wtClientW) / cols : 0.0;
     runtimeInfo.wtFontH = (rows > 0) ? static_cast<double>(runtimeInfo.wtClientH) / rows : 0.0;
 
-    double vtFontW = (staticInfo.vtCols > 0) ? static_cast<double>(staticInfo.vtPixW) / static_cast<double>(staticInfo.vtCols) : runtimeInfo.calcFontW;
-    double vtFontH = (staticInfo.vtRows > 0) ? static_cast<double>(staticInfo.vtPixH) / static_cast<double>(staticInfo.vtRows) : runtimeInfo.calcFontH;
+    double curVtFontW = (runtimeInfo.vtCols > 0) ? runtimeInfo.vtFontW : runtimeInfo.calcFontW;
+    double curVtFontH = (runtimeInfo.vtRows > 0) ? runtimeInfo.vtFontH : runtimeInfo.calcFontH;
 
     // Mouse positions
     POINT screenP{0, 0};
@@ -300,9 +328,8 @@ void EnvConfig::updateRuntimeMetrics() {
     runtimeInfo.mouseScreen = screenP;
     runtimeInfo.mouseScreenScaled = { screenP.x * staticInfo.scaling, screenP.y * staticInfo.scaling };
 
-    // VT cell estimate (1-based to match VT reporting style)
-    runtimeInfo.mouseCellVt.x = (vtFontW > 0.0) ? ((static_cast<double>(screenP.x) - runtimeInfo.wtClientAbs.x) / vtFontW) + 1.0 : 0.0;
-    runtimeInfo.mouseCellVt.y = (vtFontH > 0.0) ? ((static_cast<double>(screenP.y) - runtimeInfo.wtClientAbs.y) / vtFontH) + 1.0 : 0.0;
+    // VT cell is updated externally via setMouseCellVt (reported via terminal SGR sequences)
+    // and is no longer estimated here to maintain independence from WinAPI calculations.
 
     // WinAPI cell estimate using WT-corrected client size
     runtimeInfo.mouseCellWin.x = (runtimeInfo.wtFontW > 0.0) ? ((static_cast<double>(screenP.x) - runtimeInfo.wtClientAbs.x) / runtimeInfo.wtFontW) + 1.0 : 0.0;

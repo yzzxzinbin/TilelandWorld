@@ -7,6 +7,7 @@
 #endif
 #include <string>
 #include <chrono>
+#include <mutex>
 #include <windows.h>
 
 namespace TilelandWorld {
@@ -23,12 +24,6 @@ struct EnvStaticInfo {
     double scaling{1.0};
     int fontWidthWin{0};
     int fontHeightWin{0};
-    int vtRows{0};
-    int vtCols{0};
-    int vtPixW{0};
-    int vtPixH{0};
-    double vtFontW{0.0};
-    double vtFontH{0.0};
 
     // New static fields
     std::string windowsVersion;
@@ -44,6 +39,13 @@ struct EnvRuntimeInfo {
 
     int consoleCols{0};
     int consoleRows{0};
+
+    int vtRows{0};
+    int vtCols{0};
+    int vtPixW{0};
+    int vtPixH{0};
+    double vtFontW{0.0};
+    double vtFontH{0.0};
 
     int wtClientW{0};
     int wtClientH{0};
@@ -76,8 +78,14 @@ public:
     // 按需刷新运行时数据（窗口/客户区尺寸、鼠标位置等）。
     bool refresh();
 
+    // 更新 VT 报告的鼠标位置（由输入控制器解析序列后调用）
+    void setMouseCellVt(double x, double y);
+
+    // 更新 VT 像素和单元格尺寸（由输入控制器解析序列后调用）
+    void setVtDimensions(int rows, int cols, int pixW, int pixH);
+
     const EnvStaticInfo& getStaticInfo() const { return staticInfo; }
-    const EnvRuntimeInfo& getRuntimeInfo() const { return runtimeInfo; }
+    EnvRuntimeInfo getRuntimeInfo() const;
 
 private:
     EnvConfig();
@@ -85,6 +93,7 @@ private:
     bool initialized{false};
     EnvStaticInfo staticInfo{};
     EnvRuntimeInfo runtimeInfo{};
+    mutable std::mutex dataMutex;
     HWND consoleWindow{nullptr};
     HWND rootWindow{nullptr};
     std::chrono::steady_clock::time_point startTime{};
