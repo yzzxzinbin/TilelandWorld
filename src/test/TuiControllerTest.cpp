@@ -2,16 +2,19 @@
 #include "../Controllers/TuiCoreController.h"
 #include "../MapGenInfrastructure/TerrainGeneratorFactory.h"
 #include "../Utils/Logger.h"
+#include "../Utils/EnvConfig.h"
 #include "../UI/MainMenuScreen.h"
 #include "../UI/SettingsScreen.h"
 #include "../UI/SaveManagerScreen.h"
 #include "../UI/AssetManagerScreen.h"
 #include "../UI/UnicodeTableScreen.h"
+#include "../UI/AboutScreen.h"
 #include "../BinaryFileInfrastructure/MapSerializer.h"
 #include "../Settings.h"
 #include <iostream>
 #include <memory>
 #include <filesystem>
+#include <sstream>
 
 using namespace TilelandWorld;
 
@@ -22,6 +25,17 @@ int main() {
         return 1;
     }
     LOG_INFO("Starting TUI Controller Test...");
+
+    auto& envCfg = EnvConfig::getInstance();
+    envCfg.initialize();
+    const auto& envStatic = envCfg.getStaticInfo();
+    std::ostringstream envLine;
+    envLine << "Env init: " << envStatic.envName
+            << ", scaling=" << envStatic.scaling
+            << ", font(win)=" << envStatic.fontWidthWin << "x" << envStatic.fontHeightWin
+            << ", vt cells=" << envStatic.vtCols << "x" << envStatic.vtRows
+            << ", vt px=" << envStatic.vtPixW << "x" << envStatic.vtPixH;
+    LOG_INFO(envLine.str());
 
     try {
         // 1. 设置加载与主菜单
@@ -104,6 +118,11 @@ int main() {
             if (action == TilelandWorld::UI::MainMenuScreen::Action::UnicodeTable) {
                 TilelandWorld::UI::UnicodeTableScreen unicodeScreen;
                 unicodeScreen.show();
+                continue;
+            }
+            if (action == TilelandWorld::UI::MainMenuScreen::Action::About) {
+                TilelandWorld::UI::AboutScreen about;
+                about.show();
                 continue;
             }
         }

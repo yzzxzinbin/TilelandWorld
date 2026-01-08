@@ -372,7 +372,7 @@ void UnicodeTableScreen::initBlocks() {
 void UnicodeTableScreen::show() {
     input->start();
     bool running = true;
-    std::cout << "\x1b[?25l" << "\x1b[2J\x1b[H" << std::flush;;
+    std::cout << "\x1b[?25l" << "\x1b[2J\x1b[H" << std::flush;
 
     while (running) {
         searchState.updateCaret();
