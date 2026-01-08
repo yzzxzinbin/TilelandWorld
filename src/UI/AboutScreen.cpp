@@ -80,6 +80,9 @@ std::vector<AboutScreen::Entry> AboutScreen::buildEntries() {
         {"Running in WT", st.isRunningInWT ? "Yes" : "No"},
         {"Font (VT)", dbl2(st.vtFontW, st.vtFontH, 2)},
         {"Font (Win)", dbl2(st.fontWidthWin, st.fontHeightWin, 0)},
+        {"Font (calc)", dbl2(rt.calcFontW, rt.calcFontH)},
+        {"Font (WT-calc)", dbl2(rt.wtFontW, rt.wtFontH)},
+
         {"VT cells", dbl2(static_cast<double>(st.vtCols), static_cast<double>(st.vtRows), 0)},
         {"VT pixels", dbl2(static_cast<double>(st.vtPixW), static_cast<double>(st.vtPixH), 0)},
 
@@ -89,8 +92,6 @@ std::vector<AboutScreen::Entry> AboutScreen::buildEntries() {
         {"Window rect", rectToString(rt.windowRect)},
         {"WT client", "AbsL:" + std::to_string(rt.wtClientAbs.x) + " AbsT:" + std::to_string(rt.wtClientAbs.y) +
                        " W:" + std::to_string(rt.wtClientW) + " H:" + std::to_string(rt.wtClientH)},
-        {"Font (calc)", dbl2(rt.calcFontW, rt.calcFontH)},
-        {"Font (WT-calc)", dbl2(rt.wtFontW, rt.wtFontH)},
         {"Mouse screen", pointToString(rt.mouseScreen)},
         {"Mouse scaled", dblPair(rt.mouseScreenScaled.x, rt.mouseScreenScaled.y, 0)},
         {"Mouse cell (VT)", dblPair(rt.mouseCellVt.x, rt.mouseCellVt.y)},
@@ -169,9 +170,15 @@ void AboutScreen::render(const std::vector<Entry>& entries, int maxLabelWidth) {
     // Scroll indicator if needed
     if (static_cast<int>(entries.size()) > listHeight) {
         int scrollX = panelX + panelWidth - 2;
+        // Background track
         surface.fillRect(scrollX, listStartY, 1, listHeight, {60, 70, 80}, {12, 14, 18}, " ");
-        int thumbH = std::max(1, (listHeight * listHeight) / static_cast<int>(entries.size()));
-        int thumbY = (scrollOffset * listHeight) / static_cast<int>(entries.size());
+        
+        int totalRows = static_cast<int>(entries.size());
+        int thumbH = std::max(1, (listHeight * listHeight) / totalRows);
+        int maxScroll = totalRows - listHeight;
+        // Correctly map [0, maxScroll] -> [0, listHeight - thumbH] to ensure it reaches the bottom
+        int thumbY = (maxScroll > 0) ? (scrollOffset * (listHeight - thumbH) / maxScroll) : 0;
+        
         surface.fillRect(scrollX, listStartY + thumbY, 1, thumbH, {96, 140, 255}, {96, 140, 255}, " ");
     }
 
