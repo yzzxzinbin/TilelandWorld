@@ -6,6 +6,7 @@
 #define NOMINMAX
 #endif
 #include <string>
+#include <chrono>
 #include <windows.h>
 
 namespace TilelandWorld {
@@ -26,6 +27,14 @@ struct EnvStaticInfo {
     int vtCols{0};
     int vtPixW{0};
     int vtPixH{0};
+    double vtFontW{0.0};
+    double vtFontH{0.0};
+
+    // New static fields
+    std::string windowsVersion;
+    int systemDpi{96};
+    std::string language;
+    std::string userInfo; // user@computer
 };
 
 struct EnvRuntimeInfo {
@@ -51,6 +60,10 @@ struct EnvRuntimeInfo {
     DoublePoint mouseScreenScaled{};
     DoublePoint mouseCellVt{};
     DoublePoint mouseCellWin{};
+
+    // New runtime fields
+    size_t memoryUsage{0};
+    double uptimeSeconds{0.0};
 };
 
 class EnvConfig {
@@ -67,13 +80,14 @@ public:
     const EnvRuntimeInfo& getRuntimeInfo() const { return runtimeInfo; }
 
 private:
-    EnvConfig() = default;
+    EnvConfig();
 
     bool initialized{false};
     EnvStaticInfo staticInfo{};
     EnvRuntimeInfo runtimeInfo{};
     HWND consoleWindow{nullptr};
     HWND rootWindow{nullptr};
+    std::chrono::steady_clock::time_point startTime{};
 
     bool enableVTMode();
     std::string getProcessNameById(DWORD pid) const;
@@ -81,6 +95,9 @@ private:
     void updateStaticMetrics();
     void updateRuntimeMetrics();
     bool queryVTDimensions(int& rows, int& cols, int& pixW, int& pixH);
+
+    // Helpers for new fields
+    void fetchStaticSystemInfo();
 };
 
 } // namespace TilelandWorld

@@ -17,6 +17,10 @@ namespace {
     constexpr int kRightBottomPadding = 16; // keep consistent with console_query sample
 }
 
+EnvConfig::EnvConfig() {
+    startTime = std::chrono::steady_clock::now();
+}
+
 EnvConfig& EnvConfig::getInstance() {
     static EnvConfig instance;
     return instance;
@@ -25,6 +29,7 @@ EnvConfig& EnvConfig::getInstance() {
 bool EnvConfig::initialize() {
     detectEnvironment();
     staticInfo.vtEnabled = enableVTMode();
+    fetchStaticSystemInfo();
     updateStaticMetrics();
     initialized = true;
     return refresh();
@@ -180,9 +185,54 @@ void EnvConfig::updateStaticMetrics() {
         staticInfo.vtCols = vtCols;
         staticInfo.vtPixW = vtPixW;
         staticInfo.vtPixH = vtPixH;
+        staticInfo.vtFontW = (vtCols > 0) ? static_cast<double>(vtPixW) / vtCols : 0.0;
+        staticInfo.vtFontH = (vtRows > 0) ? static_cast<double>(vtPixH) / vtRows : 0.0;
     }
 
     updateRuntimeMetrics();
+}
+
+void EnvConfig::fetchStaticSystemInfo() {
+    // Windows Version
+    staticInfo.windowsVersion = "Windows 10+";
+    OSVERSIONINFOEXA osvi = { sizeof(osvi) };
+#pragma warning(suppress : 4996)
+    if (GetVersionExA((OSVERSIONINFOA*)&osvi)) {
+        std::ostringstream oss;
+        oss << (int)osvi.dwMajorVersion << "." << (int)osvi.dwMinorVersion << " (Build " << osvi.dwBuildNumber << ")";
+        staticInfo.windowsVersion = oss.str();
+    }
+
+    // System DPI
+    HDC hdc = GetDC(NULL);
+    if (hdc) {
+        staticInfo.systemDpi = GetDeviceCaps(hdc, LOGPIXELSX);
+        ReleaseDC(NULL, hdc);
+    }
+
+    // Language
+    char lang[80] = {0}; // LOCALE_NAME_MAX_LENGTH
+    if (GetUserDefaultLocaleName(reinterpret_cast<LPWSTR>(lang), 80)) {
+        // GetUserDefaultLocaleName returns wide string, but we want UTF-8. 
+        // For simplicity, let's use GetLocaleInfoEx if we need string.
+        wchar_t wlang[80] = {0};
+        if (GetUserDefaultLocaleName(wlang, 80)) {
+            char clang[160] = {0};
+            WideCharToMultiByte(CP_UTF8, 0, wlang, -1, clang, 160, NULL, NULL);
+            staticInfo.language = clang;
+        }
+    }
+
+    // UserInfo
+    char user[256] = {0};
+    DWORD userLen = 256;
+    GetUserNameA(user, &userLen);
+
+    char comp[256] = {0};
+    DWORD compLen = 256;
+    GetComputerNameA(comp, &compLen);
+
+    staticInfo.userInfo = std::string(user) + "@" + std::string(comp);
 }
 
 void EnvConfig::updateRuntimeMetrics() {
@@ -257,6 +307,16 @@ void EnvConfig::updateRuntimeMetrics() {
     // WinAPI cell estimate using WT-corrected client size
     runtimeInfo.mouseCellWin.x = (runtimeInfo.wtFontW > 0.0) ? ((static_cast<double>(screenP.x) - runtimeInfo.wtClientAbs.x) / runtimeInfo.wtFontW) + 1.0 : 0.0;
     runtimeInfo.mouseCellWin.y = (runtimeInfo.wtFontH > 0.0) ? ((static_cast<double>(screenP.y) - runtimeInfo.wtClientAbs.y) / runtimeInfo.wtFontH) + 1.0 : 0.0;
+
+    // Memory usage
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        runtimeInfo.memoryUsage = pmc.WorkingSetSize;
+    }
+
+    // Uptime
+    auto now = std::chrono::steady_clock::now();
+    runtimeInfo.uptimeSeconds = std::chrono::duration<double>(now - startTime).count();
 }
 
 } // namespace TilelandWorld

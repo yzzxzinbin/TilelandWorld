@@ -26,7 +26,12 @@ namespace {
 
 AboutScreen::AboutScreen()
     : surface(110, 40),
-      input(std::make_unique<InputController>()) {}
+      input(std::make_unique<InputController>()) {
+    auto& env = EnvConfig::getInstance();
+    env.refresh();
+    const auto& rt = env.getRuntimeInfo();
+    surface.resize(rt.consoleCols, rt.consoleRows);
+}
 
 std::vector<AboutScreen::Entry> AboutScreen::buildEntries() {
     auto& env = EnvConfig::getInstance();
@@ -45,25 +50,47 @@ std::vector<AboutScreen::Entry> AboutScreen::buildEntries() {
     auto dblPair = [](double a, double b, int prec = 2) {
         std::ostringstream ss; ss << std::fixed << std::setprecision(prec) << a << ", " << b; return ss.str(); };
 
+    auto formatBytes = [](size_t bytes) {
+        if (bytes < 1024) return std::to_string(bytes) + " B";
+        if (bytes < 1024 * 1024) return std::to_string(bytes / 1024) + " KB";
+        if (bytes < 1024ULL * 1024 * 1024) return std::to_string(bytes / (1024 * 1024)) + " MB";
+        return std::to_string(bytes / (1024ULL * 1024 * 1024)) + " GB";
+    };
+
+    auto formatTime = [](double seconds) {
+        int s = static_cast<int>(seconds) % 60;
+        int m = (static_cast<int>(seconds) / 60) % 60;
+        int h = static_cast<int>(seconds) / 3600;
+        std::ostringstream ss;
+        ss << std::setfill('0') << std::setw(2) << h << ":"
+           << std::setfill('0') << std::setw(2) << m << ":"
+           << std::setfill('0') << std::setw(2) << s;
+        return ss.str();
+    };
+
     std::vector<Entry> out = {
         {"Env name", st.envName},
+        {"UserInfo", st.userInfo},
+        {"Windows version", st.windowsVersion},
+        {"Language", st.language},
+        {"System DPI", std::to_string(st.systemDpi) + " (" + std::to_string(static_cast<int>(st.scaling * 100)) + "%)"},
+        {"Memory usage", formatBytes(rt.memoryUsage)},
+        {"Uptime", formatTime(rt.uptimeSeconds)},
         {"VT enabled", st.vtEnabled ? "Yes" : "No"},
         {"Running in WT", st.isRunningInWT ? "Yes" : "No"},
-        {"Scaling", dblPair(st.scaling, st.scaling, 2)},
-        {"Font (WinAPI)", dbl2(st.fontWidthWin, st.fontHeightWin, 0)},
-        {"VT cells", dbl2(st.vtCols, st.vtRows, 0)},
-        {"VT pixels", dbl2(st.vtPixW, st.vtPixH, 0)},
+        {"Font (VT)", dbl2(st.vtFontW, st.vtFontH, 2)},
+        {"Font (Win)", dbl2(st.fontWidthWin, st.fontHeightWin, 0)},
+        {"VT cells", dbl2(static_cast<double>(st.vtCols), static_cast<double>(st.vtRows), 0)},
+        {"VT pixels", dbl2(static_cast<double>(st.vtPixW), static_cast<double>(st.vtPixH), 0)},
 
-        {"Console cols", std::to_string(rt.consoleCols)},
-        {"Console rows", std::to_string(rt.consoleRows)},
+        {"Console size", std::to_string(rt.consoleCols) + " x " + std::to_string(rt.consoleRows)},
         {"Client rect", rectToString(rt.clientRect)},
         {"Client abs LT", pointToString(rt.clientAbsLT)},
         {"Window rect", rectToString(rt.windowRect)},
-        {"WT client", "L:" + std::to_string(rt.wtClientL) + " T:" + std::to_string(rt.wtClientT) +
+        {"WT client", "AbsL:" + std::to_string(rt.wtClientAbs.x) + " AbsT:" + std::to_string(rt.wtClientAbs.y) +
                        " W:" + std::to_string(rt.wtClientW) + " H:" + std::to_string(rt.wtClientH)},
-        {"WT client abs", pointToString(rt.wtClientAbs)},
         {"Font (calc)", dbl2(rt.calcFontW, rt.calcFontH)},
-        {"Font (WT)", dbl2(rt.wtFontW, rt.wtFontH)},
+        {"Font (WT-calc)", dbl2(rt.wtFontW, rt.wtFontH)},
         {"Mouse screen", pointToString(rt.mouseScreen)},
         {"Mouse scaled", dblPair(rt.mouseScreenScaled.x, rt.mouseScreenScaled.y, 0)},
         {"Mouse cell (VT)", dblPair(rt.mouseCellVt.x, rt.mouseCellVt.y)},
@@ -76,7 +103,7 @@ std::vector<AboutScreen::Entry> AboutScreen::buildEntries() {
 int AboutScreen::computeMaxLabel(const std::vector<Entry>& entries) const {
     int maxLen = 0;
     for (const auto& e : entries) {
-        maxLen = std::max<int>(maxLen, static_cast<int>(e.label.size()));
+        maxLen = std::max<int>(maxLen, static_cast<int>(TuiUtils::calculateUtf8VisualWidth(e.label)));
     }
     return maxLen;
 }
@@ -89,37 +116,39 @@ void AboutScreen::clampScroll(int totalRows) {
 void AboutScreen::render(const std::vector<Entry>& entries, int maxLabelWidth) {
     surface.clear({220, 230, 240}, {12, 14, 18}, " ");
 
-    // top accent bars
-    surface.fillRect(0, 0, surface.getWidth(), 1, {96, 140, 255}, {96, 140, 255}, " ");
-    surface.fillRect(0, surface.getHeight() - 1, surface.getWidth(), 1, {96, 140, 255}, {96, 140, 255}, " ");
+    const int sw = surface.getWidth();
+    const int sh = surface.getHeight();
 
-    // banner
+    // top accent bars
+    surface.fillRect(0, 0, sw, 1, {96, 140, 255}, {96, 140, 255}, " ");
+    surface.fillRect(0, sh - 1, sw, 1, {96, 140, 255}, {96, 140, 255}, " ");
+
+    // banner (centered)
     int bannerStartY = 2;
     for (size_t i = 0; i < kBannerLines.size(); ++i) {
         double fade = static_cast<double>(i) / std::max<size_t>(1, kBannerLines.size() - 1);
         RGBColor rowBg = TuiUtils::blendColor({96, 140, 255}, {18, 21, 28}, 0.35 + fade * 0.15);
         RGBColor rowFg = TuiUtils::blendColor({220, 230, 255}, {200, 230, 255}, 0.4 + fade * 0.1);
-        surface.fillRect(0, bannerStartY + static_cast<int>(i), surface.getWidth(), 1, rowFg, rowBg, " ");
+        surface.fillRect(0, bannerStartY + static_cast<int>(i), sw, 1, rowFg, rowBg, " ");
         std::string line = kBannerLines[i];
-        size_t vis = TuiUtils::calculateUtf8VisualWidth(line);
-        int maxVis = surface.getWidth();
-        if (static_cast<int>(vis) > maxVis) {
-            line = TuiUtils::trimToUtf8VisualWidth(line, static_cast<size_t>(maxVis));
-        }
-        surface.drawCenteredText(0, bannerStartY + static_cast<int>(i), surface.getWidth(), line, rowFg, rowBg);
+        surface.drawCenteredText(0, bannerStartY + static_cast<int>(i), sw, line, rowFg, rowBg);
     }
 
     listStartY = bannerStartY + static_cast<int>(kBannerLines.size()) + 2;
     int bottomPadding = 3;
-    listHeight = std::max(1, surface.getHeight() - listStartY - bottomPadding);
+    listHeight = std::max(1, sh - listStartY - bottomPadding);
 
     clampScroll(static_cast<int>(entries.size()));
 
-    // panel background
-    surface.fillRect(1, listStartY - 1, surface.getWidth() - 2, listHeight + 1, {210, 215, 224}, {18, 21, 28}, " ");
+    // Center panel
+    int panelWidth = std::min(sw - 4, std::max(80, maxLabelWidth + 50));
+    int panelX = (sw - panelWidth) / 2;
 
-    int labelX = 4;
-    int valueX = labelX + maxLabelWidth + 2;
+    // panel background
+    surface.fillRect(panelX, listStartY - 1, panelWidth, listHeight + 1, {210, 215, 224}, {18, 21, 28}, " ");
+
+    int labelX = panelX + 3;
+    int valueX = labelX + maxLabelWidth + 3;
 
     for (int row = 0; row < listHeight; ++row) {
         int idx = row + scrollOffset;
@@ -127,19 +156,28 @@ void AboutScreen::render(const std::vector<Entry>& entries, int maxLabelWidth) {
         bool alt = (row % 2) == 1;
         RGBColor fg = {210, 215, 224};
         RGBColor bg = alt ? RGBColor{20, 24, 32} : RGBColor{18, 21, 28};
-        surface.fillRect(2, listStartY + row, surface.getWidth() - 4, 1, fg, bg, " ");
+        surface.fillRect(panelX + 1, listStartY + row, panelWidth - 2, 1, fg, bg, " ");
 
         std::string label = entries[static_cast<size_t>(idx)].label;
-        if (static_cast<int>(label.size()) < maxLabelWidth) {
-            label = std::string(static_cast<size_t>(maxLabelWidth - static_cast<int>(label.size())), ' ') + label;
-        }
-        surface.drawText(labelX, listStartY + row, label + "  ", {160, 170, 190}, bg);
+        int pad = maxLabelWidth - static_cast<int>(TuiUtils::calculateUtf8VisualWidth(label));
+        if (pad > 0) label = std::string(static_cast<size_t>(pad), ' ') + label;
+
+        surface.drawText(labelX, listStartY + row, label + ":", {160, 170, 190}, bg);
         surface.drawText(valueX, listStartY + row, entries[static_cast<size_t>(idx)].value, fg, bg);
     }
 
+    // Scroll indicator if needed
+    if (static_cast<int>(entries.size()) > listHeight) {
+        int scrollX = panelX + panelWidth - 2;
+        surface.fillRect(scrollX, listStartY, 1, listHeight, {60, 70, 80}, {12, 14, 18}, " ");
+        int thumbH = std::max(1, (listHeight * listHeight) / static_cast<int>(entries.size()));
+        int thumbY = (scrollOffset * listHeight) / static_cast<int>(entries.size());
+        surface.fillRect(scrollX, listStartY + thumbY, 1, thumbH, {96, 140, 255}, {96, 140, 255}, " ");
+    }
+
     std::ostringstream footer;
-    footer << "Up/Down scroll · Mouse wheel · Q to exit";
-    surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), footer.str(), {160, 170, 190}, {12, 14, 18});
+    footer << "Up/Down · Mouse wheel · Q to exit";
+    surface.drawCenteredText(0, sh - 2, sw, footer.str(), {160, 170, 190}, {12, 14, 18});
 }
 
 void AboutScreen::show() {
@@ -148,6 +186,14 @@ void AboutScreen::show() {
     std::cout << "\x1b[?25l" << "\x1b[2J\x1b[H" << std::flush;
 
     while (running) {
+        auto& env = EnvConfig::getInstance();
+        env.refresh();
+        const auto& rt = env.getRuntimeInfo();
+        if (rt.consoleCols != surface.getWidth() || rt.consoleRows != surface.getHeight()) {
+            surface.resize(rt.consoleCols, rt.consoleRows);
+            std::cout << "\x1b[2J\x1b[H" << std::flush;
+        }
+
         auto entries = buildEntries();
         int maxLabel = computeMaxLabel(entries);
 
@@ -172,7 +218,7 @@ void AboutScreen::show() {
                 }
             } else if (ev.type == InputEvent::Type::Mouse) {
                 if (ev.wheel != 0) {
-                    scrollOffset -= ev.wheel; // wheel>0 up
+                    scrollOffset -= ev.wheel;
                 }
             }
         }
