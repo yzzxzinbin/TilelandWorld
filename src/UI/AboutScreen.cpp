@@ -144,8 +144,8 @@ void AboutScreen::render(const std::vector<Entry>& entries, int maxLabelWidth) {
     clampScroll(static_cast<int>(entries.size()));
 
     // Center panel
-    int panelWidth = std::min(sw - 4, std::max(80, maxLabelWidth + 50));
-    int panelX = (sw - panelWidth) / 2;
+    panelWidth = std::min(sw - 4, std::max(80, maxLabelWidth + 50));
+    panelX = (sw - panelWidth) / 2;
 
     // panel background
     surface.fillRect(panelX, listStartY - 1, panelWidth, listHeight + 1, {210, 215, 224}, {18, 21, 28}, " ");
@@ -159,6 +159,13 @@ void AboutScreen::render(const std::vector<Entry>& entries, int maxLabelWidth) {
         bool alt = (row % 2) == 1;
         RGBColor fg = {210, 215, 224};
         RGBColor bg = alt ? RGBColor{20, 24, 32} : RGBColor{18, 21, 28};
+
+        // Hover effect: 20% white blend
+        if (row == hoverRow) {
+            bg = TuiUtils::blendColor(bg, {255, 255, 255}, 0.2);
+            fg = TuiUtils::blendColor(fg, {255, 255, 255}, 0.1);
+        }
+
         surface.fillRect(panelX + 1, listStartY + row, panelWidth - 2, 1, fg, bg, " ");
 
         std::string label = entries[static_cast<size_t>(idx)].label;
@@ -171,17 +178,26 @@ void AboutScreen::render(const std::vector<Entry>& entries, int maxLabelWidth) {
 
     // Scroll indicator if needed
     if (static_cast<int>(entries.size()) > listHeight) {
-        int scrollX = panelX + panelWidth - 2;
-        // Background track
-        surface.fillRect(scrollX, listStartY, 1, listHeight, {60, 70, 80}, {12, 14, 18}, " ");
+        scrollX = panelX + panelWidth - 2;
+        // Background track - darker and more subtle
+        surface.fillRect(scrollX, listStartY, 1, listHeight, {45, 50, 60}, {25, 28, 35}, " ");
         
         int totalRows = static_cast<int>(entries.size());
-        int thumbH = std::max(1, (listHeight * listHeight) / totalRows);
+        thumbH = std::max(2, (listHeight * listHeight) / totalRows);
         int maxScroll = totalRows - listHeight;
-        // Correctly map [0, maxScroll] -> [0, listHeight - thumbH] to ensure it reaches the bottom
-        int thumbY = (maxScroll > 0) ? (scrollOffset * (listHeight - thumbH) / maxScroll) : 0;
+        thumbY = (maxScroll > 0) ? (scrollOffset * (listHeight - thumbH) / maxScroll) : 0;
         
-        surface.fillRect(scrollX, listStartY + thumbY, 1, thumbH, {96, 140, 255}, {96, 140, 255}, " ");
+        // thumb color: bright accent, highlight if hovered or dragging
+        RGBColor thumbColor = {110, 160, 255};
+        if (hoverScroll || draggingScroll) {
+            thumbColor = TuiUtils::blendColor(thumbColor, {255, 255, 255}, 0.25);
+        }
+        
+        surface.fillRect(scrollX, listStartY + thumbY, 1, thumbH, thumbColor, thumbColor, " ");
+    } else {
+        scrollX = -1;
+        thumbH = 0;
+        thumbY = 0;
     }
 
     std::ostringstream footer;
@@ -211,7 +227,7 @@ void AboutScreen::show() {
 
         auto events = input->pollEvents();
         if (events.empty()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
 
         for (const auto& ev : events) {
@@ -226,15 +242,76 @@ void AboutScreen::show() {
                     if (c == 's' || c == 'S') { ++scrollOffset; }
                 }
             } else if (ev.type == InputEvent::Type::Mouse) {
-                if (ev.wheel != 0) {
-                    scrollOffset -= ev.wheel;
-                }
+                handleMouse(ev, running, static_cast<int>(entries.size()));
             }
         }
     }
 
     painter.reset();
     input->stop();
+}
+
+void AboutScreen::handleMouse(const InputEvent& ev, bool& running, int numEntries) {
+    if (!running) return;
+
+    if (ev.wheel != 0) {
+        scrollOffset -= ev.wheel;
+        clampScroll(numEntries);
+        return;
+    }
+
+    // List hover detection
+    if (ev.x >= panelX + 1 && ev.x < panelX + panelWidth - 2 &&
+        ev.y >= listStartY && ev.y < listStartY + listHeight) {
+        hoverRow = ev.y - listStartY;
+    } else {
+        hoverRow = -1;
+    }
+
+    // Scrollbar interaction
+    if (scrollX > 0) {
+        // Hover detection for thumb
+        if (ev.x == scrollX && ev.y >= listStartY + thumbY && ev.y < listStartY + thumbY + thumbH) {
+            hoverScroll = true;
+        } else {
+            hoverScroll = false;
+        }
+
+        if (ev.type == InputEvent::Type::Mouse) {
+            if (ev.button == 0) {
+                if (ev.pressed) {
+                    // Clicked on track or thumb
+                    if (ev.x == scrollX && ev.y >= listStartY && ev.y < listStartY + listHeight) {
+                        draggingScroll = true;
+                    }
+                } else if (!ev.move && ev.wheel == 0) {
+                    // This is a button release!
+                    draggingScroll = false;
+                }
+            }
+
+            if (draggingScroll && ev.move) {
+                int relY = std::clamp(ev.y - listStartY, 0, listHeight - 1);
+                int totalRows = numEntries;
+                if (totalRows > listHeight) {
+                    double ratio = static_cast<double>(relY) / std::max(1, listHeight - 1);
+                    scrollOffset = static_cast<int>(ratio * (totalRows - listHeight));
+                    clampScroll(numEntries);
+                }
+            } else if (draggingScroll && ev.pressed && ev.button == 0) {
+                // Instant jump on click
+                int relY = std::clamp(ev.y - listStartY, 0, listHeight - 1);
+                if (numEntries > listHeight) {
+                    double ratio = static_cast<double>(relY) / std::max(1, listHeight - 1);
+                    scrollOffset = static_cast<int>(ratio * (numEntries - listHeight));
+                    clampScroll(numEntries);
+                }
+            }
+        }
+    } else {
+        hoverScroll = false;
+        draggingScroll = false;
+    }
 }
 
 } // namespace UI

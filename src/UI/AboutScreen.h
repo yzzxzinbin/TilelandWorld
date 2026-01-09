@@ -25,6 +25,16 @@ private:
     int scrollOffset{0};
     int listStartY{0};
     int listHeight{0};
+    int hoverRow{-1};
+    bool hoverScroll{false};
+    bool draggingScroll{false};
+
+    // Layout cache for mouse hit testing
+    int panelX{0};
+    int panelWidth{0};
+    int scrollX{0};
+    int thumbY{0};
+    int thumbH{0};
 
     struct Entry { std::string label; std::string value; };
 
@@ -32,6 +42,7 @@ private:
     std::vector<Entry> buildEntries();
     int computeMaxLabel(const std::vector<Entry>& entries) const;
     void clampScroll(int totalRows);
+    void handleMouse(const InputEvent& ev, bool& running, int numEntries);
 };
 
 } // namespace UI
