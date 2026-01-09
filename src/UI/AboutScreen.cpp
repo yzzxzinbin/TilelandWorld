@@ -148,7 +148,7 @@ void AboutScreen::render(const std::vector<Entry>& entries, int maxLabelWidth) {
     // panel background
     surface.fillRect(panelX, listStartY - 1, panelWidth, listHeight + 1, {210, 215, 224}, {18, 21, 28}, " ");
 
-    int labelX = panelX + 3;
+    int labelX = panelX + 8;
     int valueX = labelX + maxLabelWidth + 3;
 
     for (int row = 0; row < listHeight; ++row) {
@@ -209,7 +209,7 @@ void AboutScreen::show() {
 
         auto events = input->pollEvents();
         if (events.empty()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
         for (const auto& ev : events) {

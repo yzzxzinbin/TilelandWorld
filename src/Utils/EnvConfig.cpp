@@ -173,7 +173,7 @@ bool EnvConfig::queryVTDimensions(int& rows, int& cols, int& pixW, int& pixH) {
     while (std::chrono::steady_clock::now() - start < timeout) {
         DWORD available = 0;
         if (!GetNumberOfConsoleInputEvents(hIn, &available) || available == 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            std::this_thread::sleep_for(std::chrono::milliseconds(35));
             continue;
         }
         while (available-- > 0) {
@@ -221,14 +221,32 @@ void EnvConfig::updateStaticMetrics() {
 }
 
 void EnvConfig::fetchStaticSystemInfo() {
-    // Windows Version
-    staticInfo.windowsVersion = "Windows 10+";
-    OSVERSIONINFOEXA osvi = { sizeof(osvi) };
+    // Windows Version - Using RtlGetVersion to bypass manifest limitations
+    staticInfo.windowsVersion = "Unknown Windows";
+    
+    HMODULE hMod = GetModuleHandleA("ntdll.dll");
+    if (hMod) {
+        typedef LONG(WINAPI* pRtlGetVersion)(POSVERSIONINFOEXW);
+        auto fRtlGetVersion = (pRtlGetVersion)GetProcAddress(hMod, "RtlGetVersion");
+        if (fRtlGetVersion) {
+            OSVERSIONINFOEXW rovi = { sizeof(rovi) };
+            if (fRtlGetVersion(&rovi) == 0) { // STATUS_SUCCESS is 0
+                std::ostringstream oss;
+                oss << (int)rovi.dwMajorVersion << "." << (int)rovi.dwMinorVersion << " (Build " << rovi.dwBuildNumber << ")";
+                staticInfo.windowsVersion = oss.str();
+            }
+        }
+    }
+
+    // fallback if ntdll failed
+    if (staticInfo.windowsVersion == "Unknown Windows") {
+        OSVERSIONINFOEXA osvi = { sizeof(osvi) };
 #pragma warning(suppress : 4996)
-    if (GetVersionExA((OSVERSIONINFOA*)&osvi)) {
-        std::ostringstream oss;
-        oss << (int)osvi.dwMajorVersion << "." << (int)osvi.dwMinorVersion << " (Build " << osvi.dwBuildNumber << ")";
-        staticInfo.windowsVersion = oss.str();
+        if (GetVersionExA((OSVERSIONINFOA*)&osvi)) {
+            std::ostringstream oss;
+            oss << (int)osvi.dwMajorVersion << "." << (int)osvi.dwMinorVersion << " (Build " << osvi.dwBuildNumber << ")";
+            staticInfo.windowsVersion = oss.str();
+        }
     }
 
     // System DPI
