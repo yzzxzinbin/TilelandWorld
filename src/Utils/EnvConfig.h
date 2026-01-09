@@ -30,6 +30,8 @@ struct EnvStaticInfo {
     int systemDpi{96};
     std::string language;
     std::string userInfo; // user@computer
+    std::string appVersion;
+    std::string buildTimestamp;
 };
 
 struct EnvRuntimeInfo {

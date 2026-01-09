@@ -1,4 +1,5 @@
 #include "EnvConfig.h"
+#include "BuildInfo.h"
 
 #include <algorithm>
 #include <chrono>
@@ -279,6 +280,9 @@ void EnvConfig::fetchStaticSystemInfo() {
     GetComputerNameA(comp, &compLen);
 
     staticInfo.userInfo = std::string(user) + "@" + std::string(comp);
+
+    staticInfo.appVersion = TILELAND_BUILD_VERSION;
+    staticInfo.buildTimestamp = TILELAND_BUILD_TIMESTAMP;
 }
 
 void EnvConfig::updateRuntimeMetrics() {

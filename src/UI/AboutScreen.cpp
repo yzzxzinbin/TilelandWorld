@@ -69,6 +69,8 @@ std::vector<AboutScreen::Entry> AboutScreen::buildEntries() {
     };
 
     std::vector<Entry> out = {
+        {"App Version", st.appVersion},
+        {"Build Time", st.buildTimestamp},
         {"Env name", st.envName},
         {"UserInfo", st.userInfo},
         {"Windows version", st.windowsVersion},

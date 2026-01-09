@@ -19,13 +19,14 @@
 using namespace TilelandWorld;
 
 int main() {
-    // 0. 初始化日志
+    // 0.1 初始化日志系统
     if (!Logger::getInstance().initialize("tui_test.log")) {
         std::cerr << "Failed to initialize logger." << std::endl;
         return 1;
     }
     LOG_INFO("Starting TUI Controller Test...");
 
+    // 0.2 初始化环境配置
     auto& envCfg = EnvConfig::getInstance();
     envCfg.initialize();
     const auto& envStatic = envCfg.getStaticInfo();

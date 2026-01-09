@@ -4,7 +4,7 @@
 
 #include "AnsiTui.h"
 #include "../Controllers/InputController.h"
-#include "BuildInfo.h"
+#include "../Utils/EnvConfig.h"
 
 namespace TilelandWorld {
 namespace UI {
@@ -26,8 +26,6 @@ private:
     MenuTheme theme;
     MenuView menu;
     size_t selectedIndex{0};
-    inline static constexpr const char* kVersion = TILELAND_BUILD_VERSION;
-    inline static constexpr const char* kBuildTimestamp = TILELAND_BUILD_TIMESTAMP;
 
     void renderFrame();
     void handleKey(int key, bool& running, Action& result);

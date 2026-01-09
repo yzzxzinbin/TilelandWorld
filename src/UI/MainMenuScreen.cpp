@@ -134,7 +134,8 @@ void MainMenuScreen::renderFrame() {
     int infoOriginY = surface.getHeight() - infoHeight - 2;
     surface.fillRect(0, infoOriginY, surface.getWidth(), infoHeight, theme.panel, theme.panel, " ");
     surface.drawCenteredText(0, infoOriginY, surface.getWidth(), "Procedural walls, endless plains", theme.subtitle, theme.panel);
-    std::string versionLine = "Version " + std::string(kVersion) + " • build " + kBuildTimestamp;
+    const auto& st = EnvConfig::getInstance().getStaticInfo();
+    std::string versionLine = "Version " + st.appVersion + " • build " + st.buildTimestamp;
     surface.drawCenteredText(0, infoOriginY + 1, surface.getWidth(), versionLine, theme.hintFg, theme.panel);
 }
 
