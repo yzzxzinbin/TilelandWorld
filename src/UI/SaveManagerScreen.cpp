@@ -2,6 +2,11 @@
 #include "SaveCreationScreen.h"
 #include "TuiUtils.h"
 #include "../BinaryFileInfrastructure/MapSerializer.h"
+#include "../Map.h"
+#include "../Settings.h"
+#include "../MapGenInfrastructure/TerrainGeneratorFactory.h"
+#include "../Controllers/TuiCoreController.h"
+#include "../Utils/Logger.h"
 #include <filesystem>
 #include <algorithm>
 #include <chrono>
@@ -23,13 +28,13 @@ namespace {
     const BoxStyle kModernFrame{"╭", "╮", "╰", "╯", "─", "│"};
 }
 
-SaveManagerScreen::SaveManagerScreen(std::string saveDirectory)
-    : directory(std::move(saveDirectory)), surface(96, 32), menu({}, theme) {
+SaveManagerScreen::SaveManagerScreen(Settings& settings)
+    : settings(settings), surface(96, 32), menu({}, theme) {
     menu.setFrameStyle(kModernFrame);
     refreshList();
 }
 
-SaveManagerScreen::Result SaveManagerScreen::show() {
+void SaveManagerScreen::show() {
     ensureAnsiEnabled();
     InputController input;
     input.start();
@@ -71,14 +76,36 @@ SaveManagerScreen::Result SaveManagerScreen::show() {
 
     painter.reset();
     input.stop();
-    return result;
+}
+
+void SaveManagerScreen::runGame(std::unique_ptr<Map> map) {
+    if (!map) return;
+
+    // 清屏：进入游戏主循环前做一次 ANSI 清屏
+    std::cout << "\x1b[2J\x1b[H" << std::flush;
+
+    try {
+        TuiCoreController controller(*map, settings);
+        LOG_INFO("SaveManager: TuiCoreController created.");
+
+        controller.initialize();
+        LOG_INFO("SaveManager: Controller initialized. Entering run loop.");
+
+        controller.run();
+        LOG_INFO("SaveManager: Game loop finished. Returning to save manager.");
+    } catch (const std::exception& e) {
+        LOG_ERROR("SaveManager: Exception during game loop: " + std::string(e.what()));
+    }
+
+    // 重新进入存档管理器后，可能需要再次清屏或由 renderFrame 处理
+    std::cout << "\x1b[2J\x1b[H" << std::flush;
 }
 
 void SaveManagerScreen::refreshList() {
-    std::filesystem::create_directories(directory);
+    std::filesystem::create_directories(settings.saveDirectory);
 
     std::vector<std::string> names;
-    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+    for (const auto& entry : std::filesystem::directory_iterator(settings.saveDirectory)) {
         if (!entry.is_regular_file()) continue;
         auto ext = entry.path().extension().string();
         if (ext == ".tlwf" || ext == ".tlwz") {
@@ -133,7 +160,7 @@ void SaveManagerScreen::renderFrame() {
 
     renderInfoBar();
 
-    std::string dirLabel = "Dir: " + directory;
+    std::string dirLabel = "Dir: " + settings.saveDirectory;
     surface.drawText(2, surface.getHeight() - 3, dirLabel, theme.hintFg, theme.background);
 }
 
@@ -178,7 +205,7 @@ void SaveManagerScreen::renderInfoBar() {
     surface.drawText(2, y + 2, "E: edit parameters for this world", theme.hintFg, theme.panel);
 }
 
-void SaveManagerScreen::handleKey(int key, bool& running, Result& result, InputController& input) {
+void SaveManagerScreen::handleKey(int key, bool& running, Result&, InputController& input) {
     if (!running) return;
 
     if (key == kArrowUp || key == 'w' || key == 'W') {
@@ -199,28 +226,40 @@ void SaveManagerScreen::handleKey(int key, bool& running, Result& result, InputC
     } else if (key == 13) { // Enter
         size_t idx = menu.getSelected();
         if (idx < saves.size()) {
-            result.action = Result::Action::Load;
-            result.saveName = saves[idx];
-            result.saveDirectory = directory;
-            running = false;
+            std::string saveName = saves[idx];
+            auto map = MapSerializer::loadMapFromSave(saveName, settings.saveDirectory);
+            if (map) {
+                LOG_INFO("SaveManager: Loaded save '" + saveName + "'. Starting game.");
+                input.stop();
+                runGame(std::move(map));
+                input.start();
+                refreshList();
+            } else {
+                LOG_ERROR("SaveManager: Failed to load save '" + saveName + "'.");
+            }
         } else if (idx == saves.size()) { // New
             input.stop();
-            result = handleCreateNew(input);
-            input.start();
-            if (result.action != Result::Action::Back) {
-                if (!result.saveDirectory.empty()) {
-                    directory = result.saveDirectory;
+            SaveCreationScreen creator(settings.saveDirectory);
+            auto form = creator.show();
+            if (form.accepted) {
+                if (!form.saveDirectory.empty()) {
+                    settings.saveDirectory = form.saveDirectory;
                 }
-                running = false;
+                std::filesystem::create_directories(settings.saveDirectory);
+
+                auto map = std::make_unique<Map>(createTerrainGeneratorFromMetadata(form.metadata));
+                map->setWorldMetadata(form.metadata);
+                MapSerializer::saveCompressedMap(*map, form.saveName, settings.saveDirectory, false);
+
+                LOG_INFO("SaveManager: Created new save '" + form.saveName + "'. Starting game.");
+                runGame(std::move(map));
+                refreshList();
             }
+            input.start();
         } else { // Back
-            result.action = Result::Action::Back;
-            result.saveDirectory = directory;
             running = false;
         }
     } else if (key == 'q' || key == 'Q') {
-        result.action = Result::Action::Back;
-        result.saveDirectory = directory;
         running = false;
     }
 }
@@ -259,7 +298,7 @@ void SaveManagerScreen::ensureInfo(size_t idx) {
     if (slot.loaded) return;
     slot.loaded = true;
     MapSerializer::SaveSummary summary{};
-    if (MapSerializer::readSaveSummary(saves[idx], directory, summary)) {
+    if (MapSerializer::readSaveSummary(saves[idx], settings.saveDirectory, summary)) {
         slot.ok = true;
         slot.summary = std::move(summary);
     } else {
@@ -286,7 +325,7 @@ bool SaveManagerScreen::editSave(size_t idx, InputController& input) {
     if (infoCache.size() <= idx || !infoCache[idx].ok) return false;
 
     auto meta = infoCache[idx].summary.metadata;
-    SaveCreationScreen editor(directory, meta, saves[idx], true, true);
+    SaveCreationScreen editor(settings.saveDirectory, meta, saves[idx], true, true);
 
     input.stop();
     auto form = editor.show();
@@ -294,7 +333,7 @@ bool SaveManagerScreen::editSave(size_t idx, InputController& input) {
 
     if (!form.accepted) return false;
 
-    bool updated = MapSerializer::updateMetadata(saves[idx], directory, form.metadata);
+    bool updated = MapSerializer::updateMetadata(saves[idx], settings.saveDirectory, form.metadata);
     if (updated) {
         if (infoCache.size() > idx) {
             infoCache[idx].loaded = false;
@@ -317,27 +356,12 @@ void SaveManagerScreen::ensureAnsiEnabled() {
 #endif
 }
 
-SaveManagerScreen::Result SaveManagerScreen::handleCreateNew(InputController&) {
-    Result res{};
-    res.action = Result::Action::Back;
-
-    SaveCreationScreen creator(directory);
-    auto form = creator.show();
-    if (form.accepted) {
-        res.action = Result::Action::CreateNew;
-        res.saveName = form.saveName;
-        res.metadata = form.metadata;
-        res.saveDirectory = form.saveDirectory;
-    }
-    return res;
-}
-
 bool SaveManagerScreen::deleteSelected() {
     size_t idx = menu.getSelected();
     if (idx >= saves.size()) return false;
     std::string name = saves[idx];
-    auto tlwf = MapSerializer::getTlwfPath(name, directory);
-    auto tlwz = MapSerializer::getTlwzPath(name, directory);
+    auto tlwf = MapSerializer::getTlwfPath(name, settings.saveDirectory);
+    auto tlwz = MapSerializer::getTlwzPath(name, settings.saveDirectory);
     bool removed = false;
     try {
         removed = std::filesystem::remove(tlwf) || removed;

@@ -8,27 +8,31 @@
 #include "../BinaryFileInfrastructure/MapSerializer.h"
 #include <string>
 #include <vector>
+#include <memory>
 
 namespace TilelandWorld {
+    class Map;
+    struct Settings;
+
 namespace UI {
 
 class SaveManagerScreen {
 public:
+    explicit SaveManagerScreen(Settings& settings);
+
+    // 显示存档管理器，并在其中启动游戏主循环
+    void show();
+
+private:
     struct Result {
         enum class Action { Load, CreateNew, Back };
         Action action{Action::Back};
         std::string saveName;
         std::string saveDirectory;
-        WorldMetadata metadata{};
+        std::unique_ptr<Map> map;
     };
 
-    explicit SaveManagerScreen(std::string saveDirectory);
-
-    // 显示存档管理器，返回用户动作与所选存档信息
-    Result show();
-
-private:
-    std::string directory;
+    Settings& settings;
     TuiSurface surface;
     TuiPainter painter;
     MenuTheme theme;
@@ -55,7 +59,7 @@ private:
     std::string formatBytes(size_t bytes) const;
     bool editSave(size_t idx, InputController& input);
 
-    Result handleCreateNew(InputController& input);
+    void runGame(std::unique_ptr<Map> map);
     bool deleteSelected();
 };
 

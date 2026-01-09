@@ -53,6 +53,7 @@ namespace TilelandWorld {
 
 #ifdef _WIN32
         if (hIn != INVALID_HANDLE_VALUE) {
+            enableVTInput();
             FlushConsoleInputBuffer(hIn);
         }
 #endif
@@ -336,9 +337,16 @@ namespace TilelandWorld {
     bool InputController::enableVTInput()
     {
         if (hIn == INVALID_HANDLE_VALUE) return false;
-        if (!GetConsoleMode(hIn, &oldMode)) return false;
+        
+        DWORD currentMode = 0;
+        if (!GetConsoleMode(hIn, &currentMode)) return false;
 
-        DWORD newMode = oldMode;
+        if (!modeSaved) {
+            oldMode = currentMode;
+            modeSaved = true;
+        }
+
+        DWORD newMode = currentMode;
         newMode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_MOUSE_INPUT | ENABLE_QUICK_EDIT_MODE);
         newMode |= ENABLE_WINDOW_INPUT; // receive resize
         newMode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
@@ -355,8 +363,9 @@ namespace TilelandWorld {
 
     void InputController::restoreConsole()
     {
-        if (hIn != INVALID_HANDLE_VALUE && oldMode != 0) {
+        if (hIn != INVALID_HANDLE_VALUE && modeSaved) {
             SetConsoleMode(hIn, oldMode);
+            modeSaved = false;
             DWORD written = 0;
             const char* disableSeq = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l";
             WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), disableSeq, static_cast<DWORD>(strlen(disableSeq)), &written, nullptr);

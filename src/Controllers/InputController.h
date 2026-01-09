@@ -64,6 +64,7 @@ namespace TilelandWorld {
 #ifdef _WIN32
         HANDLE hIn{INVALID_HANDLE_VALUE};
         DWORD oldMode{0};
+        bool modeSaved{false};
 #endif
     bool restoreOnExit{true};
         std::thread readerThread;
