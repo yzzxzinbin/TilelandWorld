@@ -4,6 +4,7 @@
 #include "TuiUtils.h"
 #include "YuiEditorScreen.h"
 #include "../ImgAssetsInfrastructure/ImageLoader.h"
+#include "../Utils/EnvConfig.h"
 #include <iostream>
 #include <filesystem>
 #include <thread>
@@ -87,7 +88,7 @@ namespace UI {
                         else if (result == 2) deleteCurrentAsset();
                         else if (result == 3) {
                             if (!previewLoaded) loadPreview();
-                            if (previewLoaded) showInfoDialog(currentPreview);
+                            if (previewLoaded) showInfoDialog(getSelectedAssetName(), currentPreview);
                         }
                     }
                     if (requestClose) {
@@ -167,7 +168,7 @@ namespace UI {
                                     renameCurrentAsset();
                                 } else if (onInfo) {
                                     if (!previewLoaded) loadPreview();
-                                    if (previewLoaded) showInfoDialog(currentPreview);
+                                    if (previewLoaded) showInfoDialog(getSelectedAssetName(), currentPreview);
                                 }
                             }
                         }
@@ -805,7 +806,12 @@ namespace UI {
     }
 
     void AssetManagerScreen::showImportDialog(const std::string& filePath) {
-        std::string widthStr = "80";
+        
+        input->start(); 
+
+        EnvConfig::getInstance().refresh();
+        int defaultW = std::max(10, EnvConfig::getInstance().getRuntimeInfo().consoleCols - 6);
+        std::string widthStr = std::to_string(defaultW);
         int qualityIdx = 1; // 0: Low, 1: High
         int focusIdx = 0; // 0:W, 1:Quality, 2:Import, 3:Cancel
         bool hoverImport = false, hoverCancel = false;
@@ -814,7 +820,7 @@ namespace UI {
         bool dialogRunning = true;
         int mouseX = -1;
         int mouseY = -1;
-        input->start(); 
+   
 
         while (dialogRunning) {
             // Render background (dimmed)
@@ -919,11 +925,20 @@ namespace UI {
                         if (onImport) {
                             // trigger import same as Enter on Import
                             try {
-                                int tw = std::stoi(widthStr);
                                 surface.drawText(dx + 2, dy + dh - 2, "Converting...", theme.focusFg, theme.panel);
                                 painter.present(surface);
                                 RawImage raw = ImageLoader::load(filePath);
                                 if (raw.valid) {
+                                    int tw = defaultW;
+                                    if (!widthStr.empty() && widthStr.back() == '%') {
+                                        try {
+                                            double pct = std::stod(widthStr.substr(0, widthStr.size() - 1)) / 100.0;
+                                            tw = std::max(1, static_cast<int>(std::round(raw.width * pct)));
+                                        } catch (...) {}
+                                    } else {
+                                        try { tw = std::stoi(widthStr); } catch (...) {}
+                                    }
+
                                     AdvancedImageConverter::Options opts;
                                     opts.targetWidth = tw;
                                     double aspect = 0.5;
@@ -955,13 +970,21 @@ namespace UI {
                     } else if (ev.key == InputKey::Enter) {
                         if (focusIdx == 2) { // Import
                             try {
-                                int tw = std::stoi(widthStr);
-                                
                                 surface.drawText(dx + 2, dy + dh - 2, "Converting...", theme.focusFg, theme.panel);
                                 painter.present(surface);
                                 
                                 RawImage raw = ImageLoader::load(filePath);
                                 if (raw.valid) {
+                                    int tw = defaultW;
+                                    if (!widthStr.empty() && widthStr.back() == '%') {
+                                        try {
+                                            double pct = std::stod(widthStr.substr(0, widthStr.size() - 1)) / 100.0;
+                                            tw = std::max(1, static_cast<int>(std::round(raw.width * pct)));
+                                        } catch (...) {}
+                                    } else {
+                                        try { tw = std::stoi(widthStr); } catch (...) {}
+                                    }
+
                                     AdvancedImageConverter::Options opts;
                                     opts.targetWidth = tw;
                                     // Calculate height based on aspect ratio (0.5 for TUI cells)
@@ -984,7 +1007,7 @@ namespace UI {
                     } else if (ev.key == InputKey::Character && ev.ch == '\b') {
                         if (focusIdx == 0 && !widthStr.empty()) widthStr.pop_back();
                     } else if (ev.key == InputKey::Character) {
-                        if (isdigit(ev.ch)) {
+                        if (isdigit(ev.ch) || ev.ch == '%') {
                             if (focusIdx == 0) widthStr += ev.ch;
                         }
                     } else if (ev.key == InputKey::ArrowLeft || ev.key == InputKey::ArrowRight) {
@@ -1002,10 +1025,11 @@ namespace UI {
         input->stop();
     }
 
-void AssetManagerScreen::showInfoDialog(const ImageAsset& asset) {
+void AssetManagerScreen::showInfoDialog(const std::string& assetName, const ImageAsset& asset) {
     int w = surface.getWidth();
     int h = surface.getHeight();
     std::vector<std::string> lines;
+    lines.push_back("Resource: " + assetName);
     if (asset.getWidth() <= 0 || asset.getHeight() <= 0) {
         lines.push_back("No image loaded");
     } else {

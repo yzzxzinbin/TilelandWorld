@@ -82,7 +82,7 @@ private:
     // Dialogs
     void showImportDialog(const std::string& filePath);
     // Show detailed info about current image asset
-    void showInfoDialog(const ImageAsset& asset);
+    void showInfoDialog(const std::string& assetName, const ImageAsset& asset);
 };
 
 }
