@@ -8,6 +8,7 @@
 #include "../Controllers/InputController.h"
 #include "../Utils/TaskSystem.h"
 #include "TextField.h"
+#include "ContextMenu.h"
 #include <memory>
 
 namespace TilelandWorld {
@@ -52,6 +53,10 @@ private:
     int listX{0}, listY{0}, listW{0}, listH{0};
     int searchFieldX{0}, searchFieldY{0}, searchFieldW{0};
     int buttonOpenX{0}, buttonRenameX{0}, buttonDeleteX{0}, buttonInfoX{0};
+
+    // Context Menu
+    ContextMenuState ctxMenuState;
+    std::vector<std::string> ctxMenuItems = {"Open", "Rename", "Delete", "Info"};
 
     enum class HoverButton { None, Open, Rename, Delete, Info };
     int hoverRow{-1};

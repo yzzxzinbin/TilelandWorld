@@ -69,10 +69,33 @@ namespace UI {
         while (running) {
             searchState.updateCaret();
             drawMainUI();
+            
+            if (ctxMenuState.visible) {
+                ContextMenu::render(surface, ctxMenuItems, ctxMenuState);
+            }
+
             painter.present(surface);
             
             auto events = input->pollEvents();
             for (const auto& ev : events) {
+                if (ctxMenuState.visible) {
+                    bool requestClose = false;
+                    int result = ContextMenu::handleInput(ev, ctxMenuItems, ctxMenuState, requestClose);
+                    if (result >= 0) {
+                        if (result == 0) openInEditor();
+                        else if (result == 1) renameCurrentAsset();
+                        else if (result == 2) deleteCurrentAsset();
+                        else if (result == 3) {
+                            if (!previewLoaded) loadPreview();
+                            if (previewLoaded) showInfoDialog(currentPreview);
+                        }
+                    }
+                    if (requestClose) {
+                        ctxMenuState.visible = false;
+                    }
+                    continue; 
+                }
+
                 if (ev.type == InputEvent::Type::Mouse) {
                     int filteredCount = static_cast<int>(filteredIndices.size());
                     if (filteredCount > 0 && ev.wheel != 0) {
@@ -90,6 +113,27 @@ namespace UI {
                     }
 
                     bool insideList = (ev.x >= listX && ev.x < listX + listW && ev.y >= listY && ev.y < listY + listH);
+                    
+                    // Handle Right Click for Context Menu
+                    if (ev.pressed && ev.button == 2) {
+                        if (insideList && filteredCount > 0) {
+                            int row = listScrollOffset + (ev.y - listY);
+                            if (row >= 0 && row < filteredCount) {
+                                selectedIndex = row;
+                                ensureSelectionVisible();
+                                loadPreview();
+                                
+                                ctxMenuState.visible = true;
+                                ctxMenuState.width = ContextMenu::calculateWidth(ctxMenuItems);
+                                int menuH = static_cast<int>(ctxMenuItems.size()) + 2;
+                                ctxMenuState.x = std::clamp(ev.x, 0, std::max(0, surface.getWidth() - ctxMenuState.width));
+                                ctxMenuState.y = std::clamp(ev.y, 0, std::max(0, surface.getHeight() - menuH));
+                                ctxMenuState.selectedIndex = 0;
+                                continue;
+                            }
+                        }
+                    }
+
                     hoverRow = -1;
                     hoverButton = HoverButton::None;
                     if (insideList && filteredCount > 0) {
