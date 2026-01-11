@@ -26,21 +26,6 @@ namespace {
         return p.has_parent_path() == false || p.parent_path() == p;
     }
 
-    // Helper for recursive size calculation with timeout
-    int64_t calculateDirSize(const std::filesystem::path& p, std::atomic<bool>& stop) {
-        int64_t total = 0;
-        try {
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(p, std::filesystem::directory_options::skip_permission_denied)) {
-                if (stop) return -2; // Timed out
-                if (entry.is_regular_file()) {
-                    total += entry.file_size();
-                }
-            }
-        } catch (...) {
-            // Probably permission denied or disappeared
-        }
-        return total;
-    }
 }
 
 DirectoryBrowserScreen::DirectoryBrowserScreen(std::string initialPath, bool showFiles, std::string extensionFilter)
@@ -110,34 +95,39 @@ void DirectoryBrowserScreen::startSizeCalculation(size_t index) {
     std::filesystem::path path = entries[index].fullPath;
     
     calcThreads.emplace_back([this, index, path]() {
-        std::atomic<bool> stop{false};
-        auto future = std::async(std::launch::async, calculateDirSize, path, std::ref(stop));
-        
         auto startTime = std::chrono::steady_clock::now();
-        while (calcThreadsRunning) {
-            if (future.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
-                int64_t size = future.get();
+        int64_t total = 0;
+        bool timedOut = false;
+
+        try {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(path, std::filesystem::directory_options::skip_permission_denied)) {
                 if (!calcThreadsRunning) return;
-                std::lock_guard<std::mutex> lock(entriesMutex);
-                if (index < entries.size() && entries[index].fullPath == path) {
-                    entries[index].sizeBytes = size;
-                    entries[index].sizePending = false;
-                    entries[index].sizeStr = formatSize(size);
+
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count() >= 5) {
+                    timedOut = true;
+                    break;
                 }
-                return;
+
+                if (entry.is_regular_file()) {
+                    total += static_cast<int64_t>(entry.file_size());
+                }
             }
-            
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count() >= 2) {
-                stop = true;
-                if (!calcThreadsRunning) return;
-                std::lock_guard<std::mutex> lock(entriesMutex);
-                if (index < entries.size() && entries[index].fullPath == path) {
-                    entries[index].sizePending = false;
-                    entries[index].sizeTimedOut = true;
-                    entries[index].sizeStr = ""; 
-                }
-                return;
+        } catch (...) {
+            // Probably permission denied or disappeared
+        }
+
+        if (!calcThreadsRunning) return;
+
+        std::lock_guard<std::mutex> lock(entriesMutex);
+        if (index < entries.size() && entries[index].fullPath == path) {
+            entries[index].sizePending = false;
+            if (timedOut) {
+                entries[index].sizeTimedOut = true;
+                entries[index].sizeStr = ""; 
+            } else {
+                entries[index].sizeBytes = total;
+                entries[index].sizeStr = formatSize(total);
             }
         }
     });

@@ -10,7 +10,6 @@
 #include <chrono>
 #include <atomic>
 #include <mutex>
-#include <future>
 
 namespace TilelandWorld {
 namespace UI {
