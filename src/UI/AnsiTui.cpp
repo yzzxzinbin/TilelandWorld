@@ -88,7 +88,7 @@ void TuiSurface::fillRect(int x, int y, int w, int h, const RGBColor& fg, const 
     for (int yy = startY; yy < endY; ++yy) {
         for (int xx = startX; xx < endX; ++xx) {
             TuiCell& cell = buffer[static_cast<size_t>(yy) * width + xx];
-            cell.glyph = glyph.empty() ? " " : glyph.substr(0, 1);
+            cell.glyph = glyph.empty() ? " " : glyph;
             cell.fg = fg;
             cell.bg = bg;
             cell.hasBg = true;

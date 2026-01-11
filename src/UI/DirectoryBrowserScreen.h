@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <chrono>
+#include <atomic>
+#include <mutex>
+#include <future>
 
 namespace TilelandWorld {
 namespace UI {
@@ -14,6 +18,7 @@ namespace UI {
 class DirectoryBrowserScreen {
 public:
     explicit DirectoryBrowserScreen(std::string initialPath, bool showFiles = false, std::string extensionFilter = "");
+    ~DirectoryBrowserScreen(); // Need to clean up size calculation threads
     // 返回选中的目录或文件；若用户取消则返回空字符串
     std::string show();
 
@@ -22,6 +27,13 @@ private:
         std::string name;
         std::filesystem::path fullPath;
         bool isDir{true};
+
+        std::string sizeStr;
+        std::string typeStr;
+        std::string dateStr;
+        int64_t sizeBytes{0};
+        bool sizePending{false};
+        bool sizeTimedOut{false};
     };
 
     std::filesystem::path currentPath;
@@ -41,6 +53,21 @@ private:
     int listOriginY{6};
     int listWidth{60};
     int listHeight{20};
+
+    // Scrolling filename support
+    size_t lastSelectedIndex{static_cast<size_t>(-1)};
+    std::chrono::steady_clock::time_point selectionTime;
+
+    // Async size calculation
+    std::mutex entriesMutex;
+    std::vector<std::thread> calcThreads;
+    std::atomic<bool> calcThreadsRunning{true};
+    void startSizeCalculation(size_t index);
+    
+    // Formatting helpers
+    std::string formatSize(int64_t bytes);
+    std::string getFileType(const std::filesystem::path& p);
+    std::string formatTime(std::filesystem::file_time_type ftime);
 
     void refreshEntries();
     void clampSelection();
