@@ -4,6 +4,7 @@
 
 #include "AnsiTui.h"
 #include "../Controllers/InputController.h"
+#include "../Utils/TaskSystem.h"
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -17,7 +18,7 @@ namespace UI {
 class DirectoryBrowserScreen {
 public:
     explicit DirectoryBrowserScreen(std::string initialPath, bool showFiles = false, std::string extensionFilter = "");
-    ~DirectoryBrowserScreen(); // Need to clean up size calculation threads
+    ~DirectoryBrowserScreen(); 
     // 返回选中的目录或文件；若用户取消则返回空字符串
     std::string show();
 
@@ -53,13 +54,20 @@ private:
     int listWidth{60};
     int listHeight{20};
 
+    // Scrollbar state
+    int scrollX{-1};
+    int thumbY{0};
+    int thumbH{0};
+    bool hoverScroll{false};
+    bool draggingScroll{false};
+
     // Scrolling filename support
     size_t lastSelectedIndex{static_cast<size_t>(-1)};
     std::chrono::steady_clock::time_point selectionTime;
 
     // Async size calculation
     std::mutex entriesMutex;
-    std::vector<std::thread> calcThreads;
+    TaskSystem taskSystem;
     std::atomic<bool> calcThreadsRunning{true};
     void startSizeCalculation(size_t index);
     

@@ -49,9 +49,7 @@ DirectoryBrowserScreen::DirectoryBrowserScreen(std::string initialPath, bool sho
 
 DirectoryBrowserScreen::~DirectoryBrowserScreen() {
     calcThreadsRunning = false;
-    for (auto& t : calcThreads) {
-        if (t.joinable()) t.join();
-    }
+    taskSystem.stop();
 }
 
 std::string DirectoryBrowserScreen::formatSize(int64_t bytes) {
@@ -94,7 +92,7 @@ std::string DirectoryBrowserScreen::formatTime(std::filesystem::file_time_type f
 void DirectoryBrowserScreen::startSizeCalculation(size_t index) {
     std::filesystem::path path = entries[index].fullPath;
     
-    calcThreads.emplace_back([this, index, path]() {
+    taskSystem.submit([this, index, path]() {
         auto startTime = std::chrono::steady_clock::now();
         int64_t total = 0;
         bool timedOut = false;
@@ -261,9 +259,17 @@ void DirectoryBrowserScreen::clampSelection()
     if (entries.empty()) { selected = 0; scrollOffset = 0; return; }
     if (selected >= entries.size()) selected = entries.size() - 1;
     int visible = std::max(1, listHeight - 4);
-    if (selected < static_cast<size_t>(scrollOffset)) scrollOffset = static_cast<int>(selected);
-    if (selected >= static_cast<size_t>(scrollOffset + visible)) scrollOffset = static_cast<int>(selected) - visible + 1;
-    scrollOffset = std::max(0, std::min(scrollOffset, static_cast<int>(entries.size()) - visible));
+    
+    // Ensure selected is visible
+    if (selected < static_cast<size_t>(scrollOffset)) {
+        scrollOffset = static_cast<int>(selected);
+    }
+    if (selected >= static_cast<size_t>(scrollOffset + visible)) {
+        scrollOffset = static_cast<int>(selected) - visible + 1;
+    }
+    
+    int maxOffset = std::max(0, static_cast<int>(entries.size()) - visible);
+    scrollOffset = std::clamp(scrollOffset, 0, maxOffset);
 }
 
 void DirectoryBrowserScreen::renderFrame()
@@ -283,7 +289,7 @@ void DirectoryBrowserScreen::renderFrame()
     }
 
     listWidth = std::max(60, surface.getWidth() - 8);
-    listHeight = std::max(12, surface.getHeight() - 10);
+    listHeight = std::max(12, surface.getHeight() - 8);
     listOriginX = std::max(2, (surface.getWidth() - listWidth) / 2);
     listOriginY = 4;
 
@@ -405,6 +411,28 @@ void DirectoryBrowserScreen::renderFrame()
         surface.drawText(listOriginX + 2 + colName + colSize + colType, y, e.dateStr, fg, bg);
     }
 
+    // Scrollbar rendering
+    int totalEntries = static_cast<int>(entries.size());
+    if (totalEntries > visible) {
+        scrollX = listOriginX + listWidth - 1;
+        int rowStartY = listOriginY + 3;
+        
+        // Background track
+        surface.fillRect(scrollX, rowStartY, 1, visible, theme.hintFg, theme.panel, "│");
+        
+        thumbH = std::max(1, (visible * visible) / totalEntries);
+        int maxOffset = totalEntries - visible;
+        thumbY = (maxOffset > 0) ? (scrollOffset * (visible - thumbH) / maxOffset) : 0;
+        
+        RGBColor thumbColor = theme.accent;
+        if (hoverScroll || draggingScroll) {
+            thumbColor = TuiUtils::blendColor(thumbColor, {255, 255, 255}, 0.3);
+        }
+        surface.fillRect(scrollX, rowStartY + thumbY, 1, thumbH, thumbColor, thumbColor, "█");
+    } else {
+        scrollX = -1;
+    }
+
     std::string hint = "Enter/Right: open | Space: choose | Backspace/Left: up | Q: cancel | Wheel/Click to navigate";
     surface.drawCenteredText(0, surface.getHeight() - 3, surface.getWidth(), hint, theme.hintFg, theme.background);
 }
@@ -502,24 +530,55 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
 {
     if (!running) return;
 
-    // Wheel scroll
+    int visible = std::max(1, listHeight - 4);
+    int rowStartY = listOriginY + 3;
+
+    // Wheel scroll - update both offset and selected to stay in view
     if (ev.wheel != 0)
     {
-        int visible = std::max(1, listHeight - 4);
-        scrollOffset = std::max(0, std::min(scrollOffset - ev.wheel * 2, std::max(0, static_cast<int>(entries.size()) - visible)));
-        clampSelection();
+        scrollOffset = std::clamp(scrollOffset - ev.wheel * 2, 0, std::max(0, static_cast<int>(entries.size()) - visible));
+        // Force selection into view
+        if (selected < static_cast<size_t>(scrollOffset)) selected = static_cast<size_t>(scrollOffset);
+        if (selected >= static_cast<size_t>(scrollOffset + visible)) selected = static_cast<size_t>(scrollOffset + visible - 1);
         return;
     }
 
-    if (!ev.pressed && !ev.move)
-    {
-        // release without press
-        return;
+    // Scrollbar interaction
+    if (scrollX > 0) {
+        // Hover detection for the whole scroll column area
+        if (ev.x == scrollX && ev.y >= rowStartY && ev.y < rowStartY + visible) {
+            hoverScroll = true;
+        } else {
+            hoverScroll = false;
+        }
+
+        if (ev.pressed && ev.button == 0 && hoverScroll) {
+            draggingScroll = true;
+        } else if (!ev.pressed && !ev.move && ev.wheel == 0) {
+            // This is a button release
+            draggingScroll = false;
+        }
+
+        if (draggingScroll) {
+            int totalRows = static_cast<int>(entries.size());
+            if (totalRows > visible) {
+                double ratio = static_cast<double>(ev.y - rowStartY) / std::max(1, visible - 1);
+                scrollOffset = std::clamp(static_cast<int>(ratio * (totalRows - visible)), 0, totalRows - visible);
+                // Move selection along to keep it in view during drag
+                if (selected < static_cast<size_t>(scrollOffset)) selected = static_cast<size_t>(scrollOffset);
+                if (selected >= static_cast<size_t>(scrollOffset + visible)) selected = static_cast<size_t>(scrollOffset + visible - 1);
+            }
+            return;
+        }
+    } else {
+        hoverScroll = false;
+        draggingScroll = false;
     }
 
-    int relY = ev.y - (listOriginY + 3);
+    if (!ev.pressed && !ev.move) return;
+
+    int relY = ev.y - rowStartY;
     int relX = ev.x - listOriginX;
-    int visible = std::max(1, listHeight - 4);
 
     if (relX >= 0 && relX < listWidth && relY >= 0 && relY < visible)
     {
@@ -530,10 +589,9 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
             std::lock_guard<std::mutex> lock(entriesMutex);
             if (idx < entries.size())
             {
-                // 悬停高亮
                 selected = idx;
-                clampSelection();
-
+                // No need to clamp here as Mouse interaction is always in visible range
+                
                 if (ev.button == 0 && ev.pressed)
                 {
                     // 单击选中；双击进入目录（或选择当前目录）
