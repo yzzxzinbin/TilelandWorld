@@ -260,7 +260,7 @@ namespace TilelandWorld {
         std::vector<uint64_t> sumR((high_w+1)*(high_h+1)), sumG((high_w+1)*(high_h+1)), sumB((high_w+1)*(high_h+1));
         std::vector<uint64_t> sumR2((high_w+1)*(high_h+1)), sumG2((high_w+1)*(high_h+1)), sumB2((high_w+1)*(high_h+1));
 
-        if (stageProgress) stageProgress(0.01);
+        if (stageProgress) stageProgress(0.00);
         for (int y=0;y<high_h;++y) {
             uint64_t rowR=0,rowG=0,rowB=0;
             uint64_t rowR2=0,rowG2=0,rowB2=0;
@@ -485,35 +485,31 @@ namespace TilelandWorld {
     ImageAsset AdvancedImageConverter::convert(const RawImage& img, const Options& opts, TaskSystem& taskSystem) {
         if (!img.valid) return ImageAsset(0, 0);
         
-        // Quantize work: 
-        // 1. Resampling: proportional to img.width * img.height
-        // 2. Rendering: proportional to targetWidth * targetHeight
-        // Stage 1 weight: Source Pixels / 250.0 (slightly more weight than before)
-        // Stage 2 weight: Target Pixels * (IsHigh ? 5.0 : 0.1)
-        
-        double sourceWork = (double)img.width * img.height / 250.0;
-        double renderWork = (double)opts.targetWidth * opts.targetHeight;
-        if (opts.quality == Options::Quality::High) {
-            renderWork *= 5.0; // High quality is expensive
-        } else {
-            renderWork *= 0.5; // Increased low quality weight slightly for visibility
-        }
-
-        double totalWork = sourceWork + renderWork;
-        double completedWork = 0;
-
-        auto reportProgress = [&](double stageCompletion, const std::string& stageName) {
-            if (opts.onProgress) {
-                double stageBase = (stageName == "Resampling") ? 0 : sourceWork;
-                double stageScale = (stageName == "Resampling") ? sourceWork : renderWork;
-                opts.onProgress(stageBase + stageCompletion * stageScale, totalWork, stageName);
-            }
-        };
-
+        // Quantize work using a cost model that reflects the actual passes:
+        // - Flatten channels (3 passes over source)
+        // - Horizontal/vertical box filtering over the upscaled width
+        // - Rendering cost scaled per output cell
         // 1. Resample to 8x resolution of target
         int highW = opts.targetWidth * 8;
         int highH = opts.targetHeight * 8;
-        
+
+        double resampleWork = 0.0;
+        resampleWork += static_cast<double>(img.width) * img.height * 0.3;               // flatten RGB
+        resampleWork += static_cast<double>(img.height) * highW * 0.2;                    // horizontal + vertical accumulation across channels
+
+        double renderCostPerCell = (opts.quality == Options::Quality::High) ? 24.0 : 3.0; // high quality scans many glyphs per cell
+        double renderWork = static_cast<double>(opts.targetWidth) * opts.targetHeight * renderCostPerCell;
+
+        double totalWork = std::max(1.0, resampleWork + renderWork);
+
+        auto reportProgress = [&](double stageCompletion, const std::string& stageName) {
+            if (opts.onProgress) {
+                bool resampleStage = (stageName == "Resampling");
+                double stageBase = resampleStage ? 0.0 : resampleWork;
+                double stageScale = resampleStage ? resampleWork : renderWork;
+                opts.onProgress(stageBase + stageCompletion * stageScale, totalWork, stageName);
+            }
+        };
         BlockPlanes highres = resampleToPlanes(img, highW, highH, taskSystem, [&](double p){
             reportProgress(p, "Resampling");
         });
