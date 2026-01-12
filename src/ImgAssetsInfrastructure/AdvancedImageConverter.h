@@ -8,6 +8,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <functional>
 
 namespace TilelandWorld {
 
@@ -27,6 +28,8 @@ namespace TilelandWorld {
             int targetHeight = 80;
             int pruneThreshold = 24; // Color difference threshold for pruning
             enum class Quality { Low, High } quality = Quality::High;
+            // Progress callback: (completedWork, totalWork, stageName)
+            std::function<void(double, double, const std::string&)> onProgress;
         };
 
         // Main entry point: Convert raw image to ImageAsset using advanced logic
@@ -34,13 +37,16 @@ namespace TilelandWorld {
 
     private:
         // Resampling logic (Integral Image based)
-        static BlockPlanes resampleToPlanes(const RawImage& img, int outW, int outH, TaskSystem& taskSystem);
+        static BlockPlanes resampleToPlanes(const RawImage& img, int outW, int outH, TaskSystem& taskSystem, 
+                                            const std::function<void(double)>& stageProgress = nullptr);
 
         // Rendering logic (Glyph matching)
-        static ImageAsset renderToAsset(const BlockPlanes& highres, int outW, int outH, const Options& opts, TaskSystem& taskSystem);
+        static ImageAsset renderToAsset(const BlockPlanes& highres, int outW, int outH, const Options& opts, TaskSystem& taskSystem,
+                                         const std::function<void(double)>& stageProgress = nullptr);
         
         // Low quality rendering (Solid blocks)
-        static ImageAsset renderLow(const BlockPlanes& highres, int outW, int outH, TaskSystem& taskSystem);
+        static ImageAsset renderLow(const BlockPlanes& highres, int outW, int outH, TaskSystem& taskSystem,
+                                     const std::function<void(double)>& stageProgress = nullptr);
     };
 
 }

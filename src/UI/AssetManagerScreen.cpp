@@ -1,6 +1,7 @@
 #include "AssetManagerScreen.h"
 #include "DirectoryBrowserScreen.h"
 #include "ToggleSwitch.h"
+#include "ProgressBar.h"
 #include "TuiUtils.h"
 #include "YuiEditorScreen.h"
 #include "../ImgAssetsInfrastructure/ImageLoader.h"
@@ -836,7 +837,7 @@ namespace UI {
             // Draw Dialog Box
             int w = surface.getWidth();
             int h = surface.getHeight();
-            int dw = 44, dh = 12;
+            int dw = 48, dh = 13;
             int dx = (w - dw) / 2;
             int dy = (h - dh) / 2;
             
@@ -908,11 +909,9 @@ namespace UI {
                 int total = static_cast<int>(filePaths.size());
                 for (int i = 0; i < total; ++i) {
                     const auto& filePath = filePaths[i];
-                    std::string status = "Importing " + std::to_string(i + 1) + "/" + std::to_string(total) + "...";
-                    surface.fillRect(dx + 1, dy + dh - 2, dw - 2, 1, theme.panel, theme.panel, " ");
-                    surface.drawText(dx + 2, dy + dh - 2, status, theme.focusFg, theme.panel);
-                    painter.present(surface);
-
+                    std::string baseStatus = "Importing " + std::to_string(i + 1) + "/" + std::to_string(total);
+                    std::string fileName = std::filesystem::path(filePath).filename().string();
+                    
                     try {
                         RawImage raw = ImageLoader::load(filePath);
                         if (raw.valid) {
@@ -932,6 +931,44 @@ namespace UI {
                             opts.targetHeight = std::max(1, (int)std::round((double)raw.height * tw * aspect / raw.width));
                             opts.quality = (qualityIdx == 1) ? AdvancedImageConverter::Options::Quality::High : AdvancedImageConverter::Options::Quality::Low;
                             
+                            opts.onProgress = [&](double completed, double totalWork, const std::string& stage) {
+                                static std::mutex uiMutex;
+                                static auto lastUpdate = std::chrono::steady_clock::now();
+                                
+                                auto now = std::chrono::steady_clock::now();
+                                if (now - lastUpdate < std::chrono::milliseconds(33) && completed < totalWork) {
+                                    return;
+                                }
+                                
+                                std::lock_guard<std::mutex> lock(uiMutex);
+                                lastUpdate = now;
+
+                                // Clear area for progress bars and status
+                                surface.fillRect(dx + 1, dy + 6, dw - 2, 6, theme.panel, theme.panel, " ");
+                                
+                                double itemPct = std::clamp(completed / totalWork, 0.0, 1.0);
+                                double totalPct = std::clamp((i + itemPct) / total, 0.0, 1.0);
+                                
+                                ProgressBarStyle pstyle;
+                                pstyle.width = dw - 11; // Reduced to fit percentage and padding
+                                pstyle.fillFg = theme.accent;
+                                pstyle.fillBg = darken(theme.panel, 0.8);
+                                pstyle.showPercentage = true;
+                                
+                                // Total Progress
+                                surface.drawText(dx + 2, dy + 6, "Total Progress:", theme.title, theme.panel);
+                                ProgressBar::render(surface, dx + 2, dy + 7, totalPct, pstyle);
+                                
+                                // Current Item Status
+                                std::string statusText = baseStatus + " (" + stage + ")";
+                                surface.drawText(dx + 2, dy + 9, statusText, theme.title, theme.panel);
+                                
+                                // Current Item Progress
+                                ProgressBar::render(surface, dx + 2, dy + 10, itemPct, pstyle);
+                                
+                                painter.present(surface);
+                            };
+
                             AdvancedImageConverter converter;
                             ImageAsset asset = converter.convert(raw, opts, taskSystem);
                             

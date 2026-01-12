@@ -35,7 +35,7 @@ namespace TilelandWorld {
 
     struct Run { int start; int end; int len; };
 
-    static void flatten_to_planes(const RawImage &img, std::vector<uint8_t> &pr, std::vector<uint8_t> &pg, std::vector<uint8_t> &pb, TaskSystem &pool, int tile_h) {
+    static void flatten_to_planes(const RawImage &img, std::vector<uint8_t> &pr, std::vector<uint8_t> &pg, std::vector<uint8_t> &pb, TaskSystem &pool, int tile_h, const std::function<void(double)>& progress) {
         int w = img.width, h = img.height;
         pr.resize((size_t)w * h);
         pg.resize((size_t)w * h);
@@ -44,35 +44,12 @@ namespace TilelandWorld {
         if (tile_h <= 0) tile_h = 64;
         int chunks = (h + tile_h - 1) / tile_h;
         
-        // Use TaskSystem to parallelize
-        // Note: TilelandWorld::TaskSystem uses a queue, we need to wait for completion.
-        // Since TaskSystem doesn't return futures directly for wait, we use std::promise/future manually or a counter.
-        // For simplicity here, we'll use std::async if TaskSystem doesn't support wait-for-group easily, 
-        // BUT the requirement is to use TaskSystem. 
-        // TilelandWorld::TaskSystem::submit returns void. We need a way to sync.
-        // Let's use a simple atomic counter and condition variable or std::future if we can wrap it.
-        // Actually, let's just use std::vector<std::future<void>> and std::async for this specific heavy lifting 
-        // if TaskSystem is too simple. 
-        // However, the user provided TaskSystem.h/cpp in PicConvertor which returns std::future.
-        // The TilelandWorld::TaskSystem might be different. Let's check TilelandWorld::TaskSystem.
-        // Assuming TilelandWorld::TaskSystem is the one we have in src/Utils/TaskSystem.h.
-        // Let's check its signature.
-        
-        // Re-reading TaskSystem.h from previous context... 
-        // Wait, I don't have the full content of TilelandWorld::TaskSystem.h in memory, only PicConvertor's.
-        // But TuiCoreController uses it.
-        // Let's assume for now we can use a simple parallel for loop using std::async for the converter to be self-contained and robust,
-        // OR adapt to the existing TaskSystem if it exposes a way to wait.
-        // Given the user wants "Strictly follow PicConvertor", and PicConvertor has its own TaskSystem.
-        // I will implement the logic using std::async for simplicity and correctness within this module, 
-        // as integrating a specific TaskSystem might be complex without seeing its header.
-        // actually, let's look at the provided PicConvertor code again. It uses `pool.submitTask`.
-        
         std::vector<std::future<void>> futs;
+        std::atomic<int> completed{0};
         for (int c = 0; c < chunks; ++c) {
             int y0 = c * tile_h;
             int y1 = std::min(h, y0 + tile_h);
-            futs.push_back(std::async(std::launch::async, [=, &img, &pr, &pg, &pb]() {
+            futs.push_back(std::async(std::launch::async, [=, &img, &pr, &pg, &pb, &completed, &progress]() {
                 for (int y = y0; y < y1; ++y) {
                     const uint8_t* src = img.data.data() + (size_t)y * img.width * img.channels;
                     uint8_t* rdst = pr.data() + (size_t)y * img.width;
@@ -84,6 +61,8 @@ namespace TilelandWorld {
                         bdst[x] = src[x * img.channels + 2];
                     }
                 }
+                int done = ++completed;
+                if (progress) progress((double)done / chunks);
             }));
         }
         for (auto &f : futs) f.get();
@@ -94,7 +73,7 @@ namespace TilelandWorld {
                                    const std::vector<int> &x0s,
                                    const std::vector<Run> &runs,
                                    std::vector<uint32_t> &hr, std::vector<uint32_t> &hg, std::vector<uint32_t> &hb,
-                                   int tile_h_rows) {
+                                   int tile_h_rows, const std::function<void(double)>& progress) {
         hr.resize((size_t)h * out_w);
         hg.resize((size_t)h * out_w);
         hb.resize((size_t)h * out_w);
@@ -103,10 +82,11 @@ namespace TilelandWorld {
         int chunks = (h + tile_h_rows - 1) / tile_h_rows;
         std::vector<std::future<void>> futs;
         
+        std::atomic<int> completed{0};
         for (int c = 0; c < chunks; ++c) {
             int y0 = c * tile_h_rows;
             int y1 = std::min(h, y0 + tile_h_rows);
-            futs.push_back(std::async(std::launch::async, [=, &pr, &pg, &pb, &hr, &hg, &hb, &x0s, &runs]() {
+            futs.push_back(std::async(std::launch::async, [=, &pr, &pg, &pb, &hr, &hg, &hb, &x0s, &runs, &completed, &progress]() {
                 for (int y = y0; y < y1; ++y) {
                     const uint8_t* rowR = pr.data() + (size_t)y * w;
                     const uint8_t* rowG = pg.data() + (size_t)y * w;
@@ -135,12 +115,15 @@ namespace TilelandWorld {
                         }
                     }
                 }
+                int done = ++completed;
+                if (progress) progress((double)done / chunks);
             }));
         }
         for (auto &f : futs) f.get();
     }
 
-    BlockPlanes AdvancedImageConverter::resampleToPlanes(const RawImage& img, int out_w, int out_h, TaskSystem& taskSystem) {
+    BlockPlanes AdvancedImageConverter::resampleToPlanes(const RawImage& img, int out_w, int out_h, TaskSystem& taskSystem,
+                                                        const std::function<void(double)>& stageProgress) {
         BlockPlanes out;
         out.width = out_w;
         out.height = out_h;
@@ -150,6 +133,7 @@ namespace TilelandWorld {
         
         if (img.width <= 0 || img.height <= 0 || out_w <= 0 || out_h <= 0) return out;
 
+        if (stageProgress) stageProgress(0.05);
         std::vector<int> x0s(out_w), x1s(out_w);
         for (int bx=0; bx<out_w; ++bx) {
             int x0 = (int)std::floor((double)bx * img.width / out_w);
@@ -180,20 +164,23 @@ namespace TilelandWorld {
             y1s[by] = std::max(0, std::min(img.height, y1));
         }
 
+        if (stageProgress) stageProgress(0.05);
         std::vector<uint8_t> pr, pg, pb;
-        flatten_to_planes(img, pr, pg, pb, taskSystem, 64);
-
+        flatten_to_planes(img, pr, pg, pb, taskSystem, 64, [&](double p){ if (stageProgress) stageProgress(0.05 + 0.1 * p); });
+        
         std::vector<uint32_t> hr, hg, hb;
-        horizontal_box_sum(pr, pg, pb, img.width, img.height, out_w, x0s, runs, hr, hg, hb, 64);
+        horizontal_box_sum(pr, pg, pb, img.width, img.height, out_w, x0s, runs, hr, hg, hb, 64, [&](double p){ if (stageProgress) stageProgress(0.15 + 0.15 * p); });
+        if (stageProgress) stageProgress(0.3);
 
         int tile_h_rows = 64;
         int num_chunks = (out_h + tile_h_rows - 1) / tile_h_rows;
         std::vector<std::future<void>> sampleFuts;
         
+        std::atomic<int> completedChunks{0};
         for (int c=0;c<num_chunks;++c) {
             int by0 = c * tile_h_rows;
             int by1 = std::min(out_h, by0 + tile_h_rows);
-            sampleFuts.push_back(std::async(std::launch::async, [=, &out, &hr, &hg, &hb, &x0s, &x1s, &y0s, &y1s]() {
+            sampleFuts.push_back(std::async(std::launch::async, [=, &out, &hr, &hg, &hb, &x0s, &x1s, &y0s, &y1s, &completedChunks, &stageProgress]() {
                 for (int by = by0; by < by1; ++by) {
                     int y0 = y0s[by];
                     int y1 = y1s[by];
@@ -214,6 +201,8 @@ namespace TilelandWorld {
                         out.b[idx_out] = (int)(bsum / count);
                     }
                 }
+                int done = ++completedChunks;
+                if (stageProgress) stageProgress(0.3 + 0.7 * (double)done / num_chunks);
             }));
         }
         for (auto &f : sampleFuts) f.get();
@@ -260,7 +249,8 @@ namespace TilelandWorld {
         return s;
     }
 
-    ImageAsset AdvancedImageConverter::renderToAsset(const BlockPlanes& highres, int outW, int outH, const Options& opts, TaskSystem& taskSystem) {
+    ImageAsset AdvancedImageConverter::renderToAsset(const BlockPlanes& highres, int outW, int outH, const Options& opts, TaskSystem& taskSystem,
+                                                     const std::function<void(double)>& stageProgress) {
         ImageAsset asset(outW, outH);
         const int SUB_W = 8, SUB_H = 8;
         int high_w = highres.width;
@@ -270,6 +260,7 @@ namespace TilelandWorld {
         std::vector<uint64_t> sumR((high_w+1)*(high_h+1)), sumG((high_w+1)*(high_h+1)), sumB((high_w+1)*(high_h+1));
         std::vector<uint64_t> sumR2((high_w+1)*(high_h+1)), sumG2((high_w+1)*(high_h+1)), sumB2((high_w+1)*(high_h+1));
 
+        if (stageProgress) stageProgress(0.01);
         for (int y=0;y<high_h;++y) {
             uint64_t rowR=0,rowG=0,rowB=0;
             uint64_t rowR2=0,rowG2=0,rowB2=0;
@@ -291,7 +282,9 @@ namespace TilelandWorld {
                 sumG2[ii] = sumG2[ii_up] + rowG2;
                 sumB2[ii] = sumB2[ii_up] + rowB2;
             }
+            if (stageProgress && (y % 64 == 0)) stageProgress(0.01 + 0.14 * (double)y / high_h);
         }
+        if (stageProgress) stageProgress(0.15);
 
         auto rect_sum3 = [&](const std::vector<uint64_t> &S, int x0,int y0,int x1,int y1)->uint64_t{
             uint64_t A = S[y0*(high_w+1)+x0];
@@ -303,12 +296,13 @@ namespace TilelandWorld {
 
         int threads = std::max(1u, std::thread::hardware_concurrency());
         std::vector<std::future<void>> futs;
+        std::atomic<int> completedRows{0};
 
         for (int tid=0; tid<threads; ++tid) {
             int row0 = (outH * tid) / threads;
             int row1 = (outH * (tid+1)) / threads;
             
-            futs.push_back(std::async(std::launch::async, [=, &asset, &sumR, &sumG, &sumB, &sumR2, &sumG2, &sumB2]() {
+            futs.push_back(std::async(std::launch::async, [=, &asset, &sumR, &sumG, &sumB, &sumR2, &sumG2, &sumB2, &completedRows, &stageProgress]() {
                 for (int by=row0; by<row1; ++by) {
                     for (int bx=0; bx<outW; ++bx) {
                         int x0c = bx*SUB_W, y0c = by*SUB_H, x1c = x0c + SUB_W, y1c = y0c + SUB_H;
@@ -425,6 +419,8 @@ namespace TilelandWorld {
                         // ImageAsset stores std::string character.
                         asset.setCell(bx, by, {codepoint_to_utf8(best_cp), fg, bg});
                     }
+                    int doneRows = ++completedRows;
+                    if (stageProgress) stageProgress(0.15 + 0.85 * (double)doneRows / outH);
                 }
             }));
         }
@@ -433,24 +429,8 @@ namespace TilelandWorld {
         return asset;
     }
 
-    ImageAsset AdvancedImageConverter::convert(const RawImage& img, const Options& opts, TaskSystem& taskSystem) {
-        if (!img.valid) return ImageAsset(0, 0);
-        
-        // 1. Resample to 8x resolution of target
-        int highW = opts.targetWidth * 8;
-        int highH = opts.targetHeight * 8;
-        
-        BlockPlanes highres = resampleToPlanes(img, highW, highH, taskSystem);
-        
-        // 2. Render using glyph matching or low quality
-        if (opts.quality == Options::Quality::High) {
-            return renderToAsset(highres, opts.targetWidth, opts.targetHeight, opts, taskSystem);
-        } else {
-            return renderLow(highres, opts.targetWidth, opts.targetHeight, taskSystem);
-        }
-    }
-
-    ImageAsset AdvancedImageConverter::renderLow(const BlockPlanes& highres, int outW, int outH, TaskSystem& taskSystem) {
+    ImageAsset AdvancedImageConverter::renderLow(const BlockPlanes& highres, int outW, int outH, TaskSystem& taskSystem,
+                                                const std::function<void(double)>& stageProgress) {
         ImageAsset asset(outW, outH);
         int high_w = highres.width;
         
@@ -458,11 +438,12 @@ namespace TilelandWorld {
         int threads = std::max(1u, std::thread::hardware_concurrency());
         std::vector<std::future<void>> futs;
 
+        std::atomic<int> completedRows{0};
         for (int tid=0; tid<threads; ++tid) {
             int row0 = (outH * tid) / threads;
             int row1 = (outH * (tid+1)) / threads;
             
-            futs.push_back(std::async(std::launch::async, [=, &asset, &highres]() {
+            futs.push_back(std::async(std::launch::async, [=, &asset, &highres, &completedRows, &stageProgress]() {
                 for (int by=row0; by<row1; ++by) {
                     for (int bx=0; bx<outW; ++bx) {
                         long long rsum=0, gsum=0, bsum=0; 
@@ -491,12 +472,62 @@ namespace TilelandWorld {
                         // Low quality uses space with background color
                         asset.setCell(bx, by, {" ", {0,0,0}, bg});
                     }
+                    int doneRows = ++completedRows;
+                    if (stageProgress) stageProgress((double)doneRows / outH);
                 }
             }));
         }
         for (auto &f : futs) f.get();
         
         return asset;
+    }
+
+    ImageAsset AdvancedImageConverter::convert(const RawImage& img, const Options& opts, TaskSystem& taskSystem) {
+        if (!img.valid) return ImageAsset(0, 0);
+        
+        // Quantize work: 
+        // 1. Resampling: proportional to img.width * img.height
+        // 2. Rendering: proportional to targetWidth * targetHeight
+        // Stage 1 weight: Source Pixels / 250.0 (slightly more weight than before)
+        // Stage 2 weight: Target Pixels * (IsHigh ? 5.0 : 0.1)
+        
+        double sourceWork = (double)img.width * img.height / 250.0;
+        double renderWork = (double)opts.targetWidth * opts.targetHeight;
+        if (opts.quality == Options::Quality::High) {
+            renderWork *= 5.0; // High quality is expensive
+        } else {
+            renderWork *= 0.5; // Increased low quality weight slightly for visibility
+        }
+
+        double totalWork = sourceWork + renderWork;
+        double completedWork = 0;
+
+        auto reportProgress = [&](double stageCompletion, const std::string& stageName) {
+            if (opts.onProgress) {
+                double stageBase = (stageName == "Resampling") ? 0 : sourceWork;
+                double stageScale = (stageName == "Resampling") ? sourceWork : renderWork;
+                opts.onProgress(stageBase + stageCompletion * stageScale, totalWork, stageName);
+            }
+        };
+
+        // 1. Resample to 8x resolution of target
+        int highW = opts.targetWidth * 8;
+        int highH = opts.targetHeight * 8;
+        
+        BlockPlanes highres = resampleToPlanes(img, highW, highH, taskSystem, [&](double p){
+            reportProgress(p, "Resampling");
+        });
+        
+        // 2. Render using glyph matching or low quality
+        if (opts.quality == Options::Quality::High) {
+            return renderToAsset(highres, opts.targetWidth, opts.targetHeight, opts, taskSystem, [&](double p){
+                reportProgress(p, "Rendering");
+            });
+        } else {
+            return renderLow(highres, opts.targetWidth, opts.targetHeight, taskSystem, [&](double p){
+                reportProgress(p, "Rendering");
+            });
+        }
     }
 
 }
