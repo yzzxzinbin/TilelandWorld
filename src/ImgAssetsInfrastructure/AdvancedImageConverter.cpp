@@ -164,7 +164,6 @@ namespace TilelandWorld {
             y1s[by] = std::max(0, std::min(img.height, y1));
         }
 
-        if (stageProgress) stageProgress(0.05);
         std::vector<uint8_t> pr, pg, pb;
         flatten_to_planes(img, pr, pg, pb, taskSystem, 64, [&](double p){ if (stageProgress) stageProgress(0.05 + 0.1 * p); });
         

@@ -931,16 +931,22 @@ namespace UI {
                             opts.targetHeight = std::max(1, (int)std::round((double)raw.height * tw * aspect / raw.width));
                             opts.quality = (qualityIdx == 1) ? AdvancedImageConverter::Options::Quality::High : AdvancedImageConverter::Options::Quality::Low;
                             
+                            double peakItemProgress = -1.0;
                             opts.onProgress = [&](double completed, double totalWork, const std::string& stage) {
                                 static std::mutex uiMutex;
                                 static auto lastUpdate = std::chrono::steady_clock::now();
                                 
+                                std::lock_guard<std::mutex> lock(uiMutex);
+
+                                if (completed < peakItemProgress && completed < totalWork) {
+                                    return;
+                                }
+                                peakItemProgress = completed;
+
                                 auto now = std::chrono::steady_clock::now();
                                 if (now - lastUpdate < std::chrono::milliseconds(33) && completed < totalWork) {
                                     return;
                                 }
-                                
-                                std::lock_guard<std::mutex> lock(uiMutex);
                                 lastUpdate = now;
 
                                 // Clear area for progress bars and status
