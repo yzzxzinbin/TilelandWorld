@@ -80,7 +80,7 @@ private:
     void drawPreview(int x, int y, int w, int h);
 
     // Dialogs
-    void showImportDialog(const std::string& filePath);
+    void showImportDialog(const std::vector<std::string>& filePaths);
     // Show detailed info about current image asset
     void showInfoDialog(const std::string& assetName, const ImageAsset& asset);
 };

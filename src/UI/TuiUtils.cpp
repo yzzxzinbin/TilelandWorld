@@ -14,56 +14,54 @@ Utf8CharInfo nextUtf8Char(const std::string& s, size_t pos) {
     unsigned char byte = static_cast<unsigned char>(s[pos]);
     size_t charLen = 1;
     uint32_t codepoint = byte;
-    size_t visual = 1;
 
-    if ((byte & 0xE0) == 0xC0) {
-        if (pos + 1 < s.size() && (static_cast<unsigned char>(s[pos + 1]) & 0xC0) == 0x80) {
+    if ((byte & 0x80) == 0) {
+        charLen = 1;
+        codepoint = byte;
+    } else if ((byte & 0xE0) == 0xC0) {
+        if (pos + 1 < s.size()) {
             charLen = 2;
             codepoint = ((byte & 0x1F) << 6) | (static_cast<unsigned char>(s[pos + 1]) & 0x3F);
-            visual = 2;
         }
     } else if ((byte & 0xF0) == 0xE0) {
-        if (pos + 2 < s.size() && (static_cast<unsigned char>(s[pos + 1]) & 0xC0) == 0x80 && (static_cast<unsigned char>(s[pos + 2]) & 0xC0) == 0x80) {
+        if (pos + 2 < s.size()) {
             charLen = 3;
             codepoint = ((byte & 0x0F) << 12) | ((static_cast<unsigned char>(s[pos + 1]) & 0x3F) << 6) | (static_cast<unsigned char>(s[pos + 2]) & 0x3F);
-            if ((codepoint >= 0x2500 && codepoint <= 0x257F) || (codepoint >= 0x2580 && codepoint <= 0x259F)) {
-                visual = 1;
-            } else {
-                visual = 2;
-            }
         }
     } else if ((byte & 0xF8) == 0xF0) {
-        if (pos + 3 < s.size() && (static_cast<unsigned char>(s[pos + 1]) & 0xC0) == 0x80 && (static_cast<unsigned char>(s[pos + 2]) & 0xC0) == 0x80 && (static_cast<unsigned char>(s[pos + 3]) & 0xC0) == 0x80) {
+        if (pos + 3 < s.size()) {
             charLen = 4;
             codepoint = ((byte & 0x07) << 18) | ((static_cast<unsigned char>(s[pos + 1]) & 0x3F) << 12) | ((static_cast<unsigned char>(s[pos + 2]) & 0x3F) << 6) | (static_cast<unsigned char>(s[pos + 3]) & 0x3F);
-            visual = 2;
         }
     }
 
-    // Adjust for ranges treated as width 1
-    if ((codepoint >= 0xE000 && codepoint <= 0xF8FF) ||
-        (codepoint >= 0xF0000 && codepoint <= 0xFFFFD) ||
-        (codepoint >= 0x100000 && codepoint <= 0x10FFFD)) {
-        visual = 1;
+    size_t visual = 1;
+    // Zero-width characters (Combining marks, Control, etc.)
+    if (codepoint == 0 || (codepoint >= 0x0300 && codepoint <= 0x036F) || 
+        (codepoint >= 0x200B && codepoint <= 0x200F) || 
+        (codepoint >= 0xFE00 && codepoint <= 0xFE0F) ||
+        (codepoint < 32)) {
+        visual = 0;
     }
-    if ((codepoint >= 0x0391 && codepoint <= 0x03A1) || (codepoint >= 0x03B1 && codepoint <= 0x03C1)) {
-        visual = 1;
+    // Wide characters (CJK and Fullwidth Emojis)
+    else if (
+        (codepoint >= 0x1100 && codepoint <= 0x115F) || // Hangul Jamo
+        (codepoint >= 0x2329 && codepoint <= 0x232A) || // Angle brackets
+        (codepoint >= 0x2E80 && codepoint <= 0xA4CF && codepoint != 0x303F) || // CJK Radicals to Yi
+        (codepoint >= 0xAC00 && codepoint <= 0xD7A3) || // Hangul Syllables
+        (codepoint >= 0xF900 && codepoint <= 0xFAFF) || // CJK Compatibility Ideographs
+        (codepoint >= 0xFE10 && codepoint <= 0xFE19) || // Vertical forms
+        (codepoint >= 0xFE30 && codepoint <= 0xFE6F) || // CJK Compatibility Forms
+        (codepoint >= 0xFF01 && codepoint <= 0xFF60) || // Fullwidth Forms
+        (codepoint >= 0xFFE0 && codepoint <= 0xFFE6) || // Fullwidth Symbols
+        (codepoint >= 0x1F000 && codepoint <= 0x1FAFF) || // Emojis (SMP)
+        (codepoint >= 0x20000 && codepoint <= 0x3FFFF)  // SIP/TIP (Ext A-G)
+    ) {
+        visual = 2;
     }
-    if ((codepoint >= 0x0041 && codepoint <= 0x005A) ||
-        (codepoint >= 0x0061 && codepoint <= 0x007A) ||
-        (codepoint >= 0x0080 && codepoint <= 0x00FF) ||
-        (codepoint >= 0x0100 && codepoint <= 0x02AF)) {
-        visual = 1;
-    }
-    if ((codepoint >= 0x2190 && codepoint <= 0x21FF) ||
-        (codepoint >= 0x27F0 && codepoint <= 0x27FF) ||
-        (codepoint >= 0x2B00 && codepoint <= 0x2BFF)) {
-        visual = 1;
-    }
-    // Treat certain geometric/arrow symbols as width 1 (e.g., ●, •, ▶, ▲, ▼, ◀)
-    if (codepoint == 0x25CF || codepoint == 0x2022 || codepoint == 0x25B6 || codepoint == 0x25B2 || codepoint == 0x25BC || codepoint == 0x25C0) {
-        visual = 1;
-    }
+    // Ambiguous characters like ○ (U+25CB) and ● (U+25CF)
+    // Per user feedback, these are 1-cell in their NerdFontMono terminal.
+    // Most NerdFont icons (PUA E000-F8FF) are also treated as 1-cell (Mono).
 
     info.length = charLen;
     info.visualWidth = visual;

@@ -418,9 +418,9 @@ void SaveCreationScreen::openDirectoryPicker() {
     if (activeInput) activeInput->stop();
 
     DirectoryBrowserScreen browser(directory);
-    std::string chosen = browser.show();
+    std::vector<std::string> chosen = browser.show();
     if (!chosen.empty()) {
-        directory = chosen;
+        directory = chosen[0];
     }
 
     if (activeInput) activeInput->start();

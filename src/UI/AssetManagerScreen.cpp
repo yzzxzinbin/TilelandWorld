@@ -324,16 +324,24 @@ namespace UI {
         
         // Allow common image formats
         DirectoryBrowserScreen browser(lastImportPath, true, ""); 
-        std::string path = browser.show();
+        std::vector<std::string> paths = browser.show();
         
-        if (!path.empty()) {
-            std::filesystem::path p(path);
+        if (!paths.empty()) {
+            std::filesystem::path p(paths[0]);
             lastImportPath = p.parent_path().string(); // Remember path
 
-            std::string ext = p.extension().string();
-            // Simple check for image extensions
-            if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
-                showImportDialog(path);
+            std::vector<std::string> imagePaths;
+            for (const auto& path : paths) {
+                std::string ext = std::filesystem::path(path).extension().string();
+                std::string lowerExt = ext;
+                std::transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::tolower);
+                if (lowerExt == ".png" || lowerExt == ".jpg" || lowerExt == ".jpeg" || lowerExt == ".bmp" || lowerExt == ".tga") {
+                    imagePaths.push_back(path);
+                }
+            }
+
+            if (!imagePaths.empty()) {
+                showImportDialog(imagePaths);
             }
         }
         
@@ -805,8 +813,8 @@ namespace UI {
         return confirmed;
     }
 
-    void AssetManagerScreen::showImportDialog(const std::string& filePath) {
-        
+    void AssetManagerScreen::showImportDialog(const std::vector<std::string>& filePaths) {
+        if (filePaths.empty()) return;
         input->start(); 
 
         EnvConfig::getInstance().refresh();
@@ -821,7 +829,6 @@ namespace UI {
         int mouseX = -1;
         int mouseY = -1;
    
-
         while (dialogRunning) {
             // Render background (dimmed)
             drawMainUI();
@@ -836,7 +843,12 @@ namespace UI {
             BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
             surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
             surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
-            surface.drawText(dx + 2, dy + 1, "Import Settings", theme.title, theme.background);
+            
+            std::string title = (filePaths.size() > 1) 
+                ? "Batch Import (" + std::to_string(filePaths.size()) + ")" 
+                : "Import Settings";
+            surface.drawText(dx + 2, dy + 1, title, theme.title, theme.background);
+
             int labelWidth = 8;
             int labelX = dx + 2;
             int fieldX = dx + labelWidth + 6;
@@ -892,6 +904,46 @@ namespace UI {
             
             painter.present(surface);
             
+            auto doImport = [&]() {
+                int total = static_cast<int>(filePaths.size());
+                for (int i = 0; i < total; ++i) {
+                    const auto& filePath = filePaths[i];
+                    std::string status = "Importing " + std::to_string(i + 1) + "/" + std::to_string(total) + "...";
+                    surface.fillRect(dx + 1, dy + dh - 2, dw - 2, 1, theme.panel, theme.panel, " ");
+                    surface.drawText(dx + 2, dy + dh - 2, status, theme.focusFg, theme.panel);
+                    painter.present(surface);
+
+                    try {
+                        RawImage raw = ImageLoader::load(filePath);
+                        if (raw.valid) {
+                            int tw = defaultW;
+                            if (!widthStr.empty() && widthStr.back() == '%') {
+                                try {
+                                    double pct = std::stod(widthStr.substr(0, widthStr.size() - 1)) / 100.0;
+                                    tw = std::max(1, static_cast<int>(std::round(raw.width * pct)));
+                                } catch (...) {}
+                            } else {
+                                try { tw = std::stoi(widthStr); } catch (...) {}
+                            }
+
+                            AdvancedImageConverter::Options opts;
+                            opts.targetWidth = tw;
+                            double aspect = 0.5;
+                            opts.targetHeight = std::max(1, (int)std::round((double)raw.height * tw * aspect / raw.width));
+                            opts.quality = (qualityIdx == 1) ? AdvancedImageConverter::Options::Quality::High : AdvancedImageConverter::Options::Quality::Low;
+                            
+                            AdvancedImageConverter converter;
+                            ImageAsset asset = converter.convert(raw, opts, taskSystem);
+                            
+                            std::string name = std::filesystem::path(filePath).stem().string();
+                            manager.saveAsset(asset, name);
+                        }
+                    } catch (...) {}
+                }
+                refreshList();
+                dialogRunning = false;
+            };
+
             // Input
             auto events = input->pollEvents();
             for (const auto& ev : events) {
@@ -923,35 +975,7 @@ namespace UI {
                     }
                     if (ev.pressed && ev.button == 0) {
                         if (onImport) {
-                            // trigger import same as Enter on Import
-                            try {
-                                surface.drawText(dx + 2, dy + dh - 2, "Converting...", theme.focusFg, theme.panel);
-                                painter.present(surface);
-                                RawImage raw = ImageLoader::load(filePath);
-                                if (raw.valid) {
-                                    int tw = defaultW;
-                                    if (!widthStr.empty() && widthStr.back() == '%') {
-                                        try {
-                                            double pct = std::stod(widthStr.substr(0, widthStr.size() - 1)) / 100.0;
-                                            tw = std::max(1, static_cast<int>(std::round(raw.width * pct)));
-                                        } catch (...) {}
-                                    } else {
-                                        try { tw = std::stoi(widthStr); } catch (...) {}
-                                    }
-
-                                    AdvancedImageConverter::Options opts;
-                                    opts.targetWidth = tw;
-                                    double aspect = 0.5;
-                                    opts.targetHeight = std::max(1, (int)std::round((double)raw.height * tw * aspect / raw.width));
-                                    opts.quality = (qualityIdx == 1) ? AdvancedImageConverter::Options::Quality::High : AdvancedImageConverter::Options::Quality::Low;
-                                    AdvancedImageConverter converter;
-                                    ImageAsset asset = converter.convert(raw, opts, taskSystem);
-                                    std::string name = std::filesystem::path(filePath).stem().string();
-                                    manager.saveAsset(asset, name);
-                                    refreshList(name);
-                                }
-                            } catch (...) {}
-                            dialogRunning = false;
+                            doImport();
                         } else if (onCancel) {
                             dialogRunning = false;
                         }
@@ -969,38 +993,7 @@ namespace UI {
                         focusIdx = (focusIdx + 1) % 4;
                     } else if (ev.key == InputKey::Enter) {
                         if (focusIdx == 2) { // Import
-                            try {
-                                surface.drawText(dx + 2, dy + dh - 2, "Converting...", theme.focusFg, theme.panel);
-                                painter.present(surface);
-                                
-                                RawImage raw = ImageLoader::load(filePath);
-                                if (raw.valid) {
-                                    int tw = defaultW;
-                                    if (!widthStr.empty() && widthStr.back() == '%') {
-                                        try {
-                                            double pct = std::stod(widthStr.substr(0, widthStr.size() - 1)) / 100.0;
-                                            tw = std::max(1, static_cast<int>(std::round(raw.width * pct)));
-                                        } catch (...) {}
-                                    } else {
-                                        try { tw = std::stoi(widthStr); } catch (...) {}
-                                    }
-
-                                    AdvancedImageConverter::Options opts;
-                                    opts.targetWidth = tw;
-                                    // Calculate height based on aspect ratio (0.5 for TUI cells)
-                                    double aspect = 0.5;
-                                    opts.targetHeight = std::max(1, (int)std::round((double)raw.height * tw * aspect / raw.width));
-                                    opts.quality = (qualityIdx == 1) ? AdvancedImageConverter::Options::Quality::High : AdvancedImageConverter::Options::Quality::Low;
-                                    
-                                    AdvancedImageConverter converter;
-                                    ImageAsset asset = converter.convert(raw, opts, taskSystem);
-                                    
-                                    std::string name = std::filesystem::path(filePath).stem().string();
-                                    manager.saveAsset(asset, name);
-                                    refreshList(name);
-                                }
-                            } catch (...) {}
-                            dialogRunning = false;
+                            doImport();
                         } else if (focusIdx == 3) { // Cancel
                             dialogRunning = false;
                         }

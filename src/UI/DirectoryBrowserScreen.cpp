@@ -131,14 +131,14 @@ void DirectoryBrowserScreen::startSizeCalculation(size_t index) {
     });
 }
 
-std::string DirectoryBrowserScreen::show()
+std::vector<std::string> DirectoryBrowserScreen::show()
 {
     InputController input(false); // keep VT mouse enabled for caller
     input.setRestoreOnExit(false);
     input.start();
 
     bool running = true;
-    std::string result;
+    std::vector<std::string> results;
 
     while (running)
     {
@@ -155,22 +155,12 @@ std::string DirectoryBrowserScreen::show()
         {
             if (ev.type == InputEvent::Type::Mouse)
             {
-                handleMouse(ev, running, result);
+                handleMouse(ev, running, results);
                 if (!running) break;
             }
             else if (ev.type == InputEvent::Type::Key)
             {
-                if (ev.key == InputKey::Character) {
-                    handleKey(static_cast<int>(ev.ch), running, result);
-                } else if (ev.key == InputKey::Enter) {
-                    handleKey(13, running, result);
-                }
-
-                // 方向键在 InputController 中是专用枚举，单独处理
-                if (ev.key == InputKey::ArrowUp) handleKey(kArrowUp, running, result);
-                else if (ev.key == InputKey::ArrowDown) handleKey(kArrowDown, running, result);
-                else if (ev.key == InputKey::ArrowLeft) handleKey(kArrowLeft, running, result);
-                else if (ev.key == InputKey::ArrowRight) handleKey(kArrowRight, running, result);
+                handleKey(ev, running, results);
                 if (!running) break;
             }
         }
@@ -178,7 +168,7 @@ std::string DirectoryBrowserScreen::show()
 
     painter.reset();
     input.stop();
-    return result;
+    return results;
 }
 
 void DirectoryBrowserScreen::refreshEntries()
@@ -345,8 +335,6 @@ void DirectoryBrowserScreen::renderFrame()
     for (int i = start; i < end; ++i)
     {
         bool focus = static_cast<size_t>(i) == selected;
-        RGBColor fg = focus ? theme.focusFg : theme.itemFg;
-        RGBColor bg = focus ? theme.focusBg : theme.itemBg;
         
         Entry e;
         {
@@ -354,12 +342,26 @@ void DirectoryBrowserScreen::renderFrame()
             e = entries[i];
         }
 
+        RGBColor fg = focus ? theme.focusFg : theme.itemFg;
+        RGBColor bg = focus ? theme.focusBg : theme.itemBg;
+
+        if (!focus && e.isSelected) {
+            bg = RGBColor{ 199, 199, 199 };
+            fg = RGBColor{ 30, 30, 30 }; // Dark text for light grey background
+        }
+
         std::string label = e.name;
-        if (e.isDir && label != "[Use this directory]" && label != "..")
+        if (e.isDir)
         {
-            label = "📁 " + e.name;
+            if (label == "[Use this directory]" || label == "..") {
+                label = "     " + e.name; // 5 cells of padding to match others
+            } else {
+                // Align with file icons ([Marker:2] + [Icon:3] = 5 cells total)
+                label = "  📁 " + e.name; 
+            }
         } else if (!e.isDir) {
-            label = "📄 " + e.name;
+            std::string indicator = e.isSelected ? "● " : "○ ";
+            label = indicator + "📄 " + e.name;
         }
 
         int y = rowStartY + (i - start);
@@ -437,9 +439,19 @@ void DirectoryBrowserScreen::renderFrame()
     surface.drawCenteredText(0, surface.getHeight() - 3, surface.getWidth(), hint, theme.hintFg, theme.background);
 }
 
-void DirectoryBrowserScreen::handleKey(int ch, bool& running, std::string& result)
+void DirectoryBrowserScreen::handleKey(const InputEvent& ev, bool& running, std::vector<std::string>& results)
 {
     if (!running) return;
+
+    // Convert InputKey to common codes for internal logic
+    int ch = 0;
+    if (ev.key == InputKey::Character) ch = static_cast<int>(ev.ch);
+    else if (ev.key == InputKey::Enter) ch = 13;
+    else if (ev.key == InputKey::ArrowUp) ch = kArrowUp;
+    else if (ev.key == InputKey::ArrowDown) ch = kArrowDown;
+    else if (ev.key == InputKey::ArrowLeft) ch = kArrowLeft;
+    else if (ev.key == InputKey::ArrowRight) ch = kArrowRight;
+    else if (ev.key == InputKey::Escape) ch = 'q';
 
     if (ch == 0) return;
 
@@ -484,12 +496,13 @@ void DirectoryBrowserScreen::handleKey(int ch, bool& running, std::string& resul
         }
         if (shouldRefresh) refreshEntries();
     }
-    else if (ch == ' ')
+    else if (ch == ' ' || (ch == 13 && ev.ctrl))
     {
-        if (selected < entries.size())
+        // Toggle selection
+        std::lock_guard<std::mutex> lock(entriesMutex);
+        if (selected < entries.size() && !entries[selected].isDir)
         {
-            result = entries[selected].fullPath.string();
-            running = false;
+            entries[selected].isSelected = !entries[selected].isSelected;
         }
     }
     else if (ch == 13)
@@ -501,7 +514,17 @@ void DirectoryBrowserScreen::handleKey(int ch, bool& running, std::string& resul
             {
                 if (entries[selected].name == "[Use this directory]")
                 {
-                    result = currentPath.string();
+                    if (showFilesMode) {
+                        // Select ALL files in current directory (not recursive)
+                        results.clear();
+                        for (const auto& entry : entries) {
+                            if (!entry.isDir && entry.name != ".." && entry.name != "[Use this directory]") {
+                                results.push_back(entry.fullPath.string());
+                            }
+                        }
+                    } else {
+                        results.push_back(currentPath.string());
+                    }
                     running = false;
                 }
                 else if (entries[selected].isDir)
@@ -513,7 +536,20 @@ void DirectoryBrowserScreen::handleKey(int ch, bool& running, std::string& resul
                 }
                 else if (showFilesMode)
                 {
-                    result = entries[selected].fullPath.string();
+                    // Check if we have multiple selected
+                    bool hasMulti = false;
+                    for (const auto& entry : entries) {
+                        if (entry.isSelected) { hasMulti = true; break; }
+                    }
+
+                    if (hasMulti) {
+                        results.clear();
+                        for (const auto& entry : entries) {
+                            if (entry.isSelected) results.push_back(entry.fullPath.string());
+                        }
+                    } else {
+                        results.push_back(entries[selected].fullPath.string());
+                    }
                     running = false;
                 }
             }
@@ -526,7 +562,7 @@ void DirectoryBrowserScreen::handleKey(int ch, bool& running, std::string& resul
     }
 }
 
-void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, std::string& result)
+void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, std::vector<std::string>& results)
 {
     if (!running) return;
 
@@ -590,10 +626,15 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
             if (idx < entries.size())
             {
                 selected = idx;
-                // No need to clamp here as Mouse interaction is always in visible range
                 
                 if (ev.button == 0 && ev.pressed)
                 {
+                    // CTRL+Click toggles selection
+                    if (ev.ctrl && !entries[idx].isDir) {
+                        entries[idx].isSelected = !entries[idx].isSelected;
+                        return;
+                    }
+
                     // 单击选中；双击进入目录（或选择当前目录）
                     static size_t lastIdx = static_cast<size_t>(-1);
                     static auto lastTick = std::chrono::steady_clock::now();
@@ -604,7 +645,16 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
 
                     if (entries[idx].name == "[Use this directory]")
                     {
-                        result = currentPath.string();
+                        if (showFilesMode) {
+                            results.clear();
+                            for (const auto& entry : entries) {
+                                if (!entry.isDir && entry.name != ".." && entry.name != "[Use this directory]") {
+                                    results.push_back(entry.fullPath.string());
+                                }
+                            }
+                        } else {
+                            results.push_back(currentPath.string());
+                        }
                         running = false;
                     }
                     else if (doubleClick && entries[idx].isDir)
@@ -616,7 +666,20 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
                     }
                     else if (doubleClick && !entries[idx].isDir && showFilesMode)
                     {
-                        result = entries[idx].fullPath.string();
+                        // Check if we have multiple selected
+                        bool hasMulti = false;
+                        for (const auto& entry : entries) {
+                            if (entry.isSelected) { hasMulti = true; break; }
+                        }
+
+                        if (hasMulti) {
+                            results.clear();
+                            for (const auto& entry : entries) {
+                                if (entry.isSelected) results.push_back(entry.fullPath.string());
+                            }
+                        } else {
+                            results.push_back(entries[idx].fullPath.string());
+                        }
                         running = false;
                     }
                 }

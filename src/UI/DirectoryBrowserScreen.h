@@ -11,6 +11,7 @@
 #include <chrono>
 #include <atomic>
 #include <mutex>
+#include <set>
 
 namespace TilelandWorld {
 namespace UI {
@@ -19,8 +20,8 @@ class DirectoryBrowserScreen {
 public:
     explicit DirectoryBrowserScreen(std::string initialPath, bool showFiles = false, std::string extensionFilter = "");
     ~DirectoryBrowserScreen(); 
-    // 返回选中的目录或文件；若用户取消则返回空字符串
-    std::string show();
+    // 返回选中的目录或文件（支持多选）
+    std::vector<std::string> show();
 
 private:
     struct Entry {
@@ -34,6 +35,7 @@ private:
         int64_t sizeBytes{0};
         bool sizePending{false};
         bool sizeTimedOut{false};
+        bool isSelected{false}; // For multi-selection
     };
 
     std::filesystem::path currentPath;
@@ -79,8 +81,8 @@ private:
     void refreshEntries();
     void clampSelection();
     void renderFrame();
-    void handleKey(int ch, bool& running, std::string& result);
-    void handleMouse(const InputEvent& ev, bool& running, std::string& result);
+    void handleKey(const InputEvent& ev, bool& running, std::vector<std::string>& results);
+    void handleMouse(const InputEvent& ev, bool& running, std::vector<std::string>& results);
     void ensureConsoleSize();
 };
 

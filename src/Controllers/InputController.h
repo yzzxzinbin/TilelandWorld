@@ -80,7 +80,7 @@ namespace TilelandWorld {
         bool tryParseArrow();
         bool tryParseVtResponse();
         void emitKey(InputKey key, char32_t ch = 0, bool ctrl = false, bool alt = false, bool shift = false);
-        void emitMouse(int x, int y, int button, bool pressed, bool move, int wheel = 0);
+        void emitMouse(int x, int y, int button, bool pressed, bool move, int wheel = 0, bool ctrl = false, bool alt = false, bool shift = false);
         void emitChar(char32_t ch);
 
 #ifdef _WIN32

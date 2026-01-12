@@ -524,9 +524,9 @@ void SettingsScreen::openDirectoryPicker() {
     }
 
     DirectoryBrowserScreen browser(working.saveDirectory);
-    std::string chosen = browser.show();
+    std::vector<std::string> chosen = browser.show();
     if (!chosen.empty()) {
-        working.saveDirectory = chosen;
+        working.saveDirectory = chosen[0];
     }
 
     if (activeInput) {
@@ -541,9 +541,9 @@ void SettingsScreen::openAssetDirectoryPicker() {
     }
 
     DirectoryBrowserScreen browser(working.assetDirectory);
-    std::string chosen = browser.show();
+    std::vector<std::string> chosen = browser.show();
     if (!chosen.empty()) {
-        working.assetDirectory = chosen;
+        working.assetDirectory = chosen[0];
     }
 
     if (activeInput) {

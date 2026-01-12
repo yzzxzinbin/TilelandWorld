@@ -146,8 +146,14 @@ namespace TilelandWorld {
 
             // Printable / control chars
             unsigned char c = static_cast<unsigned char>(buffer[0]);
-            if (c == '\r' || c == '\n') {
-                emitKey(InputKey::Enter, '\n');
+            if (c == '\r') {
+                emitKey(InputKey::Enter, 13);
+                buffer.erase(0, 1);
+                continue;
+            }
+            if (c == '\n') {
+                // Often CTRL+Enter sends \n (LF) while Enter sends \r (CR)
+                emitKey(InputKey::Enter, 13, true); 
                 buffer.erase(0, 1);
                 continue;
             }
@@ -282,6 +288,12 @@ namespace TilelandWorld {
         bool release = (buffer[mPos] == 'm');
         bool isWheel = (b & 0x40) != 0;
         bool isMotion = (b & 0x20) != 0;
+        
+        // SGR Modifiers: Shift=4, Alt=8, Ctrl=16
+        bool ctrl = (b & 0x10) != 0;
+        bool alt = (b & 0x08) != 0;
+        bool shift = (b & 0x04) != 0;
+
         int button = b & 0x03;
         int wheel = 0;
         if (isWheel) {
@@ -295,11 +307,11 @@ namespace TilelandWorld {
         // Update EnvConfig with raw VT cell position (1-based)
         EnvConfig::getInstance().setMouseCellVt(static_cast<double>(x), static_cast<double>(y));
 
-        emitMouse(col, row, button, press && !isWheel && !isMotion && !release, isMotion, wheel);
+        emitMouse(col, row, button, press && !isWheel && !isMotion && !release, isMotion, wheel, ctrl, alt, shift);
 
         buffer.erase(0, mPos + 1);
         return true;
-    }
+}
 
     void InputController::emitKey(InputKey key, char32_t ch, bool ctrl, bool alt, bool shift)
     {
@@ -314,7 +326,7 @@ namespace TilelandWorld {
         eventQueue.push_back(ev);
     }
 
-    void InputController::emitMouse(int x, int y, int button, bool pressed, bool move, int wheel)
+    void InputController::emitMouse(int x, int y, int button, bool pressed, bool move, int wheel, bool ctrl, bool alt, bool shift)
     {
         InputEvent ev;
         ev.type = InputEvent::Type::Mouse;
@@ -324,6 +336,9 @@ namespace TilelandWorld {
         ev.pressed = pressed;
         ev.move = move;
         ev.wheel = wheel;
+        ev.ctrl = ctrl;
+        ev.alt = alt;
+        ev.shift = shift;
         std::lock_guard<std::mutex> lock(queueMutex);
         eventQueue.push_back(ev);
     }

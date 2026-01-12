@@ -273,13 +273,19 @@ void MenuView::render(TuiSurface& surface, int originX, int originY, int width) 
                                     const RGBColor& baseFg, const RGBColor& baseBg,
                                     const RGBColor& hiFg, const RGBColor& hiBg) {
         int cursorX = rowX;
+        int maxTextWidth = areaWidth - (rowX - (x + 2));
+        
         for (size_t pos = 0; pos < line.size();) {
             auto info = TuiUtils::nextUtf8Char(line, pos);
             if (info.length == 0) break;
+            
             int relX = cursorX - rowX;
+            if (relX + (int)info.visualWidth > maxTextWidth) break;
+
             bool inHighlight = relX >= highlightStart && relX < highlightEnd;
             const RGBColor& useBg = inHighlight ? hiBg : baseBg;
             const RGBColor& useFg = inHighlight ? hiFg : baseFg;
+            
             if (TuiCell* cell = surface.editCell(cursorX, rowY)) {
                 cell->glyph = line.substr(pos, info.length);
                 cell->fg = useFg;
@@ -298,7 +304,6 @@ void MenuView::render(TuiSurface& surface, int originX, int originY, int width) 
             }
             cursorX += static_cast<int>(info.visualWidth);
             pos += info.length;
-            if (relX > areaWidth) break;
         }
     };
 

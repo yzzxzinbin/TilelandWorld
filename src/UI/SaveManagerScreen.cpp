@@ -125,7 +125,7 @@ void SaveManagerScreen::refreshList() {
     menu.setSubtitle("Enter/click=load | E edit | D delete | R refresh | Q back");
     menu.setMarkerProvider([this](size_t idx, bool focus) {
         if (!focus) return std::string("  ");
-        if (idx < saves.size()) return std::string("🌍 ");
+        if (idx < saves.size()) return std::string("🌍");
         return std::string("▶ ");
     });
     infoCache.assign(saves.size(), SaveInfo{});
