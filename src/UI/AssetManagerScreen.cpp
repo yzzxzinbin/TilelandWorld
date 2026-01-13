@@ -55,7 +55,7 @@ namespace UI {
           surface(80, 24), 
           painter(),
           input(std::make_unique<InputController>()),
-          taskSystem(4) // Use 4 threads or auto
+          taskSystem(-1) // Use auto
     {
         lastImportPath = manager.getRootDir();
         refreshList();
@@ -188,7 +188,7 @@ namespace UI {
                         }
                     }
 
-                    if (ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
+                    if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
                         running = false;
                     } else if (ev.key == InputKey::ArrowUp) {
                         if (selectedIndex > 0) selectedIndex--;
@@ -414,7 +414,7 @@ namespace UI {
         surface.fillRect(0, h - 1, w, 1, theme.title, theme.accent, " ");
         surface.drawText(2, 1, "Image Assets", {0, 0, 0}, theme.accent);
         surface.drawText(w - 18, 1, "Tileland World", {0, 0, 0}, theme.accent);
-        surface.drawText(2, 3, "Up/Down: select | I: import | R: rename | D: delete | Esc: back", theme.hintFg, theme.background);
+        surface.drawText(2, 3, "Up/Down: select | I: import | R: rename | D: delete | Q: back", theme.hintFg, theme.background);
 
         // Layout
         int padding = 2;
@@ -672,7 +672,7 @@ namespace UI {
                         dragging = false;
                     }
                 } else if (ev.type == InputEvent::Type::Key) {
-                    if (ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
+                    if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
                         running = false;
                     } else if (ev.key == InputKey::Enter) {
                         tryConfirm();
@@ -761,7 +761,7 @@ namespace UI {
             auto events = input->pollEvents();
             for (const auto& ev : events) {
                 if (ev.type == InputEvent::Type::Key) {
-                    if (ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
+                    if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
                         running = false;
                     } else if (ev.key == InputKey::Enter) {
                         confirmed = true;
@@ -827,90 +827,47 @@ namespace UI {
         ToggleSwitchState qualityToggleState{};
         
         bool dialogRunning = true;
+        bool isImporting = false;
+        double totalPct = 0.0;
+        double itemPct = 0.0;
+        int currentFileIdx = 0;
+        int totalFileCount = static_cast<int>(filePaths.size());
+        std::string currentItemName;
+        std::string currentStage = "Starting...";
+        auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
+        std::future<void> importFuture;
+
         int mouseX = -1;
         int mouseY = -1;
-   
-        while (dialogRunning) {
-            // Render background (dimmed)
-            drawMainUI();
-            
-            // Draw Dialog Box
-            int w = surface.getWidth();
-            int h = surface.getHeight();
-            int dw = 48, dh = 13;
-            int dx = (w - dw) / 2;
-            int dy = (h - dh) / 2;
-            
-            BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
-            surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
-            surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
-            
-            std::string title = (filePaths.size() > 1) 
-                ? "Batch Import (" + std::to_string(filePaths.size()) + ")" 
-                : "Import Settings";
-            surface.drawText(dx + 2, dy + 1, title, theme.title, theme.background);
 
-            int labelWidth = 8;
-            int labelX = dx + 2;
-            int fieldX = dx + labelWidth + 6;
-            auto drawLabel = [&](const std::string& label, int y){
-                int pad = std::max(0, labelWidth - static_cast<int>(label.size()));
-                surface.drawText(labelX, y, std::string(pad, ' ') + label + ":", theme.itemFg, theme.panel);
-            };
-            auto drawField = [&](int idx, const std::string& val, int y) {
-                RGBColor fg = (focusIdx == idx) ? theme.focusFg : theme.itemFg;
-                RGBColor bg = (focusIdx == idx) ? theme.focusBg : theme.panel;
-                surface.drawText(fieldX, y, " " + val + " ", fg, bg);
-            };
-            int lineY = dy + 3;
-            drawLabel("Width", lineY);
-            drawField(0, widthStr, lineY);
-            lineY++;
-            drawLabel("Quality", lineY);
-            int toggleX = fieldX;
-            ToggleSwitchStyle tstyle{};
-            tstyle.offLabel = "LOW";
-            tstyle.onLabel = "HIGH";
-            ToggleSwitch::render(surface, toggleX, lineY, qualityIdx == 1, qualityToggleState, tstyle);
-            
-            // Buttons
-            std::string importLbl = "[ Import ]";
-            std::string cancelLbl = "[ Cancel ]";
-            int importX = dx + 6;
-            int cancelX = dx + dw - static_cast<int>(cancelLbl.size()) - 6;
-            int btnY = dy + dh - 3;
-            auto drawBtn = [&](const std::string& lbl, int x, bool hot, bool focus){
-                RGBColor baseBg = theme.accent;
-                bool active = hot || focus;
-                RGBColor bg = active ? darken(baseBg, 0.6) : baseBg;
-                RGBColor fg = active ? RGBColor{255,255,255} : theme.title;
-                surface.drawText(x, btnY, lbl, fg, bg);
-            };
-            drawBtn(importLbl, importX, hoverImport, focusIdx == 2);
-            drawBtn(cancelLbl, cancelX, hoverCancel, focusIdx == 3);
+        int dw = 48, dh = 13;
+        int dx = (surface.getWidth() - dw) / 2;
+        int dy = (surface.getHeight() - dh) / 2;
+        bool dragging = false;
+        int dragStartX = 0, dragStartY = 0;
+        int dragOriginX = 0, dragOriginY = 0;
 
-            auto updateHover = [&](){
-                if (mouseX < 0 || mouseY < 0) {
-                    hoverImport = hoverCancel = false;
-                    qualityToggleState.hover = qualityToggleState.hot = false;
-                    return;
-                }
-                hoverImport = (mouseX >= importX && mouseX < importX + static_cast<int>(importLbl.size()) && mouseY == btnY);
-                hoverCancel = (mouseX >= cancelX && mouseX < cancelX + static_cast<int>(cancelLbl.size()) && mouseY == btnY);
-                bool onToggle = (mouseY == lineY && mouseX >= toggleX && mouseX < toggleX + tstyle.trackLen + 2);
-                qualityToggleState.hover = onToggle;
-                qualityToggleState.hot = onToggle;
-            };
-            updateHover();
+        auto clampDialog = [&]() {
+            dx = std::clamp(dx, 0, surface.getWidth() - dw);
+            dy = std::clamp(dy, 0, surface.getHeight() - dh);
+        };
+
+        auto startImport = [&]() {
+            isImporting = true;
+            cancelFlag->store(false);
+            totalPct = 0.0;
+            itemPct = 0.0;
+            currentFileIdx = 0;
             
-            painter.present(surface);
-            
-            auto doImport = [&]() {
+            // Capture needed state by value
+            importFuture = std::async(std::launch::async, 
+                [this, filePaths, widthStr, qualityIdx, defaultW, cancelFlag, &totalPct, &itemPct, &currentItemName, &currentStage, &currentFileIdx]() {
                 int total = static_cast<int>(filePaths.size());
                 for (int i = 0; i < total; ++i) {
+                    if (cancelFlag->load()) break;
+                    currentFileIdx = i + 1;
                     const auto& filePath = filePaths[i];
-                    std::string baseStatus = "Importing " + std::to_string(i + 1) + "/" + std::to_string(total);
-                    std::string fileName = std::filesystem::path(filePath).filename().string();
+                    currentItemName = std::filesystem::path(filePath).filename().string();
                     
                     try {
                         RawImage raw = ImageLoader::load(filePath);
@@ -931,127 +888,235 @@ namespace UI {
                             opts.targetHeight = std::max(1, (int)std::round((double)raw.height * tw * aspect / raw.width));
                             opts.quality = (qualityIdx == 1) ? AdvancedImageConverter::Options::Quality::High : AdvancedImageConverter::Options::Quality::Low;
                             
-                            double peakItemProgress = -1.0;
                             opts.onProgress = [&](double completed, double totalWork, const std::string& stage) {
-                                static std::mutex uiMutex;
-                                static auto lastUpdate = std::chrono::steady_clock::now();
-                                
-                                std::lock_guard<std::mutex> lock(uiMutex);
-
-                                if (completed < peakItemProgress && completed < totalWork) {
-                                    return;
-                                }
-                                peakItemProgress = completed;
-
-                                auto now = std::chrono::steady_clock::now();
-                                if (now - lastUpdate < std::chrono::milliseconds(33) && completed < totalWork) {
-                                    return;
-                                }
-                                lastUpdate = now;
-
-                                // Clear area for progress bars and status
-                                surface.fillRect(dx + 1, dy + 6, dw - 2, 6, theme.panel, theme.panel, " ");
-                                
-                                double itemPct = std::clamp(completed / totalWork, 0.0, 1.0);
-                                double totalPct = std::clamp((i + itemPct) / total, 0.0, 1.0);
-                                
-                                ProgressBarStyle pstyle;
-                                pstyle.width = dw - 11; // Reduced to fit percentage and padding
-                                pstyle.fillFg = theme.accent;
-                                pstyle.fillBg = darken(theme.panel, 0.8);
-                                pstyle.showPercentage = true;
-                                
-                                // Total Progress
-                                surface.drawText(dx + 2, dy + 6, "Total Progress:", theme.title, theme.panel);
-                                ProgressBar::render(surface, dx + 2, dy + 7, totalPct, pstyle);
-                                
-                                // Current Item Status
-                                std::string statusText = baseStatus + " (" + stage + ")";
-                                surface.drawText(dx + 2, dy + 9, statusText, theme.title, theme.panel);
-                                
-                                // Current Item Progress
-                                ProgressBar::render(surface, dx + 2, dy + 10, itemPct, pstyle);
-                                
-                                painter.present(surface);
+                                if (cancelFlag->load()) return;
+                                itemPct = std::clamp(completed / totalWork, 0.0, 1.0);
+                                totalPct = std::clamp((i + itemPct) / total, 0.0, 1.0);
+                                currentStage = stage;
                             };
 
                             AdvancedImageConverter converter;
-                            ImageAsset asset = converter.convert(raw, opts, taskSystem);
+                            ImageAsset asset = converter.convert(raw, opts, taskSystem, cancelFlag.get());
                             
-                            std::string name = std::filesystem::path(filePath).stem().string();
-                            manager.saveAsset(asset, name);
+                            if (!cancelFlag->load()) {
+                                std::string name = std::filesystem::path(filePath).stem().string();
+                                manager.saveAsset(asset, name);
+                            }
                         }
                     } catch (...) {}
                 }
-                refreshList();
-                dialogRunning = false;
-            };
+            });
+        };
+   
+        while (dialogRunning) {
+            if (isImporting && importFuture.valid()) {
+                if (importFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                    importFuture.get(); 
+                    isImporting = false;
+                    refreshList();
+                    dialogRunning = false;
+                }
+            }
 
+            // Render background (dimmed)
+            drawMainUI();
+            
+            // Draw Dialog Box
+            clampDialog();
+            
+            BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
+            surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
+            surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
+            
+            if (!isImporting) {
+                std::string title = (filePaths.size() > 1) 
+                    ? "Batch Import (" + std::to_string(filePaths.size()) + ")" 
+                    : "Import Settings";
+                surface.drawText(dx + 2, dy + 1, title, theme.title, theme.background);
+
+                int labelWidth = 8;
+                int labelX = dx + 2;
+                int fieldX = dx + labelWidth + 6;
+                auto drawLabel = [&](const std::string& label, int y){
+                    int pad = std::max(0, labelWidth - static_cast<int>(label.size()));
+                    surface.drawText(labelX, y, std::string(pad, ' ') + label + ":", theme.itemFg, theme.panel);
+                };
+                auto drawField = [&](int idx, const std::string& val, int y) {
+                    RGBColor fg = (focusIdx == idx) ? theme.focusFg : theme.itemFg;
+                    RGBColor bg = (focusIdx == idx) ? theme.focusBg : theme.panel;
+                    surface.drawText(fieldX, y, " " + val + " ", fg, bg);
+                };
+                int lineY = dy + 3;
+                drawLabel("Width", lineY);
+                drawField(0, widthStr, lineY);
+                lineY++;
+                drawLabel("Quality", lineY);
+                int toggleX = fieldX;
+                ToggleSwitchStyle tstyle{};
+                tstyle.offLabel = "LOW";
+                tstyle.onLabel = "HIGH";
+                ToggleSwitch::render(surface, toggleX, lineY, qualityIdx == 1, qualityToggleState, tstyle);
+                
+                // Buttons
+                std::string importLbl = "[ Import ]";
+                std::string cancelLbl = "[ Cancel ]";
+                int importX = dx + 6;
+                int cancelX = dx + dw - static_cast<int>(cancelLbl.size()) - 6;
+                int btnY = dy + dh - 3;
+                auto drawBtn = [&](const std::string& lbl, int x, bool hot, bool focus){
+                    RGBColor baseBg = theme.accent;
+                    bool active = hot || focus;
+                    RGBColor bg = active ? darken(baseBg, 0.6) : baseBg;
+                    RGBColor fg = active ? RGBColor{255,255,255} : theme.title;
+                    surface.drawText(x, btnY, lbl, fg, bg);
+                };
+                drawBtn(importLbl, importX, hoverImport, focusIdx == 2);
+                drawBtn(cancelLbl, cancelX, hoverCancel, focusIdx == 3);
+
+                auto updateHover = [&](){
+                    if (mouseX < 0 || mouseY < 0) {
+                        hoverImport = hoverCancel = false;
+                        qualityToggleState.hover = qualityToggleState.hot = false;
+                        return;
+                    }
+                    hoverImport = (mouseX >= importX && mouseX < importX + static_cast<int>(importLbl.size()) && mouseY == btnY);
+                    hoverCancel = (mouseX >= cancelX && mouseX < cancelX + static_cast<int>(cancelLbl.size()) && mouseY == btnY);
+                    bool onToggle = (mouseY == lineY && mouseX >= toggleX && mouseX < toggleX + tstyle.trackLen + 2);
+                    qualityToggleState.hover = onToggle;
+                    qualityToggleState.hot = onToggle;
+                };
+                updateHover();
+            } else {
+                // Progress UI
+                surface.drawText(dx + 2, dy + 1, "Importing Assets...", theme.title, theme.background);
+
+                // Cancel button with Red Highlight (moved right by 1 more to -10)
+                bool cancelHover = (mouseX >= dx + dw - 10 && mouseX < dx + dw - 2 && mouseY == dy + 1);
+                RGBColor cFg = cancelHover ? theme.title : theme.accent;
+                RGBColor cBg = cancelHover ? RGBColor{255, 0, 0} : theme.background;
+                surface.drawText(dx + dw - 10, dy + 1, "[Cancel]", cFg, cBg);
+
+                ProgressBarStyle pstyle;
+                pstyle.width = dw - 11;
+                pstyle.fillFg = theme.accent;
+                pstyle.fillBg = darken(theme.panel, 0.8);
+                pstyle.showPercentage = true;
+
+                std::string totalTitle = "Total Progress (" + std::to_string(currentFileIdx) + "/" + std::to_string(totalFileCount) + "):";
+                surface.drawText(dx + 2, dy + 6, totalTitle, theme.title, theme.panel);
+                ProgressBar::render(surface, dx + 2, dy + 7, totalPct, pstyle);
+
+                int maxNameW = dw - 24; 
+                std::string truncatedName = TuiUtils::trimToUtf8VisualWidth(currentItemName, maxNameW);
+                std::string status = "Item: " + truncatedName + " (" + currentStage + ")";
+                surface.drawText(dx + 2, dy + 9, status, theme.title, theme.panel);
+                ProgressBar::render(surface, dx + 2, dy + 10, itemPct, pstyle);
+            }
+            
+            painter.present(surface);
+            
             // Input
             auto events = input->pollEvents();
             for (const auto& ev : events) {
                 if (ev.type == InputEvent::Type::Mouse) {
                     mouseX = ev.x;
                     mouseY = ev.y;
-                    bool onImport = (ev.x >= importX && ev.x < importX + static_cast<int>(importLbl.size()) && ev.y == btnY);
-                    bool onCancel = (ev.x >= cancelX && ev.x < cancelX + static_cast<int>(cancelLbl.size()) && ev.y == btnY);
-                    bool onWidth = (ev.y == dy + 3 && ev.x >= fieldX && ev.x < fieldX + static_cast<int>(widthStr.size()) + 2);
-                    bool onToggle = (ev.y == lineY && ev.x >= toggleX && ev.x < toggleX + tstyle.trackLen + 2);
-                    // focus text/toggle by click
-                    if (ev.button == 0 && ev.pressed) {
-                        if (onWidth) {
-                            focusIdx = 0;
-                        } else if (onToggle) {
-                            focusIdx = 1;
-                            bool wasOn = (qualityIdx == 1);
-                            qualityIdx = 1 - qualityIdx;
-                            qualityToggleState.previousOn = wasOn;
-                            qualityToggleState.lastToggle = std::chrono::steady_clock::now();
-                        }
+
+                    bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + dw - 1);
+                    if (ev.button == 0 && ev.pressed && onTitle) {
+                        dragging = true;
+                        dragStartX = ev.x;
+                        dragStartY = ev.y;
+                        dragOriginX = dx;
+                        dragOriginY = dy;
                     }
-                    if (ev.pressed && ev.button == 0) {
-                        if (onImport) {
-                            focusIdx = 2;
-                        } else if (onCancel) {
-                            focusIdx = 3;
-                        }
+
+                    if (dragging) {
+                        dx = dragOriginX + (ev.x - dragStartX);
+                        dy = dragOriginY + (ev.y - dragStartY);
+                        clampDialog();
                     }
-                    if (ev.pressed && ev.button == 0) {
-                        if (onImport) {
-                            doImport();
-                        } else if (onCancel) {
-                            dialogRunning = false;
+
+                    if (ev.button == 0 && !ev.pressed && !ev.move) {
+                        dragging = false;
+                    }
+
+                    if (!isImporting) {
+                        int importLblSize = 10; // "[ Import ]"
+                        int cancelLblSize = 10; // "[ Cancel ]"
+                        int btnY = dy + dh - 3;
+                        int importX = dx + 6;
+                        int cancelX = dx + dw - cancelLblSize - 6;
+
+                        bool onImport = (ev.x >= importX && ev.x < importX + importLblSize && ev.y == btnY);
+                        bool onCancel = (ev.x >= cancelX && ev.x < cancelX + cancelLblSize && ev.y == btnY);
+                        
+                        int labelWidth = 8;
+                        int fieldX = dx + labelWidth + 6;
+                        bool onWidth = (ev.y == dy + 3 && ev.x >= fieldX && ev.x < fieldX + static_cast<int>(widthStr.size()) + 2);
+                        int lineY = dy + 4;
+                        int toggleX = fieldX;
+                        bool onToggle = (ev.y == lineY && ev.x >= toggleX && ev.x < toggleX + 11);
+
+                        if (ev.button == 0 && ev.pressed) {
+                            if (onWidth) {
+                                focusIdx = 0;
+                            } else if (onToggle) {
+                                focusIdx = 1;
+                                bool wasOn = (qualityIdx == 1);
+                                qualityIdx = 1 - qualityIdx;
+                                qualityToggleState.previousOn = wasOn;
+                                qualityToggleState.lastToggle = std::chrono::steady_clock::now();
+                            } else if (onImport) {
+                                focusIdx = 2;
+                                startImport();
+                            } else if (onCancel) {
+                                focusIdx = 3;
+                                dialogRunning = false;
+                            }
+                        }
+                    } else {
+                        // Progress state mouse
+                        bool onProgressCancel = (mouseX >= dx + dw - 10 && mouseX < dx + dw - 2 && mouseY == dy + 1);
+                        if (ev.button == 0 && ev.pressed && onProgressCancel) {
+                            cancelFlag->store(true);
                         }
                     }
                 }
-                updateHover();
+
                 if (ev.type == InputEvent::Type::Key) {
-                    if (ev.key == InputKey::Escape) {
-                        dialogRunning = false;
-                    } else if (ev.key == InputKey::Tab) {
-                        focusIdx = (focusIdx + 1) % 4;
-                    } else if (ev.key == InputKey::ArrowUp) {
-                        focusIdx = (focusIdx - 1 + 4) % 4;
-                    } else if (ev.key == InputKey::ArrowDown) {
-                        focusIdx = (focusIdx + 1) % 4;
-                    } else if (ev.key == InputKey::Enter) {
-                        if (focusIdx == 2) { // Import
-                            doImport();
-                        } else if (focusIdx == 3) { // Cancel
+                    if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
+                        if (isImporting) {
+                            cancelFlag->store(true);
+                        } else {
                             dialogRunning = false;
                         }
-                    } else if (ev.key == InputKey::Character && ev.ch == '\b') {
-                        if (focusIdx == 0 && !widthStr.empty()) widthStr.pop_back();
-                    } else if (ev.key == InputKey::Character) {
-                        if (isdigit(ev.ch) || ev.ch == '%') {
-                            if (focusIdx == 0) widthStr += ev.ch;
-                        }
-                    } else if (ev.key == InputKey::ArrowLeft || ev.key == InputKey::ArrowRight) {
-                        if (focusIdx == 1) {
-                            bool wasOn = (qualityIdx == 1);
-                            qualityIdx = 1 - qualityIdx; // Toggle 0/1
-                            qualityToggleState.previousOn = wasOn;
-                            qualityToggleState.lastToggle = std::chrono::steady_clock::now();
+                    } else if (!isImporting) {
+                        if (ev.key == InputKey::Tab) {
+                            focusIdx = (focusIdx + 1) % 4;
+                        } else if (ev.key == InputKey::ArrowUp) {
+                            focusIdx = (focusIdx - 1 + 4) % 4;
+                        } else if (ev.key == InputKey::ArrowDown) {
+                            focusIdx = (focusIdx + 1) % 4;
+                        } else if (ev.key == InputKey::Enter) {
+                            if (focusIdx == 2) { 
+                                startImport();
+                            } else if (focusIdx == 3) {
+                                dialogRunning = false;
+                            }
+                        } else if (ev.key == InputKey::Character && ev.ch == '\b') {
+                            if (focusIdx == 0 && !widthStr.empty()) widthStr.pop_back();
+                        } else if (ev.key == InputKey::Character) {
+                            if (isdigit(ev.ch) || ev.ch == '%') {
+                                if (focusIdx == 0) widthStr += ev.ch;
+                            }
+                        } else if (ev.key == InputKey::ArrowLeft || ev.key == InputKey::ArrowRight) {
+                            if (focusIdx == 1) {
+                                bool wasOn = (qualityIdx == 1);
+                                qualityIdx = 1 - qualityIdx;
+                                qualityToggleState.previousOn = wasOn;
+                                qualityToggleState.lastToggle = std::chrono::steady_clock::now();
+                            }
                         }
                     }
                 }
@@ -1183,7 +1248,7 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
         auto events = input->pollEvents();
         for (const auto& ev : events) {
             if (ev.type == InputEvent::Type::Key) {
-                if (ev.key == InputKey::Enter || ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
+                if (ev.key == InputKey::Enter || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
                     running = false; break;
                 }
             } else if (ev.type == InputEvent::Type::Mouse) {

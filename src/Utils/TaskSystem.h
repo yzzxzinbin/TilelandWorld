@@ -9,6 +9,8 @@
 #include <condition_variable>
 #include <functional>
 #include <atomic>
+#include <future>
+#include <type_traits>
 
 namespace TilelandWorld {
 
@@ -33,6 +35,21 @@ namespace TilelandWorld {
          *             注意：任务内部应自行处理异常，避免导致工作线程崩溃。
          */
         void submit(std::function<void()> task);
+
+        /**
+         * @brief 提交一个带返回值的任务到队列。
+         * @return std::future 获取任务结果。
+         */
+        template<typename F>
+        auto submitFuture(F&& f) -> std::future<typename std::invoke_result<F>::type> {
+            using ReturnType = typename std::invoke_result<F>::type;
+            auto task = std::make_shared<std::packaged_task<ReturnType()>>(std::forward<F>(f));
+            std::future<ReturnType> fut = task->get_future();
+            submit([task]() {
+                (*task)();
+            });
+            return fut;
+        }
 
         /**
          * @brief 停止所有线程并等待任务完成 (通常在析构时自动调用，也可手动调用)。
