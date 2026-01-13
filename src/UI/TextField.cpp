@@ -164,7 +164,7 @@ bool TextField::handleInput(const InputEvent& ev, std::string& text, TextFieldSt
         }
     }
 
-    return changed;
+    return (ev.key == InputKey::Character || ev.key == InputKey::Enter || ev.key == InputKey::Escape);
 }
 
 } // namespace UI

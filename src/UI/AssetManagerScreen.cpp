@@ -28,6 +28,7 @@ namespace {
     const std::string kRenameBtnLabel = "[Re]";
     const std::string kDeleteBtnLabel = "[Del]";
     const std::string kInfoBtnLabel = "[Inf]";
+    const std::string kNewFolderBtnLabel = "[+Folder]";
 }
 
 namespace TilelandWorld {
@@ -73,7 +74,14 @@ namespace UI {
             drawMainUI();
             
             if (ctxMenuState.visible) {
-                ContextMenu::render(surface, ctxMenuItems, ctxMenuState);
+                std::vector<std::string> currentItems = ctxMenuItems;
+                if (selectedIndex >= 0 && selectedIndex < (int)displayList.size()) {
+                    if (displayList[selectedIndex].type == ListItem::Folder) {
+                        bool isCollapsed = collapsedFolders.count(displayList[selectedIndex].name);
+                        currentItems = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to..."};
+                    }
+                }
+                ContextMenu::render(surface, currentItems, ctxMenuState);
             }
 
             painter.present(surface);
@@ -82,16 +90,41 @@ namespace UI {
             for (const auto& ev : events) {
                 if (ctxMenuState.visible) {
                     bool requestClose = false;
-                    int result = ContextMenu::handleInput(ev, ctxMenuItems, ctxMenuState, requestClose);
-                    if (result >= 0) {
-                        if (result == 0) openInEditor();
-                        else if (result == 1) renameCurrentAsset();
-                        else if (result == 2) deleteCurrentAsset();
-                        else if (result == 3) {
-                            if (!previewLoaded) loadPreview();
-                            if (previewLoaded) showInfoDialog(getSelectedAssetName(), currentPreview);
+                    std::vector<std::string> currentItems = ctxMenuItems;
+                    bool isFolder = false;
+                    if (selectedIndex >= 0 && selectedIndex < (int)displayList.size()) {
+                        if (displayList[selectedIndex].type == ListItem::Folder) {
+                            isFolder = true;
+                            bool isCollapsed = collapsedFolders.count(displayList[selectedIndex].name);
+                            currentItems = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to..."};
                         }
                     }
+
+                    int result = ContextMenu::handleInput(ev, currentItems, ctxMenuState, requestClose);
+                    if (result >= 0) {
+                        if (isFolder) {
+                            if (result == 0) {
+                                std::string fName = displayList[selectedIndex].name;
+                                if (collapsedFolders.count(fName)) collapsedFolders.erase(fName);
+                                else collapsedFolders.insert(fName);
+                                applyFilter(fName);
+                            }
+                            else if (result == 1) renameCurrent();
+                            else if (result == 2) deleteCurrentAssetOrFolder();
+                            else if (result == 3) moveCurrentAsset();
+                        } else {
+                            if (result == 0) openInEditor();
+                            else if (result == 1) renameCurrent();
+                            else if (result == 2) deleteCurrentAssetOrFolder();
+                            else if (result == 3) {
+                                if (!previewLoaded) loadPreview();
+                                if (previewLoaded) showInfoDialog(getSelectedAssetName(), currentPreview);
+                            } else if (result == 4) {
+                                moveCurrentAsset();
+                            }
+                        }
+                    }
+
                     if (requestClose) {
                         ctxMenuState.visible = false;
                     }
@@ -99,35 +132,47 @@ namespace UI {
                 }
 
                 if (ev.type == InputEvent::Type::Mouse) {
-                    int filteredCount = static_cast<int>(filteredIndices.size());
-                    if (filteredCount > 0 && ev.wheel != 0) {
+                    int listCount = static_cast<int>(displayList.size());
+                    if (listCount > 0 && ev.wheel != 0) {
                         int delta = (ev.wheel > 0) ? -1 : 1;
-                        int maxIndex = std::max(0, filteredCount - 1);
+                        int maxIndex = std::max(0, listCount - 1);
                         selectedIndex = std::clamp(selectedIndex + delta, 0, maxIndex);
                         ensureSelectionVisible();
                         loadPreview();
                     }
 
                     bool onSearchField = (ev.y == searchFieldY && ev.x >= searchFieldX && ev.x < searchFieldX + searchFieldW);
+                    bool onNewFolderBtn = (ev.y == btnNewFolderY && ev.x >= btnNewFolderX && ev.x < btnNewFolderX + btnNewFolderW);
+
                     searchState.hover = onSearchField;
                     if (ev.pressed && ev.button == 0) {
                         searchState.focused = onSearchField;
+                        if (onNewFolderBtn) {
+                            createNewFolder();
+                        }
                     }
 
                     bool insideList = (ev.x >= listX && ev.x < listX + listW && ev.y >= listY && ev.y < listY + listH);
                     
                     // Handle Right Click for Context Menu
                     if (ev.pressed && ev.button == 2) {
-                        if (insideList && filteredCount > 0) {
+                        if (insideList && listCount > 0) {
                             int row = listScrollOffset + (ev.y - listY);
-                            if (row >= 0 && row < filteredCount) {
+                            if (row >= 0 && row < listCount) {
                                 selectedIndex = row;
                                 ensureSelectionVisible();
                                 loadPreview();
                                 
+                                // Adjust menu items based on selection
+                                std::vector<std::string> items = ctxMenuItems;
+                                if (displayList[selectedIndex].type == ListItem::Folder) {
+                                    bool isCollapsed = collapsedFolders.count(displayList[selectedIndex].name);
+                                    items = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to..."};
+                                }
+
                                 ctxMenuState.visible = true;
-                                ctxMenuState.width = ContextMenu::calculateWidth(ctxMenuItems);
-                                int menuH = static_cast<int>(ctxMenuItems.size()) + 2;
+                                ctxMenuState.width = ContextMenu::calculateWidth(items);
+                                int menuH = static_cast<int>(items.size()) + 2;
                                 ctxMenuState.x = std::clamp(ev.x, 0, std::max(0, surface.getWidth() - ctxMenuState.width));
                                 ctxMenuState.y = std::clamp(ev.y, 0, std::max(0, surface.getHeight() - menuH));
                                 ctxMenuState.selectedIndex = 0;
@@ -138,9 +183,11 @@ namespace UI {
 
                     hoverRow = -1;
                     hoverButton = HoverButton::None;
-                    if (insideList && filteredCount > 0) {
+                    if (onNewFolderBtn) hoverButton = HoverButton::NewFolder;
+
+                    if (insideList && listCount > 0) {
                         int row = listScrollOffset + (ev.y - listY);
-                        if (row >= 0 && row < filteredCount) {
+                        if (row >= 0 && row < listCount) {
                             hoverRow = row;
                             if (row != selectedIndex && ev.move) {
                                 selectedIndex = row;
@@ -152,35 +199,46 @@ namespace UI {
                             bool onRename = ev.x >= buttonRenameX && ev.x < buttonRenameX + static_cast<int>(kRenameBtnLabel.size());
                             bool onDelete = ev.x >= buttonDeleteX && ev.x < buttonDeleteX + static_cast<int>(kDeleteBtnLabel.size());
                             bool onInfo = ev.x >= buttonInfoX && ev.x < buttonInfoX + static_cast<int>(kInfoBtnLabel.size());
-                            if (onOpen) hoverButton = HoverButton::Open;
-                            else if (onRename) hoverButton = HoverButton::Rename;
-                            else if (onDelete) hoverButton = HoverButton::Delete;
-                            else if (onInfo) hoverButton = HoverButton::Info;
+                            
+                            if (displayList[row].type == ListItem::Asset) {
+                                if (onOpen) hoverButton = HoverButton::Open;
+                                else if (onRename) hoverButton = HoverButton::Rename;
+                                else if (onDelete) hoverButton = HoverButton::Delete;
+                                else if (onInfo) hoverButton = HoverButton::Info;
+                            }
 
-                            if (ev.pressed) {
+                            if (ev.pressed && ev.button == 0) {
                                 selectedIndex = row;
                                 ensureSelectionVisible();
                                 loadPreview();
-                                if (onDelete) {
-                                    deleteCurrentAsset();
-                                } else if (onOpen) {
-                                    openInEditor();
-                                } else if (onRename) {
-                                    renameCurrentAsset();
-                                } else if (onInfo) {
-                                    if (!previewLoaded) loadPreview();
-                                    if (previewLoaded) showInfoDialog(getSelectedAssetName(), currentPreview);
+
+                                if (displayList[row].type == ListItem::Folder) {
+                                    // Folder click: toggle expansion only (buttons removed)
+                                    std::string fName = displayList[row].name;
+                                    if (collapsedFolders.count(fName)) {
+                                        collapsedFolders.erase(fName);
+                                    } else {
+                                        collapsedFolders.insert(fName);
+                                    }
+                                    applyFilter(fName);
+                                } else {
+                                    // Asset click
+                                    if (onDelete) {
+                                        deleteCurrentAssetOrFolder();
+                                    } else if (onOpen) {
+                                        openInEditor();
+                                    } else if (onRename) {
+                                        renameCurrent();
+                                    } else if (onInfo) {
+                                        if (!previewLoaded) loadPreview();
+                                        if (previewLoaded) showInfoDialog(getSelectedAssetName(), currentPreview);
+                                    }
                                 }
                             }
                         }
-                    } else {
-                        hoverButton = HoverButton::None;
-                        hoverRow = -1;
                     }
                 } else if (ev.type == InputEvent::Type::Key) {
                     if (searchState.focused) {
-                        // 此处不需要改变样式以及添加过滤器和转换回调
-                        // 因此 handleInput() 使用默认构造的TextFieldStyle参数
                         if (TextField::handleInput(ev, searchQuery, searchState)) {
                             std::string prevName = getSelectedAssetName();
                             applyFilter(prevName);
@@ -190,23 +248,52 @@ namespace UI {
 
                     if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
                         running = false;
+                    } else if (ev.key == InputKey::Tab) {
+                        int listCount = static_cast<int>(displayList.size());
+                        if (listCount > 0 && selectedIndex >= 0 && selectedIndex < listCount) {
+                            std::vector<std::string> items = ctxMenuItems;
+                            if (displayList[selectedIndex].type == ListItem::Folder) {
+                                bool isCollapsed = collapsedFolders.count(displayList[selectedIndex].name);
+                                items = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to..."};
+                            }
+                            ctxMenuState.visible = true;
+                            ctxMenuState.width = ContextMenu::calculateWidth(items);
+                            int menuH = static_cast<int>(items.size()) + 2;
+                            
+                            // Center on selected row
+                            int rowY = listY + (selectedIndex - listScrollOffset);
+                            ctxMenuState.x = std::clamp(listX + 4, 0, std::max(0, surface.getWidth() - ctxMenuState.width));
+                            ctxMenuState.y = std::clamp(rowY, 0, std::max(0, surface.getHeight() - menuH));
+                            ctxMenuState.selectedIndex = 0;
+                        }
                     } else if (ev.key == InputKey::ArrowUp) {
                         if (selectedIndex > 0) selectedIndex--;
                         ensureSelectionVisible();
                         loadPreview();
                     } else if (ev.key == InputKey::ArrowDown) {
-                        if (selectedIndex < static_cast<int>(filteredIndices.size()) - 1) selectedIndex++;
+                        if (selectedIndex < static_cast<int>(displayList.size()) - 1) selectedIndex++;
                         ensureSelectionVisible();
                         loadPreview();
+                    } else if (ev.key == InputKey::Enter) {
+                       if (selectedIndex >= 0 && selectedIndex < (int)displayList.size()) {
+                           auto& item = displayList[selectedIndex];
+                           if (item.type == ListItem::Folder) {
+                               if (collapsedFolders.count(item.name)) collapsedFolders.erase(item.name);
+                               else collapsedFolders.insert(item.name);
+                               applyFilter(item.name);
+                           }
+                       }
                     } else if (ev.key == InputKey::Character) {
                         if (ev.ch == 'i' || ev.ch == 'I') {
                             importAsset();
                         } else if (ev.ch == 'd' || ev.ch == 'D') {
-                            deleteCurrentAsset();
+                            deleteCurrentAssetOrFolder();
                         } else if (ev.ch == 'r' || ev.ch == 'R') {
-                            renameCurrentAsset();
+                            renameCurrent();
                         } else if (ev.ch == 'o' || ev.ch == 'O') {
                             openInEditor();
+                        } else if (ev.ch == 'n' || ev.ch == 'N') {
+                            createNewFolder();
                         }
                     }
                 }
@@ -222,21 +309,64 @@ namespace UI {
     void AssetManagerScreen::refreshList(const std::string& preferredSelection) {
         std::string desired = preferredSelection.empty() ? getSelectedAssetName() : preferredSelection;
         assets = manager.listAssets();
+        folders = manager.listFolders();
         applyFilter(desired);
     }
 
     void AssetManagerScreen::applyFilter(const std::string& preferredSelection) {
-        filteredIndices.clear();
+        displayList.clear();
         std::string needle = toLowerCopy(searchQuery);
 
+        // Group assets by folder
+        std::map<std::string, std::vector<size_t>> folderContent;
+        std::vector<size_t> rootAssets;
         for (size_t i = 0; i < assets.size(); ++i) {
-            std::string hay = toLowerCopy(assets[i].name);
-            if (needle.empty() || hay.find(needle) != std::string::npos) {
-                filteredIndices.push_back(static_cast<int>(i));
+            if (assets[i].folder.empty()) {
+                rootAssets.push_back(i);
+            } else {
+                folderContent[assets[i].folder].push_back(i);
             }
         }
 
-        if (filteredIndices.empty()) {
+        auto matchesSearch = [&](const std::string& name) {
+            if (needle.empty()) return true;
+            return toLowerCopy(name).find(needle) != std::string::npos;
+        };
+
+        // Folders and their contents
+        for (size_t i = 0; i < folders.size(); ++i) {
+            bool folderMatches = matchesSearch(folders[i].name);
+            std::vector<size_t> matchingAssets;
+            if (folderContent.count(folders[i].name)) {
+                for (size_t assetIdx : folderContent[folders[i].name]) {
+                    if (matchesSearch(assets[assetIdx].name)) {
+                        matchingAssets.push_back(assetIdx);
+                    }
+                }
+            }
+
+            // If searching, only show folders that match or have matching assets
+            if (!needle.empty() && !folderMatches && matchingAssets.empty()) continue;
+
+            bool isCollapsed = (collapsedFolders.find(folders[i].name) != collapsedFolders.end());
+            bool forceExpand = !needle.empty();
+            displayList.push_back({ListItem::Folder, i, !isCollapsed || forceExpand, folders[i].name, ""});
+
+            if (!isCollapsed || forceExpand) { 
+                for (size_t assetIdx : matchingAssets) {
+                    displayList.push_back({ListItem::Asset, assetIdx, false, assets[assetIdx].name, folders[i].name});
+                }
+            }
+        }
+
+        // Root assets
+        for (size_t assetIdx : rootAssets) {
+            if (matchesSearch(assets[assetIdx].name)) {
+                displayList.push_back({ListItem::Asset, assetIdx, false, assets[assetIdx].name, ""});
+            }
+        }
+
+        if (displayList.empty()) {
             selectedIndex = 0;
             previewLoaded = false;
             lastPreviewName.clear();
@@ -251,23 +381,27 @@ namespace UI {
         listScrollOffset = 0;
 
         if (!preferredSelection.empty()) {
-            for (size_t i = 0; i < filteredIndices.size(); ++i) {
-                if (assets[filteredIndices[i]].name == preferredSelection) {
+            for (size_t i = 0; i < displayList.size(); ++i) {
+                if (displayList[i].type == ListItem::Asset && displayList[i].name == preferredSelection) {
                     selectedIndex = static_cast<int>(i);
                     loadPreview();
+                    ensureSelectionVisible();
+                    return;
+                } else if (displayList[i].type == ListItem::Folder && displayList[i].name == preferredSelection) {
+                    selectedIndex = static_cast<int>(i);
                     ensureSelectionVisible();
                     return;
                 }
             }
         }
 
-        selectedIndex = std::clamp(selectedIndex, 0, static_cast<int>(filteredIndices.size()) - 1);
+        selectedIndex = std::clamp(selectedIndex, 0, static_cast<int>(displayList.size()) - 1);
         ensureSelectionVisible();
         loadPreview();
     }
 
     void AssetManagerScreen::ensureSelectionVisible() {
-        int total = static_cast<int>(filteredIndices.size());
+        int total = static_cast<int>(displayList.size());
         selectedIndex = std::clamp(selectedIndex, 0, std::max(0, total - 1));
         int visible = std::max(1, listH);
         int maxOffset = std::max(0, total - visible);
@@ -280,11 +414,17 @@ namespace UI {
         }
     }
 
+    AssetManagerScreen::ListItem AssetManagerScreen::getSelectedItem() const {
+        if (selectedIndex < 0 || selectedIndex >= static_cast<int>(displayList.size())) {
+            return {ListItem::Asset, 0, false, "", ""};
+        }
+        return displayList[selectedIndex];
+    }
+
     std::string AssetManagerScreen::getSelectedAssetName() const {
-        if (selectedIndex < 0 || selectedIndex >= static_cast<int>(filteredIndices.size())) return "";
-        int assetIdx = filteredIndices[selectedIndex];
-        if (assetIdx < 0 || assetIdx >= static_cast<int>(assets.size())) return "";
-        return assets[assetIdx].name;
+        auto item = getSelectedItem();
+        if (item.type == ListItem::Asset && !item.name.empty()) return item.name;
+        return "";
     }
 
     bool AssetManagerScreen::isValidAssetName(const std::string& name) {
@@ -298,20 +438,20 @@ namespace UI {
     }
 
     void AssetManagerScreen::loadPreview() {
-        if (filteredIndices.empty() || selectedIndex < 0 || selectedIndex >= static_cast<int>(filteredIndices.size())) {
+        if (displayList.empty() || selectedIndex < 0 || selectedIndex >= static_cast<int>(displayList.size())) {
             previewLoaded = false;
             lastPreviewName.clear();
             return;
         }
         
-        int assetIdx = filteredIndices[selectedIndex];
-        if (assetIdx < 0 || assetIdx >= static_cast<int>(assets.size())) {
+        const auto& item = displayList[selectedIndex];
+        if (item.type == ListItem::Folder) {
             previewLoaded = false;
             lastPreviewName.clear();
             return;
         }
-        
-        const auto& entry = assets[assetIdx];
+
+        const auto& entry = assets[item.index];
         if (!previewLoaded || entry.name != lastPreviewName) {
             currentPreview = manager.loadAsset(entry.name);
             lastPreviewName = entry.name;
@@ -349,30 +489,76 @@ namespace UI {
         input->start();
     }
 
-    void AssetManagerScreen::deleteCurrentAsset() {
-        std::string name = getSelectedAssetName();
-        if (name.empty()) return;
+    void AssetManagerScreen::deleteCurrentAssetOrFolder() {
+        auto item = getSelectedItem();
+        if (item.name.empty()) return;
+        
+        bool isFolder = (item.type == ListItem::Folder);
         if (!skipDeleteConfirm) {
-            if (!showDeleteConfirmDialog(name)) return;
+            if (!showDeleteConfirmDialog(item.name, isFolder)) return;
         }
-        manager.deleteAsset(name);
+
+        if (isFolder) {
+            manager.deleteFolder(item.name, false); // Keep assets, move to root
+        } else {
+            manager.deleteAsset(item.name);
+        }
         refreshList();
     }
 
-    void AssetManagerScreen::renameCurrentAsset() {
-        std::string currentName = getSelectedAssetName();
-        if (currentName.empty()) return;
+    void AssetManagerScreen::renameCurrent() {
+        auto item = getSelectedItem();
+        if (item.name.empty()) return;
 
         std::string newName;
-        if (!showRenameDialog(currentName, newName)) return;
-        if (newName == currentName) return;
+        if (!showRenameDialog(item.name, newName)) return;
+        if (newName == item.name) return;
 
-        if (!manager.renameAsset(currentName, newName)) {
-            refreshList(currentName);
-            return;
+        if (item.type == ListItem::Folder) {
+            if (!manager.renameFolder(item.name, newName)) {
+                refreshList(item.name);
+                return;
+            }
+        } else {
+            if (!manager.renameAsset(item.name, newName)) {
+                refreshList(item.name);
+                return;
+            }
         }
 
         refreshList(newName);
+    }
+
+    void AssetManagerScreen::createNewFolder() {
+        std::string name;
+        if (showCreateFolderDialog(name)) {
+            if (manager.createFolder(name)) {
+                refreshList(name);
+            }
+        }
+    }
+
+    void AssetManagerScreen::moveCurrentAsset() {
+        auto item = getSelectedItem();
+        if (item.name.empty()) return;
+
+        std::string folderName;
+        if (showMoveToFolderDialog(item.name, folderName)) {
+            if (item.type == ListItem::Folder) {
+                // Move all assets in this folder to the target
+                auto allAssets = manager.listAssets();
+                for (const auto& entry : allAssets) {
+                    if (entry.folder == item.name) {
+                        manager.moveAssetToFolder(entry.name, folderName);
+                    }
+                }
+                refreshList();
+            } else {
+                if (manager.moveAssetToFolder(item.name, folderName)) {
+                    refreshList(item.name);
+                }
+            }
+        }
     }
 
     void AssetManagerScreen::openInEditor() {
@@ -441,19 +627,33 @@ namespace UI {
         std::string searchLabel = "Search:";
         surface.fillRect(listInnerX, listInnerY, listInnerW, 1, theme.itemFg, theme.panel, " ");
         surface.drawText(listInnerX + 1, listInnerY, searchLabel, theme.itemFg, theme.panel);
+        
+        int availableForSearch = listInnerW - 2 - (int)searchLabel.size() - (int)kNewFolderBtnLabel.size() - 2;
         searchFieldX = listInnerX + 2 + static_cast<int>(searchLabel.size());
         searchFieldY = listInnerY;
-        searchFieldW = std::max(10, listInnerW - (searchFieldX - listInnerX) - 1);
+        searchFieldW = std::max(5, availableForSearch);
         
+        btnNewFolderX = searchFieldX + searchFieldW + 1;
+        btnNewFolderY = searchFieldY;
+        btnNewFolderW = (int)kNewFolderBtnLabel.size();
+
         TextFieldStyle searchStyle;
         searchStyle.width = searchFieldW;
-        searchStyle.placeholder = "type to filter";
+        searchStyle.placeholder = "filter";
         searchStyle.focusFg = theme.focusFg;
         searchStyle.focusBg = theme.focusBg;
         searchStyle.panelBg = theme.panel;
         searchStyle.hintFg = theme.hintFg;
         
         TextField::render(surface, searchFieldX, searchFieldY, searchQuery, searchState, searchStyle);
+
+        // Draw [+Folder] button
+        {
+            bool hot = hoverButton == HoverButton::NewFolder;
+            RGBColor bfg = hot ? RGBColor{255,255,255} : theme.title;
+            RGBColor bbg = hot ? darken(theme.accent, 0.8) : theme.accent;
+            surface.drawText(btnNewFolderX, btnNewFolderY, kNewFolderBtnLabel, bfg, bbg);
+        }
 
         int rowsStartY = listInnerY + 2;
         listX = listInnerX;
@@ -471,7 +671,9 @@ namespace UI {
 
         RGBColor white{255,255,255};
         RGBColor black{0,0,0};
-        int totalRows = static_cast<int>(filteredIndices.size());
+        RGBColor folderFg{255, 215, 0}; // Gold for folders
+
+        int totalRows = static_cast<int>(displayList.size());
         int visibleRows = std::min(totalRows, listH);
         int start = std::min(listScrollOffset, std::max(0, totalRows - visibleRows));
         for (int i = 0; i < visibleRows; ++i) {
@@ -480,13 +682,23 @@ namespace UI {
             bool focused = (rowIndex == selectedIndex);
             RGBColor fg = focused ? black : theme.itemFg;
             RGBColor bg = focused ? white : theme.panel;
+            
+            const auto& item = displayList[rowIndex];
+
             surface.fillRect(listInnerX, rowY, listInnerW, 1, fg, bg, " ");
 
-            int assetIdx = filteredIndices[rowIndex];
-            int textLimit = std::max(0, buttonOpenX - (listInnerX + 1) - 1);
-            std::string name = assets[assetIdx].name;
-            name = TuiUtils::trimToUtf8VisualWidth(name, static_cast<size_t>(std::max(0, textLimit)));
-            surface.drawText(listInnerX + 1, rowY, name, fg, bg);
+            int indent = (item.type == ListItem::Asset && !item.folderName.empty()) ? 3 : 1;
+            int textLimit = std::max(0, buttonOpenX - (listInnerX + indent + 2) - 1);
+            
+            std::string prefix = "";
+            if (item.type == ListItem::Folder) {
+                prefix = (collapsedFolders.count(item.name) ? "▶ " : "▼ ");
+                if (!focused) fg = folderFg;
+            }
+
+            std::string displayName = prefix + item.name;
+            displayName = TuiUtils::trimToUtf8VisualWidth(displayName, static_cast<size_t>(std::max(0, textLimit)));
+            surface.drawText(listInnerX + indent, rowY, displayName, fg, bg);
 
             if (focused) {
                 auto btnColor = [&](HoverButton hb) {
@@ -496,19 +708,22 @@ namespace UI {
                     RGBColor bfg = hot ? RGBColor{255,255,255} : theme.title;
                     return std::make_pair(bfg, bbg);
                 };
-                auto [fgOpen, bgOpen] = btnColor(HoverButton::Open);
-                auto [fgRename, bgRename] = btnColor(HoverButton::Rename);
-                auto [fgDel, bgDel] = btnColor(HoverButton::Delete);
-                auto [fgInfo, bgInfo] = btnColor(HoverButton::Info);
-                surface.drawText(buttonOpenX, rowY, kOpenBtnLabel, fgOpen, bgOpen);
-                surface.drawText(buttonRenameX, rowY, kRenameBtnLabel, fgRename, bgRename);
-                surface.drawText(buttonDeleteX, rowY, kDeleteBtnLabel, fgDel, bgDel);
-                surface.drawText(buttonInfoX, rowY, kInfoBtnLabel, fgInfo, bgInfo);
+
+                if (item.type == ListItem::Asset) {
+                    auto [fgOpen, bgOpen] = btnColor(HoverButton::Open);
+                    auto [fgRename, bgRename] = btnColor(HoverButton::Rename);
+                    auto [fgDel, bgDel] = btnColor(HoverButton::Delete);
+                    auto [fgInfo, bgInfo] = btnColor(HoverButton::Info);
+                    surface.drawText(buttonOpenX, rowY, kOpenBtnLabel, fgOpen, bgOpen);
+                    surface.drawText(buttonRenameX, rowY, kRenameBtnLabel, fgRename, bgRename);
+                    surface.drawText(buttonDeleteX, rowY, kDeleteBtnLabel, fgDel, bgDel);
+                    surface.drawText(buttonInfoX, rowY, kInfoBtnLabel, fgInfo, bgInfo);
+                }
             }
         }
 
         if (visibleRows == 0) {
-            surface.drawText(listInnerX + 1, listY, searchQuery.empty() ? "No assets found" : "No assets match filter", theme.hintFg, theme.panel);
+            surface.drawText(listInnerX + 1, listY, searchQuery.empty() ? "No items found" : "No items match filter", theme.hintFg, theme.panel);
         }
 
         // Preview panel
@@ -520,7 +735,7 @@ namespace UI {
         if (previewLoaded) {
             drawPreview(prevX + 2, contentY + 3, prevW - 4, contentH - 5);
         } else {
-            std::string previewMsg = filteredIndices.empty() ? "No assets to preview" : "No preview available";
+            std::string previewMsg = displayList.empty() ? "No items to preview" : "No preview available";
             surface.drawText(prevX + 2, contentY + 3, previewMsg, theme.hintFg, theme.panel);
         }
     }
@@ -530,11 +745,10 @@ namespace UI {
         bool running = true;
         bool confirmed = false;
         bool hoverOk = false, hoverCancel = false;
-        bool fieldFocused = true;
+        TextFieldState inputState;
+        inputState.focused = true;
         std::string errorMsg;
         int mouseX = -1, mouseY = -1;
-        bool caretOn = true;
-        auto caretLastToggle = std::chrono::steady_clock::now();
 
         int w = surface.getWidth();
         int h = surface.getHeight();
@@ -555,11 +769,7 @@ namespace UI {
         int dragOriginX = 0, dragOriginY = 0;
 
         while (running) {
-            auto now = std::chrono::steady_clock::now();
-            if (now - caretLastToggle >= std::chrono::milliseconds(500)) {
-                caretOn = !caretOn;
-                caretLastToggle = now;
-            }
+            inputState.updateCaret();
             clampDialog();
             drawMainUI();
 
@@ -571,19 +781,15 @@ namespace UI {
             int fieldX = dx + 2;
             int fieldY = dy + 4;
             int fieldW = dw - 4;
-            RGBColor fg = fieldFocused ? theme.focusFg : theme.itemFg;
-            RGBColor bg = fieldFocused ? theme.focusBg : theme.panel;
-            surface.fillRect(fieldX, fieldY, fieldW, 1, fg, bg, " ");
-            std::string displayName = outName;
-            int maxChars = std::max(0, fieldW - 2);
-            if (static_cast<int>(displayName.size()) > maxChars) {
-                displayName = displayName.substr(displayName.size() - maxChars);
-            }
-            if (fieldFocused && caretOn) displayName.push_back('|');
-            if (static_cast<int>(displayName.size()) > maxChars) {
-                displayName = displayName.substr(displayName.size() - maxChars);
-            }
-            surface.drawText(fieldX + 1, fieldY, displayName, fg, bg);
+            
+            TextFieldStyle fieldStyle;
+            fieldStyle.width = fieldW;
+            fieldStyle.focusBg = theme.focusBg;
+            fieldStyle.focusFg = theme.focusFg;
+            fieldStyle.panelBg = theme.panel;
+            fieldStyle.caretChar = '|';
+            
+            TextField::render(surface, fieldX, fieldY, outName, inputState, fieldStyle);
 
             if (!errorMsg.empty()) {
                 surface.drawText(dx + 2, fieldY + 2, errorMsg, theme.hintFg, theme.panel);
@@ -661,7 +867,7 @@ namespace UI {
                             dragOriginX = dx;
                             dragOriginY = dy;
                         }
-                        fieldFocused = onField;
+                        inputState.focused = onField;
                         if (onOk) {
                             tryConfirm();
                         } else if (onCancel) {
@@ -672,16 +878,16 @@ namespace UI {
                         dragging = false;
                     }
                 } else if (ev.type == InputEvent::Type::Key) {
-                    if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
-                        running = false;
-                    } else if (ev.key == InputKey::Enter) {
-                        tryConfirm();
-                    } else if (ev.key == InputKey::Character && fieldFocused) {
-                        if (ev.ch == '\b') {
-                            if (!outName.empty()) outName.pop_back();
-                        } else if (std::isprint(static_cast<unsigned char>(ev.ch))) {
-                            outName.push_back(ev.ch);
+                    if (inputState.focused) {
+                        if (TextField::handleInput(ev, outName, inputState, fieldStyle)) {
+                            continue;
                         }
+                    }
+
+                    if (ev.key == InputKey::Enter) {
+                        tryConfirm();
+                    } else if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
+                        running = false;
                     }
                 }
             }
@@ -692,12 +898,12 @@ namespace UI {
         return confirmed;
     }
 
-    bool AssetManagerScreen::showDeleteConfirmDialog(const std::string& assetName) {
+    bool AssetManagerScreen::showDeleteConfirmDialog(const std::string& name, bool isFolder) {
         bool running = true;
         bool confirmed = false;
         bool hoverDelete = false, hoverCancel = false;
+        bool localSkipConfirm = skipDeleteConfirm;
         int mouseX = -1, mouseY = -1;
-        bool dontAskAgain = false;
 
         int w = surface.getWidth();
         int h = surface.getHeight();
@@ -713,6 +919,7 @@ namespace UI {
             dy = std::clamp(dy, 0, std::max(0, h - dh));
         };
         clampDialog();
+
         bool dragging = false;
         int dragStartX = 0, dragStartY = 0;
         int dragOriginX = 0, dragOriginY = 0;
@@ -720,56 +927,45 @@ namespace UI {
         while (running) {
             clampDialog();
             drawMainUI();
-
+            
+            surface.fillRect(dx, dy, dw, dh, theme.itemFg, theme.panel, " ");
             surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
             surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
-            surface.drawText(dx + 2, dy + 1, "Confirm Delete", theme.title, theme.background);
-            surface.drawText(dx + 2, dy + 3, "Delete asset:", theme.itemFg, theme.panel);
-            surface.drawText(dx + 2, dy + 4, "  " + assetName, theme.hintFg, theme.panel);
+            surface.drawText(dx + 2, dy + 1, isFolder ? "Delete Folder" : "Delete Image Asset", theme.title, theme.background);
+            surface.drawText(dx + dw - 5, dy + 1, "[q]", RGBColor{200, 200, 200}, theme.background);
 
-            std::string checkbox = dontAskAgain ? "[x] Don't ask again (session)" : "[ ] Don't ask again (session)";
-            int checkY = dy + 6;
-            int checkX = dx + 2;
-            surface.drawText(checkX, checkY, checkbox, theme.itemFg, theme.panel);
+            std::string msg = isFolder ? "Delete folder " + name + "?" : "Delete asset " + name + "?";
+            surface.drawText(dx + 4, dy + 3, msg, theme.itemFg, theme.panel);
+            surface.drawText(dx + 4, dy + 5, isFolder ? "Assets will NOT be deleted (moved to root)." : "This action cannot be undone.", theme.hintFg, theme.panel);
+            
+            std::string squelchLabel = (localSkipConfirm ? "[x] Don't ask again" : "[ ] Don't ask again");
+            surface.drawText(dx + 4, dy + 7, squelchLabel, theme.itemFg, theme.panel);
 
-            std::string delLbl = "[ Delete ]";
-            std::string cancelLbl = "[ Cancel ]";
+            std::string delBtn = "[ Delete ]";
+            std::string cancelBtn = "[ Cancel ]";
             int delX = dx + 6;
-            int cancelX = dx + dw - static_cast<int>(cancelLbl.size()) - 6;
-            int btnY = dy + dh - 2;
-            auto drawBtn = [&](const std::string& lbl, int x, bool hot){
-                RGBColor baseBg = theme.accent;
-                RGBColor bg = hot ? darken(baseBg, 0.6) : baseBg;
-                RGBColor fg = hot ? RGBColor{255,255,255} : theme.title;
-                surface.drawText(x, btnY, lbl, fg, bg);
-            };
-            drawBtn(delLbl, delX, hoverDelete);
-            drawBtn(cancelLbl, cancelX, hoverCancel);
+            int cancelX = dx + dw - 16;
+            int btnY = dy + 9;
 
-            auto updateHover = [&](){
-                if (mouseX < 0 || mouseY < 0) {
-                    hoverDelete = hoverCancel = false;
-                    return;
-                }
-                hoverDelete = (mouseX >= delX && mouseX < delX + static_cast<int>(delLbl.size()) && mouseY == btnY);
-                hoverCancel = (mouseX >= cancelX && mouseX < cancelX + static_cast<int>(cancelLbl.size()) && mouseY == btnY);
+            auto drawBtn = [&](const std::string& lbl, int x, bool hot, bool danger) {
+                RGBColor baseBg = danger ? RGBColor{180, 20, 20} : theme.accent;
+                RGBColor bbg = hot ? (danger ? RGBColor{255, 30, 30} : darken(baseBg, 0.6)) : baseBg;
+                RGBColor bfg = hot ? RGBColor{255, 255, 255} : theme.title;
+                surface.drawText(x, btnY, lbl, bfg, bbg);
             };
-            updateHover();
+
+            hoverDelete = (mouseX >= delX && mouseX < delX + (int)delBtn.size() && mouseY == btnY);
+            hoverCancel = (mouseX >= cancelX && mouseX < cancelX + (int)cancelBtn.size() && mouseY == btnY);
+            bool hoverSquelch = (mouseX >= dx + 4 && mouseX < dx + 20 && mouseY == dy + 7);
+
+            drawBtn(delBtn, delX, hoverDelete, true);
+            drawBtn(cancelBtn, cancelX, hoverCancel, false);
 
             painter.present(surface);
 
             auto events = input->pollEvents();
             for (const auto& ev : events) {
-                if (ev.type == InputEvent::Type::Key) {
-                    if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
-                        running = false;
-                    } else if (ev.key == InputKey::Enter) {
-                        confirmed = true;
-                        running = false;
-                    } else if (ev.key == InputKey::Character && (ev.ch == ' ')) {
-                        dontAskAgain = !dontAskAgain;
-                    }
-                } else if (ev.type == InputEvent::Type::Mouse) {
+                if (ev.type == InputEvent::Type::Mouse) {
                     mouseX = ev.x;
                     mouseY = ev.y;
                     if (dragging) {
@@ -777,39 +973,33 @@ namespace UI {
                         dy = dragOriginY + (ev.y - dragStartY);
                         clampDialog();
                     }
-                    bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + dw - 1);
-                    bool onCheckbox = (ev.y == checkY && ev.x >= checkX && ev.x < checkX + static_cast<int>(checkbox.size()));
-                    bool onDel = (ev.x >= delX && ev.x < delX + static_cast<int>(delLbl.size()) && ev.y == btnY);
-                    bool onCancel = (ev.x >= cancelX && ev.x < cancelX + static_cast<int>(cancelLbl.size()) && ev.y == btnY);
-                    if (ev.pressed && ev.button == 0) {
-                        if (onTitle) {
+                    if (ev.button == 0 && ev.pressed) {
+                        if (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + dw - 1) {
                             dragging = true;
                             dragStartX = ev.x;
                             dragStartY = ev.y;
                             dragOriginX = dx;
                             dragOriginY = dy;
-                        }
-                        if (onCheckbox) {
-                            dontAskAgain = !dontAskAgain;
-                        }
-                        if (onDel) {
-                            confirmed = true;
-                            running = false;
-                        } else if (onCancel) {
-                            running = false;
+                        } else if (hoverDelete) {
+                            confirmed = true; running = false;
+                        } else if (hoverCancel) {
+                            confirmed = false; running = false;
+                        } else if (hoverSquelch) {
+                            localSkipConfirm = !localSkipConfirm;
                         }
                     }
                     if (ev.button == 0 && !ev.pressed && !ev.move) {
-                        dragging = false;
+                        dragging = false; 
                     }
-                }
+                } else if (ev.type == InputEvent::Type::Key && ev.key == InputKey::Character && (ev.ch == 'y' || ev.ch == 'Y')) { 
+                    confirmed = true; running = false; 
+                } else if (ev.type == InputEvent::Type::Key && ev.key == InputKey::Enter) { confirmed = true; running = false; }
+                else if (ev.type == InputEvent::Type::Key && ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) { confirmed = false; running = false; }
             }
-            updateHover();
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
         }
-
-        if (confirmed && dontAskAgain) {
-            skipDeleteConfirm = true;
+        if (confirmed) {
+            skipDeleteConfirm = localSkipConfirm;
         }
         return confirmed;
     }
@@ -1085,6 +1275,15 @@ namespace UI {
                 }
 
                 if (ev.type == InputEvent::Type::Key) {
+                    if (!isImporting && focusIdx == 0 && ev.key == InputKey::Character) {
+                        if (ev.ch == '\b') {
+                            if (!widthStr.empty()) widthStr.pop_back();
+                        } else if (std::isdigit(static_cast<unsigned char>(ev.ch)) || ev.ch == '%' || ev.ch == 'q' || ev.ch == 'Q') {
+                            widthStr += static_cast<char>(ev.ch);
+                        }
+                        continue;
+                    }
+
                     if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
                         if (isImporting) {
                             cancelFlag->store(true);
@@ -1103,12 +1302,6 @@ namespace UI {
                                 startImport();
                             } else if (focusIdx == 3) {
                                 dialogRunning = false;
-                            }
-                        } else if (ev.key == InputKey::Character && ev.ch == '\b') {
-                            if (focusIdx == 0 && !widthStr.empty()) widthStr.pop_back();
-                        } else if (ev.key == InputKey::Character) {
-                            if (isdigit(ev.ch) || ev.ch == '%') {
-                                if (focusIdx == 0) widthStr += ev.ch;
                             }
                         } else if (ev.key == InputKey::ArrowLeft || ev.key == InputKey::ArrowRight) {
                             if (focusIdx == 1) {
@@ -1307,5 +1500,252 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
         }
     }
 
+    bool AssetManagerScreen::showCreateFolderDialog(std::string& outName) {
+        int w = surface.getWidth();
+        int h = surface.getHeight();
+        int dw = 40;
+        int dh = 10;
+        int dx = (w - dw) / 2;
+        int dy = (h - dh) / 2;
+
+        auto clampDialog = [&]() {
+            w = surface.getWidth();
+            h = surface.getHeight();
+            dx = std::clamp(dx, 0, std::max(0, w - dw));
+            dy = std::clamp(dy, 0, std::max(0, h - dh));
+        };
+
+        std::string inputStr = "";
+        TextFieldState inputState;
+        inputState.focused = true;
+
+        bool running = true;
+        bool confirmed = false;
+        bool dragging = false;
+        int dragStartX = 0, dragStartY = 0;
+        int dragOriginX = 0, dragOriginY = 0;
+        int mouseX = -1, mouseY = -1;
+
+        while (running) {
+            clampDialog();
+            drawMainUI();
+            BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
+            surface.fillRect(dx, dy, dw, dh, theme.itemFg, theme.panel, " ");
+            surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
+            surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
+            surface.drawText(dx + 2, dy + 1, "Create New Folder", theme.title, theme.background);
+            surface.drawText(dx + dw - 5, dy + 1, "[q]", RGBColor{200, 200, 200}, theme.background);
+
+            surface.drawText(dx + 2, dy + 3, "Folder Name:", theme.itemFg, theme.panel);
+            
+            TextFieldStyle style;
+            style.width = dw - 4;
+            style.focusFg = theme.focusFg;
+            style.focusBg = theme.focusBg;
+            style.panelBg = theme.panel;
+
+            TextField::render(surface, dx + 2, dy + 4, inputStr, inputState, style);
+
+            std::string okBtn = "[ Create ]";
+            std::string cancelBtn = "[ Cancel ]";
+            int okX = dx + 4;
+            int cancelX = dx + dw - 14;
+            int btnY = dy + 7;
+
+            auto drawBtn = [&](const std::string& lbl, int x, bool hot) {
+                RGBColor bbg = hot ? darken(theme.accent, 0.6) : theme.accent;
+                RGBColor bfg = hot ? RGBColor{255, 255, 255} : theme.title;
+                surface.drawText(x, btnY, lbl, bfg, bbg);
+            };
+
+            bool hoverOk = (mouseX >= okX && mouseX < okX + (int)okBtn.size() && mouseY == btnY);
+            bool hoverCancel = (mouseX >= cancelX && mouseX < cancelX + (int)cancelBtn.size() && mouseY == btnY);
+            
+            drawBtn(okBtn, okX, hoverOk);
+            drawBtn(cancelBtn, cancelX, hoverCancel);
+
+            painter.present(surface);
+
+            auto events = input->pollEvents();
+            for (const auto& ev : events) {
+                if (ev.type == InputEvent::Type::Mouse) {
+                    mouseX = ev.x;
+                    mouseY = ev.y;
+                    if (dragging) {
+                        dx = dragOriginX + (ev.x - dragStartX);
+                        dy = dragOriginY + (ev.y - dragStartY);
+                        clampDialog();
+                    }
+                    if (ev.button == 0 && ev.pressed) {
+                        if (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + dw - 1) {
+                            dragging = true;
+                            dragStartX = ev.x;
+                            dragStartY = ev.y;
+                            dragOriginX = dx;
+                            dragOriginY = dy;
+                            inputState.focused = false;
+                        } else if (hoverOk) {
+                            if (isValidAssetName(inputStr)) {
+                                outName = inputStr; confirmed = true; running = false;
+                            }
+                        } else if (hoverCancel) {
+                            confirmed = false; running = false;
+                        } else if (mouseY == dy + 4 && mouseX >= dx + 2 && mouseX < dx + 2 + style.width) {
+                            inputState.focused = true;
+                        } else {
+                            inputState.focused = false;
+                        }
+                    }
+                    if (ev.button == 0 && !ev.pressed && !ev.move) {
+                        dragging = false; 
+                    }
+                } else if (ev.type == InputEvent::Type::Key) {
+                    if (inputState.focused) {
+                        if (TextField::handleInput(ev, inputStr, inputState, style)) {
+                            continue;
+                        }
+                    }
+
+                    if (ev.key == InputKey::Enter) {
+                        if (isValidAssetName(inputStr)) {
+                            outName = inputStr; confirmed = true; running = false;
+                        }
+                    } else if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
+                        running = false;
+                    }
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        return confirmed;
+    }
+
+    bool AssetManagerScreen::showMoveToFolderDialog(const std::string& assetName, std::string& outFolderName) {
+        int w = surface.getWidth();
+        int h = surface.getHeight();
+        int dw = 40;
+        int dh = std::min(h - 4, (int)folders.size() + 10);
+        int dx = (w - dw) / 2;
+        int dy = (h - dh) / 2;
+
+        auto clampDialog = [&]() {
+            w = surface.getWidth();
+            h = surface.getHeight();
+            dx = std::clamp(dx, 0, std::max(0, w - dw));
+            dy = std::clamp(dy, 0, std::max(0, h - dh));
+        };
+
+        int selectedFolderIdx = -1; // -1 means Root
+        int scroll = 0;
+
+        bool running = true;
+        bool confirmed = false;
+        bool dragging = false;
+        int dragStartX = 0, dragStartY = 0;
+        int dragOriginX = 0, dragOriginY = 0;
+        int mouseX = -1, mouseY = -1;
+
+        while (running) {
+            clampDialog();
+            drawMainUI();
+            BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
+            surface.fillRect(dx, dy, dw, dh, theme.itemFg, theme.panel, " ");
+            surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
+            surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
+            surface.drawText(dx + 2, dy + 1, "Move Asset", theme.title, theme.background);
+            surface.drawText(dx + dw - 5, dy + 1, "[q]", RGBColor{200, 200, 200}, theme.background);
+            surface.drawText(dx + 2, dy + 2, "Move " + assetName + " to:", theme.hintFg, theme.panel);
+
+            int listYStart = dy + 3;
+            int listHVisible = dh - 6;
+            
+            auto drawRow = [&](int idx, const std::string& name, bool focused) {
+                int ry = listYStart + (idx + 1) - scroll;
+                if (ry < listYStart || ry >= listYStart + listHVisible) return;
+                RGBColor fg = focused ? RGBColor{0,0,0} : theme.itemFg;
+                RGBColor bg = focused ? RGBColor{255,255,255} : theme.panel;
+                surface.fillRect(dx + 1, ry, dw - 2, 1, fg, bg, " ");
+                surface.drawText(dx + 2, ry, name, fg, bg);
+            };
+
+            drawRow(-1, "[ Root ]", selectedFolderIdx == -1);
+            for (int i = 0; i < (int)folders.size(); ++i) {
+                drawRow(i, folders[i].name, selectedFolderIdx == i);
+            }
+
+            std::string okBtn = "[ Move ]";
+            std::string cancelBtn = "[ Cancel ]";
+            int okX = dx + 4;
+            int cancelX = dx + dw - 14;
+            int btnY = dy + dh - 2;
+
+            auto drawBtn = [&](const std::string& lbl, int x, bool hot) {
+                RGBColor bbg = hot ? darken(theme.accent, 0.6) : theme.accent;
+                RGBColor bfg = hot ? RGBColor{255, 255, 255} : theme.title;
+                surface.drawText(x, btnY, lbl, bfg, bbg);
+            };
+
+            bool hoverOk = (mouseX >= okX && mouseX < okX + (int)okBtn.size() && mouseY == btnY);
+            bool hoverCancel = (mouseX >= cancelX && mouseX < cancelX + (int)cancelBtn.size() && mouseY == btnY);
+
+            drawBtn(okBtn, okX, hoverOk);
+            drawBtn(cancelBtn, cancelX, hoverCancel);
+
+            painter.present(surface);
+
+            auto events = input->pollEvents();
+            for (const auto& ev : events) {
+                if (ev.type == InputEvent::Type::Mouse) {
+                    mouseX = ev.x;
+                    mouseY = ev.y;
+                    if (dragging) {
+                        dx = dragOriginX + (ev.x - dragStartX);
+                        dy = dragOriginY + (ev.y - dragStartY);
+                        clampDialog();
+                    }
+                    if (ev.button == 0 && ev.pressed) {
+                        if (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + dw - 1) {
+                            dragging = true;
+                            dragStartX = ev.x;
+                            dragStartY = ev.y;
+                            dragOriginX = dx;
+                            dragOriginY = dy;
+                        } else if (hoverOk) {
+                            outFolderName = (selectedFolderIdx == -1) ? "" : folders[selectedFolderIdx].name;
+                            confirmed = true; running = false;
+                        } else if (hoverCancel) {
+                            confirmed = false; running = false;
+                        } else if (mouseY >= listYStart && mouseY < listYStart + listHVisible) {
+                            int clickedIdx = scroll + (mouseY - listYStart) - 1;
+                            if (clickedIdx >= -1 && clickedIdx < (int)folders.size()) {
+                                selectedFolderIdx = clickedIdx;
+                            }
+                        }
+                    }
+                    if (ev.button == 0 && !ev.pressed && !ev.move) {
+                        dragging = false; 
+                    }
+                    if (ev.wheel != 0) {
+                        scroll = std::clamp(scroll + (ev.wheel > 0 ? -1 : 1), 0, std::max(0, (int)folders.size() + 1 - listHVisible));
+                    }
+                } else if (ev.type == InputEvent::Type::Key) {
+                    if (ev.key == InputKey::ArrowUp) {
+                        if (selectedFolderIdx > -1) selectedFolderIdx--;
+                        if (selectedFolderIdx - scroll < -1) scroll = selectedFolderIdx + 1;
+                    } else if (ev.key == InputKey::ArrowDown) {
+                        if (selectedFolderIdx < (int)folders.size() - 1) selectedFolderIdx++;
+                        if (selectedFolderIdx - scroll >= listHVisible - 1) scroll = selectedFolderIdx - listHVisible + 2;
+                    } else if (ev.key == InputKey::Enter) {
+                        outFolderName = (selectedFolderIdx == -1) ? "" : folders[selectedFolderIdx].name;
+                        confirmed = true; running = false;
+                    } else if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
+                        running = false;
+                    }
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        return confirmed;
+    }
 }
 }

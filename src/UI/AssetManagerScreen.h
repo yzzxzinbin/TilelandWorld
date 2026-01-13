@@ -10,6 +10,9 @@
 #include "TextField.h"
 #include "ContextMenu.h"
 #include <memory>
+#include <vector>
+#include <string>
+#include <set>
 
 namespace TilelandWorld {
 namespace UI {
@@ -30,8 +33,19 @@ private:
     TaskSystem taskSystem;
 
     std::vector<AssetManager::FileEntry> assets;
-    std::vector<int> filteredIndices;
-    int selectedIndex = 0; // Index within filteredIndices
+    std::vector<AssetManager::FolderEntry> folders;
+    
+    struct ListItem {
+        enum Type { Folder, Asset } type;
+        size_t index; // index in folders or assets (depending on type)
+        bool expanded;
+        std::string name;
+        std::string folderName; // for assets
+    };
+    std::vector<ListItem> displayList;
+    std::set<std::string> collapsedFolders;
+
+    int selectedIndex = 0; // Index within displayList
     int listScrollOffset = 0;
 
     // Delete confirmation preference (per session)
@@ -52,29 +66,35 @@ private:
     // Layout cache for mouse hit-testing
     int listX{0}, listY{0}, listW{0}, listH{0};
     int searchFieldX{0}, searchFieldY{0}, searchFieldW{0};
+    int btnNewFolderX{0}, btnNewFolderY{0}, btnNewFolderW{0};
     int buttonOpenX{0}, buttonRenameX{0}, buttonDeleteX{0}, buttonInfoX{0};
 
     // Context Menu
     ContextMenuState ctxMenuState;
-    std::vector<std::string> ctxMenuItems = {"Open", "Rename", "Delete", "Info"};
+    std::vector<std::string> ctxMenuItems = {"Open", "Rename", "Delete", "Info", "Move to..."};
 
-    enum class HoverButton { None, Open, Rename, Delete, Info };
+    enum class HoverButton { None, Open, Rename, Delete, Info, NewFolder };
     int hoverRow{-1};
     HoverButton hoverButton{HoverButton::None};
 
     void refreshList(const std::string& preferredSelection = "");
     void applyFilter(const std::string& preferredSelection = "");
+    ListItem getSelectedItem() const;
     std::string getSelectedAssetName() const;
     static bool isValidAssetName(const std::string& name);
     void ensureSelectionVisible();
     bool showRenameDialog(const std::string& currentName, std::string& outName);
+    bool showCreateFolderDialog(std::string& outName);
+    bool showMoveToFolderDialog(const std::string& assetName, std::string& outFolderName);
     void drawMainUI(); // Renamed from render() to avoid confusion with present()
     void importAsset();
-    void deleteCurrentAsset();
-    bool showDeleteConfirmDialog(const std::string& assetName);
+    void deleteCurrentAssetOrFolder();
+    bool showDeleteConfirmDialog(const std::string& name, bool isFolder);
     void openInEditor();
-    void renameCurrentAsset();
+    void renameCurrent();
     void loadPreview();
+    void createNewFolder();
+    void moveCurrentAsset();
     
     // Helper to draw the preview in a specific area
     void drawPreview(int x, int y, int w, int h);

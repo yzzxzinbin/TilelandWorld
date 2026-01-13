@@ -89,7 +89,7 @@ int ContextMenu::handleInput(const InputEvent& ev, const std::vector<std::string
                 requestClose = true;
                 return state.selectedIndex;
             }
-        } else if (ev.key == InputKey::Escape) {
+        } else if (ev.key == InputKey::Escape || ev.key == InputKey::Tab) {
             requestClose = true;
         }
     }

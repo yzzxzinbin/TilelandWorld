@@ -15,10 +15,22 @@ namespace TilelandWorld {
         struct FileEntry {
             std::string name; // Filename without extension
             std::string path; // Full path
+            std::string folder; // Folder name (empty for root)
+        };
+
+        struct FolderEntry {
+            std::string name;
         };
 
         // List all .tlimg files in the asset directory
         std::vector<FileEntry> listAssets() const;
+
+        // Folders management
+        std::vector<FolderEntry> listFolders() const;
+        bool createFolder(const std::string& folderName);
+        bool deleteFolder(const std::string& folderName, bool deleteAssets);
+        bool renameFolder(const std::string& oldName, const std::string& newName);
+        bool moveAssetToFolder(const std::string& assetName, const std::string& folderName);
 
         // Import an image file (BMP, PNG, JPG, etc.), convert it, and save as .tlimg
         bool importImage(const std::string& imagePath, const std::string& assetName);
