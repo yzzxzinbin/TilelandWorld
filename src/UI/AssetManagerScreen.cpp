@@ -78,7 +78,7 @@ namespace UI {
                 if (selectedIndex >= 0 && selectedIndex < (int)displayList.size()) {
                     if (displayList[selectedIndex].type == ListItem::Folder) {
                         bool isCollapsed = collapsedFolders.count(displayList[selectedIndex].name);
-                        currentItems = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to..."};
+                        currentItems = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to...", "Move in..."};
                     }
                 }
                 ContextMenu::render(surface, currentItems, ctxMenuState);
@@ -96,7 +96,7 @@ namespace UI {
                         if (displayList[selectedIndex].type == ListItem::Folder) {
                             isFolder = true;
                             bool isCollapsed = collapsedFolders.count(displayList[selectedIndex].name);
-                            currentItems = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to..."};
+                            currentItems = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to...", "Move in..."};
                         }
                     }
 
@@ -112,6 +112,7 @@ namespace UI {
                             else if (result == 1) renameCurrent();
                             else if (result == 2) deleteCurrentAssetOrFolder();
                             else if (result == 3) moveCurrentAsset();
+                            else if (result == 4) moveInFromSystem();
                         } else {
                             if (result == 0) openInEditor();
                             else if (result == 1) renameCurrent();
@@ -167,7 +168,7 @@ namespace UI {
                                 std::vector<std::string> items = ctxMenuItems;
                                 if (displayList[selectedIndex].type == ListItem::Folder) {
                                     bool isCollapsed = collapsedFolders.count(displayList[selectedIndex].name);
-                                    items = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to..."};
+                                    items = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to...", "Move in..."};
                                 }
 
                                 ctxMenuState.visible = true;
@@ -254,7 +255,7 @@ namespace UI {
                             std::vector<std::string> items = ctxMenuItems;
                             if (displayList[selectedIndex].type == ListItem::Folder) {
                                 bool isCollapsed = collapsedFolders.count(displayList[selectedIndex].name);
-                                items = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to..."};
+                                items = {isCollapsed ? "Expand" : "Collapse", "Rename", "Delete", "Move to...", "Move in..."};
                             }
                             ctxMenuState.visible = true;
                             ctxMenuState.width = ContextMenu::calculateWidth(items);
@@ -561,6 +562,54 @@ namespace UI {
         }
     }
 
+    void AssetManagerScreen::moveInFromSystem() {
+        auto item = getSelectedItem();
+        if (item.type != ListItem::Folder) return;
+        std::string targetFolder = item.name;
+
+        // Stop our input while browser runs
+        input->stop();
+        
+        DirectoryBrowserScreen browser(lastImportPath, true, ".tlimg");
+        auto selectedFiles = browser.show();
+        
+        // Restore state
+        std::cout << "\x1b[?25l"; // Hide cursor
+        input.reset();
+        input = std::make_unique<InputController>();
+        input->start();
+        hoverButton = HoverButton::None;
+        hoverRow = -1;
+
+        if (selectedFiles.empty()) return;
+
+        lastImportPath = std::filesystem::path(selectedFiles[0]).parent_path().string();
+
+        for (const auto& filePath : selectedFiles) {
+            std::filesystem::path p(filePath);
+            if (p.extension() == ".tlimg") {
+                std::string assetName = p.stem().string();
+                std::filesystem::path destPath = std::filesystem::path(manager.getRootDir()) / p.filename();
+                
+                // If the file is not already in rootDir, copy it there
+                bool ok = true;
+                if (!std::filesystem::exists(destPath) || !std::filesystem::equivalent(p, destPath)) {
+                    try {
+                        std::filesystem::copy_file(p, destPath, std::filesystem::copy_options::overwrite_existing);
+                    } catch (...) {
+                        ok = false;
+                    }
+                }
+                
+                if (ok) {
+                    manager.moveAssetToFolder(assetName, targetFolder);
+                }
+            }
+        }
+
+        refreshList();
+    }
+
     void AssetManagerScreen::openInEditor() {
         std::string name = getSelectedAssetName();
         if (name.empty()) return;
@@ -687,15 +736,24 @@ namespace UI {
 
             surface.fillRect(listInnerX, rowY, listInnerW, 1, fg, bg, " ");
 
-            int indent = (item.type == ListItem::Asset && !item.folderName.empty()) ? 3 : 1;
-            int textLimit = std::max(0, buttonOpenX - (listInnerX + indent + 2) - 1);
-            
+            int indent = (item.type == ListItem::Asset) ? 3 : 1;
             std::string prefix = "";
             if (item.type == ListItem::Folder) {
                 prefix = (collapsedFolders.count(item.name) ? "▶ " : "▼ ");
                 if (!focused) fg = folderFg;
+            } else if (item.type == ListItem::Asset && !item.folderName.empty()) {
+                bool isLast = true;
+                if (rowIndex + 1 < totalRows) {
+                    if (displayList[rowIndex + 1].type == ListItem::Asset && displayList[rowIndex + 1].folderName == item.folderName) {
+                        isLast = false;
+                    }
+                }
+                prefix = isLast ? "╰─" : "├─";
+                indent = 1;
             }
 
+            int textLimit = std::max(0, buttonOpenX - (listInnerX + indent) - 3);
+            
             std::string displayName = prefix + item.name;
             displayName = TuiUtils::trimToUtf8VisualWidth(displayName, static_cast<size_t>(std::max(0, textLimit)));
             surface.drawText(listInnerX + indent, rowY, displayName, fg, bg);
@@ -776,7 +834,12 @@ namespace UI {
             surface.drawFrame(dx, dy, dw, dh, modernFrame, theme.itemFg, theme.panel);
             surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
             surface.drawText(dx + 2, dy + 1, "Rename Asset", theme.title, theme.background);
-            surface.drawText(dx + 2, dy + 2, "Current: " + currentName, theme.hintFg, theme.panel);
+            
+            std::string currentDisp = currentName;
+            if (TuiUtils::calculateUtf8VisualWidth(currentDisp) > 33) {
+                currentDisp = TuiUtils::trimToUtf8VisualWidth(currentDisp, 30) + "...";
+            }
+            surface.drawText(dx + 2, dy + 2, "Current: " + currentDisp, theme.hintFg, theme.panel);
 
             int fieldX = dx + 2;
             int fieldY = dy + 4;
@@ -934,7 +997,11 @@ namespace UI {
             surface.drawText(dx + 2, dy + 1, isFolder ? "Delete Folder" : "Delete Image Asset", theme.title, theme.background);
             surface.drawText(dx + dw - 5, dy + 1, "[q]", RGBColor{200, 200, 200}, theme.background);
 
-            std::string msg = isFolder ? "Delete folder " + name + "?" : "Delete asset " + name + "?";
+            std::string displayName = name;
+            if (TuiUtils::calculateUtf8VisualWidth(displayName) > 33) {
+                displayName = TuiUtils::trimToUtf8VisualWidth(displayName, 30) + "...";
+            }
+            std::string msg = isFolder ? "Delete folder " + displayName + "?" : "Delete asset " + displayName + "?";
             surface.drawText(dx + 4, dy + 3, msg, theme.itemFg, theme.panel);
             surface.drawText(dx + 4, dy + 5, isFolder ? "Assets will NOT be deleted (moved to root)." : "This action cannot be undone.", theme.hintFg, theme.panel);
             
@@ -1323,7 +1390,14 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
     int w = surface.getWidth();
     int h = surface.getHeight();
     std::vector<std::string> lines;
-    lines.push_back("Resource: " + assetName);
+    
+    std::string assetDisp = assetName;
+    // max dw is 64, so available width is roughly 50
+    if (TuiUtils::calculateUtf8VisualWidth(assetDisp) > 50) {
+        assetDisp = TuiUtils::trimToUtf8VisualWidth(assetDisp, 47) + "...";
+    }
+    lines.push_back("Resource: " + assetDisp);
+
     if (asset.getWidth() <= 0 || asset.getHeight() <= 0) {
         lines.push_back("No image loaded");
     } else {
@@ -1654,7 +1728,12 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
             surface.fillRect(dx + 1, dy + 1, dw - 2, 1, theme.title, theme.background, " ");
             surface.drawText(dx + 2, dy + 1, "Move Asset", theme.title, theme.background);
             surface.drawText(dx + dw - 5, dy + 1, "[q]", RGBColor{200, 200, 200}, theme.background);
-            surface.drawText(dx + 2, dy + 2, "Move " + assetName + " to:", theme.hintFg, theme.panel);
+
+            std::string assetDisp = assetName;
+            if (TuiUtils::calculateUtf8VisualWidth(assetDisp) > 25) {
+                assetDisp = TuiUtils::trimToUtf8VisualWidth(assetDisp, 22) + "...";
+            }
+            surface.drawText(dx + 2, dy + 2, "Move " + assetDisp + " to:", theme.hintFg, theme.panel);
 
             int listYStart = dy + 3;
             int listHVisible = dh - 6;
@@ -1665,7 +1744,12 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
                 RGBColor fg = focused ? RGBColor{0,0,0} : theme.itemFg;
                 RGBColor bg = focused ? RGBColor{255,255,255} : theme.panel;
                 surface.fillRect(dx + 1, ry, dw - 2, 1, fg, bg, " ");
-                surface.drawText(dx + 2, ry, name, fg, bg);
+                
+                std::string nameDisp = name;
+                if (TuiUtils::calculateUtf8VisualWidth(nameDisp) > dw - 4) {
+                    nameDisp = TuiUtils::trimToUtf8VisualWidth(nameDisp, dw - 7) + "...";
+                }
+                surface.drawText(dx + 2, ry, nameDisp, fg, bg);
             };
 
             drawRow(-1, "[ Root ]", selectedFolderIdx == -1);

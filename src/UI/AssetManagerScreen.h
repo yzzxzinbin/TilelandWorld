@@ -95,6 +95,7 @@ private:
     void loadPreview();
     void createNewFolder();
     void moveCurrentAsset();
+    void moveInFromSystem();
     
     // Helper to draw the preview in a specific area
     void drawPreview(int x, int y, int w, int h);
