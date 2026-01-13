@@ -4,8 +4,6 @@
 #include "ProgressBar.h"
 #include "TuiUtils.h"
 #include "YuiEditorScreen.h"
-#include "../ImgAssetsInfrastructure/ImageLoader.h"
-#include "../Utils/EnvConfig.h"
 #include <iostream>
 #include <filesystem>
 #include <thread>

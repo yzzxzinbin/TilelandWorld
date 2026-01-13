@@ -512,6 +512,22 @@ void DirectoryBrowserScreen::handleKey(const InputEvent& ev, bool& running, std:
             std::lock_guard<std::mutex> lock(entriesMutex);
             if (selected < entries.size())
             {
+                // If not CTRL+Enter, and there are other items selected, clear them and stay
+                if (!ev.ctrl && !entries[selected].isDir) {
+                    bool otherSelected = false;
+                    for (size_t i = 0; i < entries.size(); ++i) {
+                        if (entries[i].isSelected && i != selected) {
+                            otherSelected = true;
+                            break;
+                        }
+                    }
+                    if (otherSelected) {
+                        for (auto& e : entries) e.isSelected = false;
+                        entries[selected].isSelected = true;
+                        return; // Selection changed, don't confirm yet
+                    }
+                }
+
                 if (entries[selected].name == "[Use this directory]")
                 {
                     if (showFilesMode) {
@@ -633,6 +649,13 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
                     if (ev.ctrl && !entries[idx].isDir) {
                         entries[idx].isSelected = !entries[idx].isSelected;
                         return;
+                    }
+
+                    // If not CTRL+Click, clear other selections
+                    if (!ev.ctrl) {
+                        for (auto& entry : entries) {
+                            entry.isSelected = false;
+                        }
                     }
 
                     // 单击选中；双击进入目录（或选择当前目录）

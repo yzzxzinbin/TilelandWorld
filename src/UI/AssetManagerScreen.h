@@ -7,6 +7,8 @@
 #include "../ImgAssetsInfrastructure/AdvancedImageConverter.h"
 #include "../Controllers/InputController.h"
 #include "../Utils/TaskSystem.h"
+#include "../ImgAssetsInfrastructure/ImageLoader.h"
+#include "../Utils/EnvConfig.h"
 #include "TextField.h"
 #include "ContextMenu.h"
 #include <memory>
