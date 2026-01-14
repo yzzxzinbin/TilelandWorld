@@ -1,5 +1,6 @@
 #include "YuiEditorScreen.h"
 #include "TuiUtils.h"
+#include "../Utils/EnvConfig.h"
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
@@ -538,10 +539,14 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
     bool accepted = false;
     const int svW = 64;
     const int svH = 28;
-    const int boxW = svW + 16; // room for hue bar + padding
-    const int boxH = svH + 8;  // header + preview/RGB/hint lines
+    const int boxW = svW + 16 + 4;
+    const int boxH = svH + 7;
     int dx = (surface.getWidth() - boxW) / 2;
     int dy = (surface.getHeight() - boxH) / 2;
+
+    enum class ColorDragMode { None, Window, SV, Hue, Red, Green, Blue };
+    ColorDragMode dragMode = ColorDragMode::None;
+
     auto clampDialog = [&]() {
         int sw = surface.getWidth();
         int sh = surface.getHeight();
@@ -549,10 +554,19 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
         dy = std::clamp(dy, 0, std::max(0, sh - boxH));
     };
     clampDialog();
-    bool dragging = false;
+
+    bool dragging = false; // Legacy window dragging
     int dragStartX = 0, dragStartY = 0;
     int dragOriginX = 0, dragOriginY = 0;
+
+    const std::string blocks[] = {" ","▂","▃","▄","▅","▆","▇","█"};
+
     while (running) {
+        EnvConfig::getInstance().refresh();
+        auto runtime = EnvConfig::getInstance().getRuntimeInfo();
+        double preciseX = runtime.mouseCellWin.x - 1.0;
+        double preciseY = runtime.mouseCellWin.y - 1.0;
+
         clampDialog();
         renderFrame();
         surface.drawFrame(dx, dy, boxW, boxH, kFrame, theme.itemFg, theme.panel);
@@ -576,7 +590,7 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
         int markY = svY + static_cast<int>(std::round((1.0 - v) * (svH - 1)));
         surface.drawText(markX, markY, "+", {0,0,0}, {255,255,255});
 
-        // Hue bar on the right
+        // Hue bar
         int hueX = svX + svW + 2;
         int hueW = 4;
         for (int py = 0; py < svH; ++py) {
@@ -588,57 +602,116 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
         RGBColor curHueColor = TuiUtils::hsvToRgb(h, 1.0, 1.0);
         surface.drawText(hueX, hueMarkY, " << ", {255,255,255}, curHueColor);
 
-        RGBColor preview = TuiUtils::hsvToRgb(h, s, v);
+        // RGB Bars
+        RGBColor currentRGB = TuiUtils::hsvToRgb(h, s, v);
+        int rX = hueX + hueW + 1;
+        int gX = rX + 3;
+        int bX = gX + 3;
+
+        auto drawComponentBar = [&](int x, uint8_t val, RGBColor fg, RGBColor bg) {
+            double totalLevel = (val / 255.0) * (svH * 8.0);
+            int fullCells = static_cast<int>(totalLevel) / 8;
+            int partialLevel = static_cast<int>(totalLevel) % 8;
+
+            for (int py = 0; py < svH; ++py) {
+                int iy = (svH - 1) - py;
+                if (iy < fullCells) {
+                    surface.fillRect(x, svY + py, 2, 1, fg, fg, "█");
+                } else if (iy == fullCells && partialLevel > 0) {
+                    surface.fillRect(x, svY + py, 2, 1, fg, bg, blocks[partialLevel - 1]);
+                } else {
+                    surface.fillRect(x, svY + py, 2, 1, bg, bg, " ");
+                }
+            }
+            // Value marker/text could be added here if needed
+        };
+
+        drawComponentBar(rX, currentRGB.r, {255, 60, 60}, {60, 0, 0});
+        drawComponentBar(gX, currentRGB.g, {60, 255, 60}, {0, 60, 0});
+        drawComponentBar(bX, currentRGB.b, {60, 60, 255}, {0, 0, 60});
+
+        RGBColor preview = currentRGB;
         int previewY = dy + svH + 4;
         surface.drawText(dx + 2, previewY, "Preview", theme.itemFg, theme.panel);
         int swatchX = dx + 12;
-        int swatchW = std::max(0, boxW - (swatchX - dx) - 2 - 6); // shorten preview bar by 6 cells
+        int swatchW = std::max(0, boxW - (swatchX - dx) - 2 - 1);
         surface.fillRect(swatchX, previewY, swatchW, 1, preview, preview, " ");
-        std::ostringstream rgbss;
-        rgbss << "RGB: " << (int)preview.r << "," << (int)preview.g << "," << (int)preview.b;
-        surface.drawText(dx + 2, dy + svH + 5, rgbss.str(), theme.itemFg, theme.panel);
-        surface.drawText(dx + 2, dy + svH + 6, "Click square: S/V | Click bar: H | Wheel: H | Enter: OK | Q: cancel", theme.hintFg, theme.panel);
+        
+        // Dynamic binarization for text color and combined info string 
+        RGBColor textColor = (preview.r * 299 + preview.g * 587 + preview.b * 114 > 128000) 
+                             ? RGBColor{0, 0, 0} : RGBColor{255, 255, 255};
+        std::ostringstream infoss;
+        infoss << " RGB: " << (int)preview.r << "," << (int)preview.g << "," << (int)preview.b
+               << "  HSV: " << (int)std::round(h) << "° " 
+               << (int)std::round(s * 100) << "% " 
+               << (int)std::round(v * 100) << "%";
+        surface.drawCenteredText(swatchX, previewY, swatchW, infoss.str(), textColor, preview);
+
+        surface.drawText(dx + 2, dy + svH + 5, "Click/Drag segments: Adjust | Wheel: Hue | Enter: OK | Q: Cancel", theme.hintFg, theme.panel);
 
         painter.present(surface, true, 1, 1);
 
         auto events = input.pollEvents();
-        if (events.empty()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(16));
-            continue;
-        }
         for (const auto& ev : events) {
             if (ev.type == InputEvent::Type::Key) {
                 if (ev.key == InputKey::Enter) { accepted = true; running = false; break; }
                 if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) { running = false; break; }
             } else if (ev.type == InputEvent::Type::Mouse) {
-                if (dragging) {
+                if (ev.button == 0) {
+                    if (ev.pressed) {
+                        bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + boxW - 1);
+                        if (onTitle) {
+                            dragMode = ColorDragMode::Window;
+                            dragStartX = ev.x; dragStartY = ev.y;
+                            dragOriginX = dx; dragOriginY = dy;
+                        } else if (ev.x >= svX && ev.x < svX + svW && ev.y >= svY && ev.y < svY + svH) {
+                            dragMode = ColorDragMode::SV;
+                        } else if (ev.x >= hueX && ev.x < hueX + hueW && ev.y >= svY && ev.y < svY + svH) {
+                            dragMode = ColorDragMode::Hue;
+                        } else if (ev.x >= rX && ev.x < rX + 2 && ev.y >= svY && ev.y < svY + svH) {
+                            dragMode = ColorDragMode::Red;
+                        } else if (ev.x >= gX && ev.x < gX + 2 && ev.y >= svY && ev.y < svY + svH) {
+                            dragMode = ColorDragMode::Green;
+                        } else if (ev.x >= bX && ev.x < bX + 2 && ev.y >= svY && ev.y < svY + svH) {
+                            dragMode = ColorDragMode::Blue;
+                        }
+                    } else if (!ev.move) {
+                        dragMode = ColorDragMode::None;
+                    }
+                }
+
+                if (dragMode == ColorDragMode::Window && ev.move) {
                     dx = dragOriginX + (ev.x - dragStartX);
                     dy = dragOriginY + (ev.y - dragStartY);
-                    clampDialog();
                 }
-                bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + boxW - 1);
-                if (ev.button == 0 && ev.pressed) {
-                    if (onTitle) {
-                        dragging = true;
-                        dragStartX = ev.x;
-                        dragStartY = ev.y;
-                        dragOriginX = dx;
-                        dragOriginY = dy;
-                    }
-                    if (ev.x >= svX && ev.x < svX + svW && ev.y >= svY && ev.y < svY + svH) {
-                        s = static_cast<double>(ev.x - svX) / std::max(1, svW - 1);
-                        v = 1.0 - static_cast<double>(ev.y - svY) / std::max(1, svH - 1);
-                    } else if (ev.x >= hueX && ev.x < hueX + hueW && ev.y >= svY && ev.y < svY + svH) {
-                        h = 360.0 * static_cast<double>(ev.y - svY) / std::max(1, svH - 1);
-                    }
-                }
+
                 if (ev.wheel != 0) {
                     h = std::fmod(h + ev.wheel * 6.0 + 360.0, 360.0);
                 }
-                if (ev.button == 0 && !ev.pressed && !ev.move) {
-                    dragging = false;
-                }
             }
+        }
+
+        // Apply continuous high-precision updates while dragging
+        if (dragMode != ColorDragMode::None && dragMode != ColorDragMode::Window) {
+            if (dragMode == ColorDragMode::SV) {
+                s = std::clamp(preciseX - svX, 0.0, static_cast<double>(svW) - 1.0) / std::max(1, svW - 1);
+                v = 1.0 - std::clamp(preciseY - svY, 0.0, static_cast<double>(svH) - 1.0) / std::max(1, svH - 1);
+            } else if (dragMode == ColorDragMode::Hue) {
+                h = 360.0 * std::clamp(preciseY - svY, 0.0, static_cast<double>(svH) - 1.0) / std::max(1, svH - 1);
+            } else {
+                // RGB Adjust - Use continuous range for better precision with 8-level blocks
+                double factor = 1.0 - std::clamp(preciseY - svY, 0.0, static_cast<double>(svH)) / static_cast<double>(svH);
+                uint8_t newVal = static_cast<uint8_t>(std::clamp(factor * 255.0, 0.0, 255.0));
+                RGBColor rgb = TuiUtils::hsvToRgb(h, s, v);
+                if (dragMode == ColorDragMode::Red) rgb.r = newVal;
+                else if (dragMode == ColorDragMode::Green) rgb.g = newVal;
+                else if (dragMode == ColorDragMode::Blue) rgb.b = newVal;
+                TuiUtils::rgbToHsv(rgb, h, s, v);
+            }
+        }
+
+        if (events.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
         }
     }
     if (accepted) {
