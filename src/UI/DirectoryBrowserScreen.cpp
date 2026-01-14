@@ -673,8 +673,12 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
                     // we might want to confirm if it's already selected.
                     bool forceConfirm = (!ev.ctrl && !entries[idx].isDir && entries[idx].isSelected);
 
-                    lastIdx = idx;
-                    lastTick = now;
+                    if (doubleClick || forceConfirm) {
+                        lastIdx = static_cast<size_t>(-1); // Consume the click so triple click doesn't trigger double double-click
+                    } else {
+                        lastIdx = idx;
+                        lastTick = now;
+                    }
 
                     if (entries[idx].name == "[Use this directory]")
                     {

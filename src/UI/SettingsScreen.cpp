@@ -449,8 +449,13 @@ void SettingsScreen::handleMouse(const InputEvent& ev, bool& running, bool& acce
     if (ev.button == 0 && ev.pressed) {
         auto now = std::chrono::steady_clock::now();
         bool doubleClick = (lastClickIndex == idx) && (now - lastClickTime < std::chrono::milliseconds(400));
-        lastClickIndex = idx;
-        lastClickTime = now;
+        
+        if (doubleClick) {
+            lastClickIndex = -1; // Consume double click
+        } else {
+            lastClickIndex = idx;
+            lastClickTime = now;
+        }
 
         auto& it = items[idx];
 

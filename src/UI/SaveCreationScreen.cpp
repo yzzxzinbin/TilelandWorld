@@ -333,8 +333,13 @@ void SaveCreationScreen::handleMouse(const InputEvent& ev, bool& running, bool& 
     if (ev.button == 0 && ev.pressed) {
         auto now = std::chrono::steady_clock::now();
         bool doubleClick = (lastClickIndex == idx) && (now - lastClickTime < std::chrono::milliseconds(400));
-        lastClickIndex = idx;
-        lastClickTime = now;
+        
+        if (doubleClick) {
+            lastClickIndex = static_cast<size_t>(-1); // Consume
+        } else {
+            lastClickIndex = idx;
+            lastClickTime = now;
+        }
 
         const auto& f = fields[idx];
         if (doubleClick) {
