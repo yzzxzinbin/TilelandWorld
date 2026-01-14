@@ -116,8 +116,20 @@ namespace UI {
                             else if (result == 1) renameCurrent();
                             else if (result == 2) deleteCurrentAssetOrFolder();
                             else if (result == 3) {
-                                if (!previewLoaded) loadPreview();
-                                if (previewLoaded) showInfoDialog(getSelectedAssetName(), currentPreview);
+                                loadPreview();
+                                std::string assetName = getSelectedAssetName();
+                                ImageAsset copy;
+                                bool ready = false;
+                                {
+                                    std::lock_guard<std::mutex> lock(previewMutex);
+                                    if (previewLoaded && lastPreviewName == assetName) {
+                                        copy = currentPreview;
+                                        ready = true;
+                                    }
+                                }
+                                if (ready) {
+                                    showInfoDialog(assetName, copy);
+                                }
                             } else if (result == 4) {
                                 moveCurrentAsset();
                             } else if (result == 5) {
@@ -237,8 +249,20 @@ namespace UI {
                                     } else if (onRename) {
                                         renameCurrent();
                                     } else if (onInfo) {
-                                        if (!previewLoaded) loadPreview();
-                                        if (previewLoaded) showInfoDialog(getSelectedAssetName(), currentPreview);
+                                        loadPreview();
+                                        std::string assetName = getSelectedAssetName();
+                                        ImageAsset copy;
+                                        bool ready = false;
+                                        {
+                                            std::lock_guard<std::mutex> lock(previewMutex);
+                                            if (previewLoaded && lastPreviewName == assetName) {
+                                                copy = currentPreview;
+                                                ready = true;
+                                            }
+                                        }
+                                        if (ready) {
+                                            showInfoDialog(assetName, copy);
+                                        }
                                     }
                                 }
                             }
@@ -367,8 +391,12 @@ namespace UI {
 
         if (displayList.empty()) {
             selectedIndex = 0;
-            previewLoaded = false;
-            lastPreviewName.clear();
+            {
+                std::lock_guard<std::mutex> lock(previewMutex);
+                previewLoaded = false;
+                lastPreviewName.clear();
+                isLoading = false;
+            }
             hoverRow = -1;
             hoverButton = HoverButton::None;
             listScrollOffset = 0;
@@ -438,24 +466,58 @@ namespace UI {
 
     void AssetManagerScreen::loadPreview() {
         if (displayList.empty() || selectedIndex < 0 || selectedIndex >= static_cast<int>(displayList.size())) {
+            std::lock_guard<std::mutex> lock(previewMutex);
             previewLoaded = false;
             lastPreviewName.clear();
+            isLoading = false;
             return;
         }
         
-        const auto& item = displayList[selectedIndex];
+        ListItem item = displayList[selectedIndex];
         if (item.type == ListItem::Folder) {
+            std::lock_guard<std::mutex> lock(previewMutex);
             previewLoaded = false;
             lastPreviewName.clear();
+            isLoading = false;
             return;
         }
 
-        const auto& entry = assets[item.index];
-        if (!previewLoaded || entry.name != lastPreviewName) {
-            currentPreview = manager.loadAsset(entry.name);
-            lastPreviewName = entry.name;
-            previewLoaded = true;
+        std::string assetName = assets[item.index].name;
+
+        {
+            std::lock_guard<std::mutex> lock(previewMutex);
+            if (previewLoaded && assetName == lastPreviewName) {
+                return;
+            }
+            if (isLoading && assetName == loadingAssetName) {
+                return; 
+            }
+
+            isLoading = true;
+            loadingAssetName = assetName;
+            // Optionally clear previewLoaded if you want to hide old preview immediately
+            // previewLoaded = false;
         }
+
+        taskSystem.submit([this, assetName]() {
+            try {
+                ImageAsset loaded = manager.loadAsset(assetName);
+                
+                std::lock_guard<std::mutex> lock(previewMutex);
+                if (loadingAssetName == assetName) {
+                    currentPreview = std::move(loaded);
+                    lastPreviewName = assetName;
+                    previewLoaded = true;
+                    isLoading = false;
+                }
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(previewMutex);
+                if (loadingAssetName == assetName) {
+                    previewLoaded = false;
+                    isLoading = false;
+                }
+            }
+        });
     }
 
     void AssetManagerScreen::importAsset() {
@@ -787,7 +849,9 @@ namespace UI {
         surface.fillRect(prevX + 1, contentY + 1, prevW - 2, 1, theme.title, theme.background, " ");
         surface.drawText(prevX + 2, contentY + 1, "Preview", theme.title, theme.background);
 
-        if (previewLoaded) {
+        if (isLoading) {
+            surface.drawText(prevX + 2, contentY + 3, "Loading preview...", theme.accent, theme.panel);
+        } else if (previewLoaded) {
             drawPreview(prevX + 2, contentY + 3, prevW - 4, contentH - 5);
         } else {
             std::string previewMsg = displayList.empty() ? "No items to preview" : "No preview available";
@@ -1546,6 +1610,9 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
 
 
     void AssetManagerScreen::drawPreview(int x, int y, int w, int h) {
+        std::lock_guard<std::mutex> lock(previewMutex);
+        if (!previewLoaded) return;
+
         // Center the image
         int imgW = currentPreview.getWidth();
         int imgH = currentPreview.getHeight();

@@ -15,6 +15,8 @@
 #include <vector>
 #include <string>
 #include <set>
+#include <mutex>
+#include <atomic>
 
 namespace TilelandWorld {
 namespace UI {
@@ -61,6 +63,9 @@ private:
     ImageAsset currentPreview;
     bool previewLoaded = false;
     std::string lastPreviewName;
+    std::atomic<bool> isLoading{false};
+    std::string loadingAssetName;
+    std::mutex previewMutex;
 
     // Persistence
     std::string lastImportPath = ".";
