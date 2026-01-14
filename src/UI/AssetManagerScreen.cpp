@@ -132,6 +132,15 @@ namespace UI {
                     continue; 
                 }
 
+                // Let TextField handle its events first
+                if (TextField::handleInput(ev, searchQuery, searchState, {searchFieldW})) {
+                    if (ev.type == InputEvent::Type::Key) {
+                        std::string prevName = getSelectedAssetName();
+                        applyFilter(prevName);
+                    }
+                    continue; 
+                }
+
                 if (ev.type == InputEvent::Type::Mouse) {
                     int listCount = static_cast<int>(displayList.size());
                     if (listCount > 0 && ev.wheel != 0) {
@@ -142,12 +151,9 @@ namespace UI {
                         loadPreview();
                     }
 
-                    bool onSearchField = (ev.y == searchFieldY && ev.x >= searchFieldX && ev.x < searchFieldX + searchFieldW);
                     bool onNewFolderBtn = (ev.y == btnNewFolderY && ev.x >= btnNewFolderX && ev.x < btnNewFolderX + btnNewFolderW);
 
-                    searchState.hover = onSearchField;
                     if (ev.pressed && ev.button == 0) {
-                        searchState.focused = onSearchField;
                         if (onNewFolderBtn) {
                             createNewFolder();
                         }
@@ -239,14 +245,6 @@ namespace UI {
                         }
                     }
                 } else if (ev.type == InputEvent::Type::Key) {
-                    if (searchState.focused) {
-                        if (TextField::handleInput(ev, searchQuery, searchState)) {
-                            std::string prevName = getSelectedAssetName();
-                            applyFilter(prevName);
-                            continue;
-                        }
-                    }
-
                     if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
                         running = false;
                     } else if (ev.key == InputKey::Tab) {
@@ -804,6 +802,8 @@ namespace UI {
         bool hoverOk = false, hoverCancel = false;
         TextFieldState inputState;
         inputState.focused = true;
+        inputState.caretIndex = (int)outName.size();
+        inputState.mode = CursorMode::IBeam;
         std::string errorMsg;
         int mouseX = -1, mouseY = -1;
 
@@ -909,6 +909,10 @@ namespace UI {
 
             auto events = input->pollEvents();
             for (const auto& ev : events) {
+                if (TextField::handleInput(ev, outName, inputState, fieldStyle)) {
+                    continue;
+                }
+
                 if (ev.type == InputEvent::Type::Mouse) {
                     mouseX = ev.x;
                     mouseY = ev.y;
@@ -917,7 +921,6 @@ namespace UI {
                         dy = dragOriginY + (ev.y - dragStartY);
                         clampDialog();
                     }
-                    bool onField = (ev.y == fieldY && ev.x >= fieldX && ev.x < fieldX + fieldW);
                     bool onOk = (ev.x >= okX && ev.x < okX + static_cast<int>(okLbl.size()) && ev.y == btnY);
                     bool onCancel = (ev.x >= cancelX && ev.x < cancelX + static_cast<int>(cancelLbl.size()) && ev.y == btnY);
                     bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + dw - 1);
@@ -929,7 +932,6 @@ namespace UI {
                             dragOriginX = dx;
                             dragOriginY = dy;
                         }
-                        inputState.focused = onField;
                         if (onOk) {
                             tryConfirm();
                         } else if (onCancel) {
@@ -940,12 +942,6 @@ namespace UI {
                         dragging = false;
                     }
                 } else if (ev.type == InputEvent::Type::Key) {
-                    if (inputState.focused) {
-                        if (TextField::handleInput(ev, outName, inputState, fieldStyle)) {
-                            continue;
-                        }
-                    }
-
                     if (ev.key == InputKey::Enter) {
                         tryConfirm();
                     } else if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
@@ -1591,6 +1587,8 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
         std::string inputStr = "";
         TextFieldState inputState;
         inputState.focused = true;
+        inputState.caretIndex = 0; // It's empty anyway
+        inputState.mode = CursorMode::IBeam;
 
         bool running = true;
         bool confirmed = false;
@@ -1600,6 +1598,7 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
         int mouseX = -1, mouseY = -1;
 
         while (running) {
+            inputState.updateCaret();
             clampDialog();
             drawMainUI();
             BoxStyle modernFrame{"╭", "╮", "╰", "╯", "─", "│"};
@@ -1641,6 +1640,9 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
 
             auto events = input->pollEvents();
             for (const auto& ev : events) {
+                if (TextField::handleInput(ev, inputStr, inputState, style)) {
+                    continue;
+                }
                 if (ev.type == InputEvent::Type::Mouse) {
                     mouseX = ev.x;
                     mouseY = ev.y;
@@ -1656,29 +1658,18 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
                             dragStartY = ev.y;
                             dragOriginX = dx;
                             dragOriginY = dy;
-                            inputState.focused = false;
                         } else if (hoverOk) {
                             if (isValidAssetName(inputStr)) {
                                 outName = inputStr; confirmed = true; running = false;
                             }
                         } else if (hoverCancel) {
                             confirmed = false; running = false;
-                        } else if (mouseY == dy + 4 && mouseX >= dx + 2 && mouseX < dx + 2 + style.width) {
-                            inputState.focused = true;
-                        } else {
-                            inputState.focused = false;
                         }
                     }
                     if (ev.button == 0 && !ev.pressed && !ev.move) {
                         dragging = false; 
                     }
                 } else if (ev.type == InputEvent::Type::Key) {
-                    if (inputState.focused) {
-                        if (TextField::handleInput(ev, inputStr, inputState, style)) {
-                            continue;
-                        }
-                    }
-
                     if (ev.key == InputKey::Enter) {
                         if (isValidAssetName(inputStr)) {
                             outName = inputStr; confirmed = true; running = false;

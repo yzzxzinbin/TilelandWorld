@@ -23,6 +23,7 @@ UnicodeTableScreen::UnicodeTableScreen()
       input(std::make_unique<InputController>()) {
     initBlocks();
     searchState.lastCaretToggle = std::chrono::steady_clock::now();
+    searchState.focused = true;
 }
 
 void UnicodeTableScreen::initBlocks() {
@@ -381,7 +382,37 @@ void UnicodeTableScreen::show() {
         painter.present(surface);
 
         auto events = input->pollEvents();
+        TextFieldStyle searchStyle;
+        searchStyle.width = searchW;
+        searchStyle.maxChars = 6;
+        searchStyle.charFilter = [](char32_t cp) {
+            return std::isxdigit(static_cast<unsigned char>(cp)) != 0;
+        };
+        searchStyle.transform = [](const std::string& s) {
+            std::string out = s;
+            for (char& c : out) c = (char)std::toupper((unsigned char)c);
+            return out;
+        };
+
         for (const auto& ev : events) {
+            bool wasFocused = searchState.focused;
+            bool handled = TextField::handleInput(ev, searchQuery, searchState, searchStyle);
+            
+            if (wasFocused && (ev.key == InputKey::Enter || ev.key == InputKey::Escape)) {
+                if (ev.key == InputKey::Enter && !searchQuery.empty()) {
+                    try {
+                        char32_t code = std::stoul(searchQuery, nullptr, 16);
+                        jumpToCode(code);
+                        searchState.focused = true; // Stay focused after jump
+                    } catch (...) {}
+                }
+                // If it was focused, Enter/Escape just clears focus (handled by handleInput)
+                // We consume the event here to prevent it from reaching handleKey (avoid close screen on Esc)
+                continue;
+            }
+
+            if (handled) continue;
+
             if (ev.type == InputEvent::Type::Key) {
                 handleKey(ev, running);
             } else if (ev.type == InputEvent::Type::Mouse) {
@@ -606,31 +637,6 @@ void UnicodeTableScreen::setAnchored(int px, int py, const std::string& g, const
 }
 
 void UnicodeTableScreen::handleKey(const InputEvent& ev, bool& running) {
-    if (searchState.focused) {
-        TextFieldStyle searchStyle;
-        searchStyle.maxChars = 6;
-        searchStyle.charFilter = [](char32_t cp) {
-            return std::isxdigit(static_cast<unsigned char>(cp)) != 0;
-        };
-        searchStyle.transform = [](const std::string& s) {
-            std::string out = s;
-            for (char& c : out) c = (char)std::toupper((unsigned char)c);
-            return out;
-        };
-
-        if (TextField::handleInput(ev, searchQuery, searchState, searchStyle)) {
-            // If enter was pressed, jump to code
-            if (ev.key == InputKey::Enter && !searchQuery.empty()) {
-                try {
-                    char32_t code = std::stoul(searchQuery, nullptr, 16);
-                    jumpToCode(code);
-                } catch (...) {}
-            }
-            return;
-        }
-        return;
-    }
-
     if (ev.key == InputKey::Escape || (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q'))) {
         running = false;
     } else if (ev.key == InputKey::ArrowUp) {
@@ -662,11 +668,7 @@ void UnicodeTableScreen::handleMouse(const InputEvent& ev, bool& running) {
         }
     }
     
-    bool onSearch = (ev.y == searchY && ev.x >= searchX + 14 && ev.x < searchX + 14 + searchW);
-    searchState.hover = onSearch;
-
     if (ev.button == 0 && ev.pressed) {
-        searchState.focused = onSearch;
         if (ev.x >= blockListX && ev.x < blockListX + blockListW && ev.y > blockListY && ev.y < blockListY + blockListH - 1) {
             int idx = blockScrollOffset + (ev.y - blockListY - 1);
             if (idx >= 0 && idx < static_cast<int>(blocks.size())) {

@@ -11,6 +11,11 @@
 namespace TilelandWorld {
 namespace UI {
 
+enum class CursorMode {
+    IBeam,      // Classic line cursor before character
+    Block       // Background color block on character
+};
+
 struct TextFieldStyle {
     int width{20};
     std::string placeholder{""};
@@ -33,18 +38,37 @@ struct TextFieldState {
     bool caretOn{true};
     std::chrono::steady_clock::time_point lastCaretToggle{};
 
+    // Cursor state
+    int caretIndex{0}; // Position in UTF-8 string (byte index or char index? Let's use char index for simplicity if possible, but std::string is bytes)
+    CursorMode mode{CursorMode::IBeam};
+    int scrollOffset{0}; // Index of first visible character
+    int lastRenderScrollOffset{0}; // Used for stable mouse interaction
+
     // Selection state: indices into the string. -1 means no selection.
     int selectionStart{-1};
     int selectionEnd{-1};
 
+    // Layout info for mouse interaction
+    int renderX{0}, renderY{0}, renderW{0};
+    bool dragging{false};
+
     // 辅助函数：更新光标闪烁状态
     void updateCaret() {
+        if (hasSelection()) {
+            caretOn = true;
+            return;
+        }
         auto now = std::chrono::steady_clock::now();
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastCaretToggle).count();
         if (ms >= 500) { // 默认 500ms 闪烁一次
             caretOn = !caretOn;
             lastCaretToggle = now;
         }
+    }
+
+    void forceCaretOn() {
+        caretOn = true;
+        lastCaretToggle = std::chrono::steady_clock::now();
     }
 
     bool hasSelection() const {
@@ -77,7 +101,7 @@ public:
      * @param state 运行时的状态（聚焦、悬停、光标）
      * @param style 视觉样式
      */
-    static void render(TuiSurface& surface, int x, int y, const std::string& text, const TextFieldState& state, const TextFieldStyle& style);
+    static void render(TuiSurface& surface, int x, int y, const std::string& text, TextFieldState& state, const TextFieldStyle& style);
 
     /**
      * 处理输入事件（如字符输入、退格、CTRL+A等）

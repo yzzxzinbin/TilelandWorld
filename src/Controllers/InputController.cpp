@@ -100,6 +100,9 @@ namespace TilelandWorld {
             DWORD waitRes = WaitForSingleObject(hIn, 50); // small timeout to allow clean shutdown
             if (!running) break;
             if (waitRes == WAIT_TIMEOUT) {
+                if (!buffer.empty()) {
+                    parseBuffer(true); // force parsing incomplete sequences (like standalone ESC)
+                }
                 continue; // no input yet
             }
             if (waitRes == WAIT_FAILED) {
@@ -110,15 +113,16 @@ namespace TilelandWorld {
                 break;
             }
             if (read == 0) {
+                if (!buffer.empty()) parseBuffer(true);
                 continue;
             }
             buffer.append(buf, buf + read);
-            parseBuffer();
+            parseBuffer(false);
         }
 #endif
     }
 
-    void InputController::parseBuffer()
+    void InputController::parseBuffer(bool force)
     {
         // Simple state-less parsing loop
         while (!buffer.empty())
@@ -126,7 +130,14 @@ namespace TilelandWorld {
             // ESC sequences
             if (buffer[0] == '\x1b')
             {
-                if (buffer.size() == 1) return; // wait for possible sequence
+                if (buffer.size() == 1) {
+                    if (force) {
+                        emitKey(InputKey::Escape);
+                        buffer.erase(0, 1);
+                        continue;
+                    }
+                    return; // wait for possible sequence
+                }
                 if (buffer[1] != '[') {
                     emitKey(InputKey::Escape);
                     buffer.erase(0, 1);
@@ -192,23 +203,41 @@ namespace TilelandWorld {
 
     bool InputController::tryParseArrow()
     {
-        // Expecting ESC [ X
+        // Expecting ESC [ ...
         if (buffer.size() < 3) return false; // incomplete
         if (!(buffer[0] == '\x1b' && buffer[1] == '[')) return false;
 
-        char code = buffer[2];
+        // Try to find the end of the CSI sequence (character in range 0x40-0x7E)
+        size_t end = 2;
+        while (end < buffer.size() && (buffer[end] < 0x40 || buffer[end] > 0x7E)) {
+            end++;
+        }
+        if (end >= buffer.size()) return false; // incomplete sequence
+
+        std::string param = buffer.substr(2, end - 2);
+        char terminator = buffer[end];
+
         InputKey key = InputKey::Unknown;
-        switch (code) {
-            case 'A': key = InputKey::ArrowUp; break;
-            case 'B': key = InputKey::ArrowDown; break;
-            case 'C': key = InputKey::ArrowRight; break;
-            case 'D': key = InputKey::ArrowLeft; break;
-            default: break;
+        if (param.empty()) {
+            switch (terminator) {
+                case 'A': key = InputKey::ArrowUp; break;
+                case 'B': key = InputKey::ArrowDown; break;
+                case 'C': key = InputKey::ArrowRight; break;
+                case 'D': key = InputKey::ArrowLeft; break;
+                case 'H': key = InputKey::Home; break;
+                case 'F': key = InputKey::End; break;
+                default: break;
+            }
+        } else if (terminator == '~') {
+            if (param == "1" || param == "7") key = InputKey::Home;
+            else if (param == "4" || param == "8") key = InputKey::End;
+            else if (param == "3") key = InputKey::Delete;
+            else if (param == "24") key = InputKey::F12;
         }
 
         if (key != InputKey::Unknown) {
             emitKey(key);
-            buffer.erase(0, 3);
+            buffer.erase(0, end + 1);
             return true;
         }
 

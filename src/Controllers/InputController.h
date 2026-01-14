@@ -24,6 +24,10 @@ namespace TilelandWorld {
         Enter,
         Escape,
         Tab,
+        Home,
+        End,
+        Delete,
+        F12,
         Character
     };
 
@@ -74,7 +78,7 @@ namespace TilelandWorld {
         std::string buffer;
 
         void readerLoop();
-        void parseBuffer();
+        void parseBuffer(bool force = false);
 
         bool tryParseMouseSGR();
         bool tryParseArrow();
