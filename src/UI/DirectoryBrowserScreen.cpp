@@ -512,20 +512,15 @@ void DirectoryBrowserScreen::handleKey(const InputEvent& ev, bool& running, std:
             std::lock_guard<std::mutex> lock(entriesMutex);
             if (selected < entries.size())
             {
-                // If not CTRL+Enter, and there are other items selected, clear them and stay
-                if (!ev.ctrl && !entries[selected].isDir) {
-                    bool otherSelected = false;
-                    for (size_t i = 0; i < entries.size(); ++i) {
-                        if (entries[i].isSelected && i != selected) {
-                            otherSelected = true;
-                            break;
-                        }
-                    }
-                    if (otherSelected) {
+                // If not CTRL+Enter, handle single selection logic
+                if (!ev.ctrl && !entries[selected].isDir && entries[selected].name != "[Use this directory]" && entries[selected].name != "..") {
+                    if (!entries[selected].isSelected) {
+                        // Not selected yet, click selects it and clears others
                         for (auto& e : entries) e.isSelected = false;
                         entries[selected].isSelected = true;
                         return; // Selection changed, don't confirm yet
                     }
+                    // If already selected, we proceed to selection confirmation below
                 }
 
                 if (entries[selected].name == "[Use this directory]")
@@ -645,24 +640,39 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
                 
                 if (ev.button == 0 && ev.pressed)
                 {
+                    // Track clicks for double-click detection
+                    static size_t lastIdx = static_cast<size_t>(-1);
+                    static auto lastTick = std::chrono::steady_clock::now();
+
                     // CTRL+Click toggles selection
-                    if (ev.ctrl && !entries[idx].isDir) {
+                    if (ev.ctrl && !entries[idx].isDir && entries[idx].name != "[Use this directory]" && entries[idx].name != "..") {
                         entries[idx].isSelected = !entries[idx].isSelected;
                         return;
                     }
 
-                    // If not CTRL+Click, clear other selections
-                    if (!ev.ctrl) {
-                        for (auto& entry : entries) {
-                            entry.isSelected = false;
+                    // If not CTRL+Click, handle single selection logic
+                    if (!ev.ctrl && !entries[idx].isDir && entries[idx].name != "[Use this directory]" && entries[idx].name != "..") {
+                        if (!entries[idx].isSelected) {
+                            // First click on unselected item: clear others and select it
+                            for (auto& entry : entries) entry.isSelected = false;
+                            entries[idx].isSelected = true;
+                            // Still update double click tracking
+                            lastIdx = idx;
+                            lastTick = std::chrono::steady_clock::now();
+                            return;
                         }
+                        // If already selected (isSelected == true), we fall through to the confirmation logic below
+                        // (which treats it like a double-click confirm)
                     }
 
                     // 单击选中；双击进入目录（或选择当前目录）
-                    static size_t lastIdx = static_cast<size_t>(-1);
-                    static auto lastTick = std::chrono::steady_clock::now();
                     auto now = std::chrono::steady_clock::now();
                     bool doubleClick = (idx == lastIdx) && (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTick).count() < 500);
+                    
+                    // If we reached here without returning, and it was already selected (or it's a dir/control),
+                    // we might want to confirm if it's already selected.
+                    bool forceConfirm = (!ev.ctrl && !entries[idx].isDir && entries[idx].isSelected);
+
                     lastIdx = idx;
                     lastTick = now;
 
@@ -687,7 +697,7 @@ void DirectoryBrowserScreen::handleMouse(const InputEvent& ev, bool& running, st
                         scrollOffset = 0;
                         shouldRefresh = true;
                     }
-                    else if (doubleClick && !entries[idx].isDir && showFilesMode)
+                    else if ((doubleClick || forceConfirm) && !entries[idx].isDir && showFilesMode)
                     {
                         // Check if we have multiple selected
                         bool hasMulti = false;

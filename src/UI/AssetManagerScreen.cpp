@@ -120,6 +120,8 @@ namespace UI {
                                 if (previewLoaded) showInfoDialog(getSelectedAssetName(), currentPreview);
                             } else if (result == 4) {
                                 moveCurrentAsset();
+                            } else if (result == 5) {
+                                moveInFromSystem();
                             }
                         }
                     }
@@ -562,8 +564,7 @@ namespace UI {
 
     void AssetManagerScreen::moveInFromSystem() {
         auto item = getSelectedItem();
-        if (item.type != ListItem::Folder) return;
-        std::string targetFolder = item.name;
+        std::string targetFolder = (item.type == ListItem::Folder) ? item.name : item.folderName;
 
         // Stop our input while browser runs
         input->stop();

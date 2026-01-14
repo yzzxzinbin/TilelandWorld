@@ -73,7 +73,7 @@ private:
 
     // Context Menu
     ContextMenuState ctxMenuState;
-    std::vector<std::string> ctxMenuItems = {"Open", "Rename", "Delete", "Info", "Move to..."};
+    std::vector<std::string> ctxMenuItems = {"Open", "Rename", "Delete", "Info", "Move to...", "Move in..."};
 
     enum class HoverButton { None, Open, Rename, Delete, Info, NewFolder };
     int hoverRow{-1};
