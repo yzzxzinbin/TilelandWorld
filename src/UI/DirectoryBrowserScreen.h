@@ -45,6 +45,7 @@ private:
     
     bool showFilesMode{false};
     std::string extensionFilter; // e.g. ".bmp"
+    std::string lastErrorMessage;
 
     TuiSurface surface;
     TuiPainter painter;

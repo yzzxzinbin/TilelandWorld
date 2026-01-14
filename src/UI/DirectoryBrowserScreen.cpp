@@ -175,6 +175,7 @@ void DirectoryBrowserScreen::refreshEntries()
 {
     std::lock_guard<std::mutex> lock(entriesMutex);
     entries.clear();
+    lastErrorMessage.clear();
 
     // 当前目录占位，用于直接选择
     {
@@ -197,37 +198,45 @@ void DirectoryBrowserScreen::refreshEntries()
 
     std::vector<Entry> dirs;
     std::vector<Entry> files;
-    for (const auto& entry : std::filesystem::directory_iterator(currentPath))
-    {
-        try {
-            if (entry.is_directory())
-            {
-                Entry e;
-                e.name = entry.path().filename().string();
-                e.fullPath = entry.path();
-                e.isDir = true;
-                e.typeStr = "Folder";
-                e.dateStr = formatTime(entry.last_write_time());
-                e.sizeStr = "...";
-                e.sizePending = true;
-                dirs.push_back(std::move(e));
-            }
-            else if (showFilesMode && entry.is_regular_file())
-            {
-                if (extensionFilter.empty() || entry.path().extension() == extensionFilter) {
+    
+    std::error_code ec;
+    auto it = std::filesystem::directory_iterator(currentPath, ec);
+    if (!ec) {
+        for (const auto& entry : it)
+        {
+            try {
+                if (entry.is_directory())
+                {
                     Entry e;
                     e.name = entry.path().filename().string();
                     e.fullPath = entry.path();
-                    e.isDir = false;
-                    e.typeStr = getFileType(entry.path());
+                    e.isDir = true;
+                    e.typeStr = "Folder";
                     e.dateStr = formatTime(entry.last_write_time());
-                    e.sizeBytes = entry.file_size();
-                    e.sizeStr = formatSize(e.sizeBytes);
-                    files.push_back(std::move(e));
+                    e.sizeStr = "...";
+                    e.sizePending = true;
+                    dirs.push_back(std::move(e));
                 }
-            }
-        } catch (...) {}
+                else if (showFilesMode && entry.is_regular_file())
+                {
+                    if (extensionFilter.empty() || entry.path().extension() == extensionFilter) {
+                        Entry e;
+                        e.name = entry.path().filename().string();
+                        e.fullPath = entry.path();
+                        e.isDir = false;
+                        e.typeStr = getFileType(entry.path());
+                        e.dateStr = formatTime(entry.last_write_time());
+                        e.sizeBytes = entry.file_size();
+                        e.sizeStr = formatSize(e.sizeBytes);
+                        files.push_back(std::move(e));
+                    }
+                }
+            } catch (...) {}
+        }
+    } else {
+        lastErrorMessage = "Access Denied: " + ec.message();
     }
+    
     std::sort(dirs.begin(), dirs.end(), [](const Entry& a, const Entry& b){ return a.name < b.name; });
     std::sort(files.begin(), files.end(), [](const Entry& a, const Entry& b){ return a.name < b.name; });
 
@@ -290,6 +299,12 @@ void DirectoryBrowserScreen::renderFrame()
     std::string title = showFilesMode ? "Choose File" : "Choose Save Directory";
     surface.drawCenteredText(0, 1, surface.getWidth(), title, theme.title, theme.background);
     surface.drawCenteredText(0, 2, surface.getWidth(), currentPath.string(), theme.subtitle, theme.background);
+
+    if (!lastErrorMessage.empty()) {
+        RGBColor errorBg{ 80, 20, 20 };
+        surface.fillRect(0, 3, surface.getWidth(), 1, { 255, 100, 100 }, errorBg, " ");
+        surface.drawCenteredText(0, 3, surface.getWidth(), lastErrorMessage, { 255, 200, 200 }, errorBg);
+    }
 
     surface.fillRect(listOriginX, listOriginY, listWidth, listHeight, theme.itemFg, theme.panel, " ");
     surface.drawFrame(listOriginX, listOriginY, listWidth, listHeight, kModernFrame, theme.itemFg, theme.panel);
