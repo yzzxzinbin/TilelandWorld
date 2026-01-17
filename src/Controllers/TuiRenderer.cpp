@@ -283,64 +283,55 @@ namespace TilelandWorld
             // 3. 渲染输出
             drawToConsole(state, overlay, overlayAlpha);
 
-// --- FPS 计算 ---
-#ifdef _WIN32
-            frameCount++;
-            LARGE_INTEGER nowLI;
-            QueryPerformanceCounter(&nowLI);
-            long long now = nowLI.QuadPart;
-            double elapsedSeconds = (double)(now - lastFpsTime) / frequency;
-            if (elapsedSeconds >= 1.0)
-            {
-                currentFps = frameCount / elapsedSeconds;
-                frameCount = 0;
-                lastFpsTime = now;
-            }
-#endif
-
-// 4. 帧率控制
+            // --- FPS 帧率控制 ---
 #ifdef _WIN32
             LARGE_INTEGER currentTick;
             
-            // 在进入休眠前检查是否已经超时，并记录日志
+            // 1. 掉帧检测：检查渲染和逻辑合并耗时是否超过预期
             QueryPerformanceCounter(&currentTick);
             double workElapsedMs = (double)(currentTick.QuadPart - nextFrameTick.QuadPart) / pcFreq;
-            double targetFrameTime = 1000.0 / std::max(1.0, targetFpsCap.load());
-            if (workElapsedMs > targetFrameTime + 1.0) {
+            double targetIntervalMs = 1000.0 / std::max(1.0, targetFpsCap.load());
+            if (workElapsedMs > targetIntervalMs + 1.0) {
                 LOG_WARNING("Frame " + std::to_string(frameNumber) + " lag: " + std::to_string(workElapsedMs) + " ms");
             }
 
-            while (true)
-            {
+            // 2. 混合休眠阶段 (Sleep/Yield)
+            while (true) {
                 QueryPerformanceCounter(&currentTick);
                 double remainingMs = (double)(deadlineTick - currentTick.QuadPart) / pcFreq;
                 
                 if (remainingMs <= 1.5) break; 
 
-                if (remainingMs > 2.0)
-                {
+                if (remainingMs > 2.0) {
                     Sleep(1); 
-                }
-                else
-                {
+                } else {
                     std::this_thread::yield();
                 }
             }
 
-            // 精确忙等
-            while (true)
-            {
+            // 3. 精确忙等阶段
+            while (true) {
                 QueryPerformanceCounter(&currentTick);
                 if (currentTick.QuadPart >= deadlineTick) break;
                 YieldProcessor(); 
             }
 
+            // [对齐时间轴]：下一帧的起点严格对齐本帧的终点
             nextFrameTick.QuadPart = deadlineTick;
 
-            // 防加速保护
-            if (currentTick.QuadPart > deadlineTick + ticksPerFrame)
-            {
+            // 4. 超时补偿/防追赶保护
+            if (currentTick.QuadPart > deadlineTick + ticksPerFrame) {
                 nextFrameTick = currentTick;
+            }
+
+            // 5. FPS 统计计算 (反映真实的屏幕提交频率)
+            frameCount++;
+            long long now = currentTick.QuadPart;
+            double elapsedSeconds = (double)(now - lastFpsTime) / frequency;
+            if (elapsedSeconds >= 1.0) {
+                currentFps = frameCount / elapsedSeconds;
+                frameCount = 0;
+                lastFpsTime = now;
             }
 #else
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
