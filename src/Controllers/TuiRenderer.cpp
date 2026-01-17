@@ -191,10 +191,9 @@ namespace TilelandWorld
         frequency = freqLI.QuadPart;
         double pcFreq = double(frequency) / 1000.0; // 毫秒频率
 
-        LARGE_INTEGER nowLI;
-        QueryPerformanceCounter(&nowLI);
-        lastFpsTime = nowLI.QuadPart;
-
+        LARGE_INTEGER nextFrameTick;
+        QueryPerformanceCounter(&nextFrameTick);
+        lastFpsTime = nextFrameTick.QuadPart;
 #endif
 
         size_t frameNumber = 0;
@@ -204,9 +203,8 @@ namespace TilelandWorld
             frameNumber++;
 
 #ifdef _WIN32
-            LARGE_INTEGER startTick, endTick;
-            QueryPerformanceCounter(&startTick);
-            double targetFrameTime = 1000.0 / std::max(1.0, targetFpsCap.load());
+            long long ticksPerFrame = static_cast<long long>(frequency / std::max(1.0, targetFpsCap.load()));
+            long long deadlineTick = nextFrameTick.QuadPart + ticksPerFrame;
 #endif
 
             // 1. 获取当前视图状态
@@ -285,9 +283,10 @@ namespace TilelandWorld
             // 3. 渲染输出
             drawToConsole(state, overlay, overlayAlpha);
 
-// --- FPS Calculation ---
+// --- FPS 计算 ---
 #ifdef _WIN32
             frameCount++;
+            LARGE_INTEGER nowLI;
             QueryPerformanceCounter(&nowLI);
             long long now = nowLI.QuadPart;
             double elapsedSeconds = (double)(now - lastFpsTime) / frequency;
@@ -301,33 +300,50 @@ namespace TilelandWorld
 
 // 4. 帧率控制
 #ifdef _WIN32
-            double elapsedMs = 0.0;
-            while (elapsedMs < targetFrameTime)
-            {
-                QueryPerformanceCounter(&endTick);
-                double elapsedTick = (endTick.QuadPart - startTick.QuadPart);
-                elapsedMs = (elapsedTick) / pcFreq;
+            LARGE_INTEGER currentTick;
+            
+            // 在进入休眠前检查是否已经超时，并记录日志
+            QueryPerformanceCounter(&currentTick);
+            double workElapsedMs = (double)(currentTick.QuadPart - nextFrameTick.QuadPart) / pcFreq;
+            double targetFrameTime = 1000.0 / std::max(1.0, targetFpsCap.load());
+            if (workElapsedMs > targetFrameTime + 1.0) {
+                LOG_WARNING("Frame " + std::to_string(frameNumber) + " lag: " + std::to_string(workElapsedMs) + " ms");
+            }
 
-                if (elapsedMs < targetFrameTime)
+            while (true)
+            {
+                QueryPerformanceCounter(&currentTick);
+                double remainingMs = (double)(deadlineTick - currentTick.QuadPart) / pcFreq;
+                
+                if (remainingMs <= 1.5) break; 
+
+                if (remainingMs > 2.0)
                 {
-                    DWORD sleepTime = static_cast<DWORD>(targetFrameTime - elapsedMs);
-                    if (sleepTime > 0)
-                    {
-                        Sleep(sleepTime);
-                    }
+                    Sleep(1); 
                 }
                 else
                 {
-                    break;
+                    std::this_thread::yield();
                 }
             }
-            // 仅在超时严重时记录日志，避免日志刷屏影响性能
-            if (elapsedMs > targetFrameTime + 1.0)
+
+            // 精确忙等
+            while (true)
             {
-                LOG_WARNING("Frame " + std::to_string(frameNumber) + " lag: " + std::to_string(elapsedMs) + " ms");
+                QueryPerformanceCounter(&currentTick);
+                if (currentTick.QuadPart >= deadlineTick) break;
+                YieldProcessor(); 
+            }
+
+            nextFrameTick.QuadPart = deadlineTick;
+
+            // 防加速保护
+            if (currentTick.QuadPart > deadlineTick + ticksPerFrame)
+            {
+                nextFrameTick = currentTick;
             }
 #else
-            std::this_thread::sleep_for(std::chrono::milliseconds(33));
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
 #endif
         }
 
