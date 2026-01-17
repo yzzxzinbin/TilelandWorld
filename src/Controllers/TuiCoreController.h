@@ -75,7 +75,7 @@ namespace TilelandWorld {
         Settings settingsOverlayWorking{};
         size_t settingsOverlaySelected{0};
         std::shared_ptr<UI::TuiSurface> settingsOverlaySurface;
-        UI::MenuTheme settingsOverlayTheme{};
+        UI::TuiTheme settingsOverlayTheme{};
         std::vector<RuntimeSettingItem> settingsOverlayItems;
 
         // 鼠标叠加层

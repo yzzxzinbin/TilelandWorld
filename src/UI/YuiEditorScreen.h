@@ -26,7 +26,7 @@ private:
     ImageAsset working;
     TuiSurface surface;
     TuiPainter painter;
-    MenuTheme theme;
+    TuiTheme theme;
     InputController input;
 
     Tool activeTool{Tool::Hand};

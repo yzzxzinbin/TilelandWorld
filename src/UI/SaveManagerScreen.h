@@ -35,7 +35,7 @@ private:
     Settings& settings;
     TuiSurface surface;
     TuiPainter painter;
-    MenuTheme theme;
+    TuiTheme theme;
     MenuView menu;
     size_t selectedIndex{0};
     std::vector<std::string> saves;

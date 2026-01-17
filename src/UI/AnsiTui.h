@@ -69,7 +69,7 @@ public:
 };
 
 // 菜单主题
-struct MenuTheme {
+struct TuiTheme {
     RGBColor background{12, 14, 18};
     RGBColor panel{18, 21, 28};
     RGBColor accent{96, 140, 255};
@@ -85,7 +85,7 @@ struct MenuTheme {
 // 简易菜单视图，负责布局/绘制
 class MenuView {
 public:
-    MenuView(std::vector<std::string> items, MenuTheme theme = MenuTheme{});
+    MenuView(std::vector<std::string> items, TuiTheme theme = TuiTheme{});
 
     void setTitle(std::string text);
     void setSubtitle(std::string text);
@@ -102,7 +102,7 @@ public:
 
 private:
     std::vector<std::string> options;
-    MenuTheme theme;
+    TuiTheme theme;
     size_t selected{0};
     std::string title{"Tileland World"};
     std::string subtitle{"Arrow keys to navigate, Enter to confirm"};

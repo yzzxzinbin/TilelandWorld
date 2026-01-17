@@ -188,7 +188,7 @@ void TuiPainter::reset(std::ostream& os) const {
     os << "\x1b[0m\x1b[?25h" << std::flush;
 }
 
-MenuView::MenuView(std::vector<std::string> items, MenuTheme theme_) : options(std::move(items)), theme(theme_) {
+MenuView::MenuView(std::vector<std::string> items, TuiTheme theme_) : options(std::move(items)), theme(theme_) {
     if (options.empty()) {
         options.push_back("Start");
     }

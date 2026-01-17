@@ -41,7 +41,7 @@ private:
 
     TuiSurface surface;
     TuiPainter painter;
-    MenuTheme theme;
+    TuiTheme theme;
 
     std::string name;
     std::string directory;

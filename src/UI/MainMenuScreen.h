@@ -23,7 +23,7 @@ public:
 private:
     TuiSurface surface;
     TuiPainter painter;
-    MenuTheme theme;
+    TuiTheme theme;
     MenuView menu;
     size_t selectedIndex{0};
 

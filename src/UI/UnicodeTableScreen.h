@@ -26,7 +26,7 @@ public:
 private:
     TuiSurface surface;
     TuiPainter painter;
-    MenuTheme theme;
+    TuiTheme theme;
     std::unique_ptr<InputController> input;
 
     std::vector<UnicodeBlock> blocks;

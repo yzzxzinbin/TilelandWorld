@@ -49,7 +49,7 @@ private:
 
     TuiSurface surface;
     TuiPainter painter;
-    MenuTheme theme;
+    TuiTheme theme;
 
     // 布局缓存
     int listOriginX{4};
