@@ -119,7 +119,7 @@ namespace TilelandWorld {
         QueryPerformanceFrequency(&frequency);
         double pcFreq = double(frequency.QuadPart) / 1000.0; // ms
 
-        // 新增：TPS 计算初始化
+        // TPS 计算初始化
         LARGE_INTEGER tpsFreqLI;
         QueryPerformanceFrequency(&tpsFreqLI);
         tpsFrequency = tpsFreqLI.QuadPart;
@@ -128,13 +128,19 @@ namespace TilelandWorld {
         lastTpsTime = nowLI.QuadPart;
         #endif
 
+        #ifdef _WIN32
+        LARGE_INTEGER nextFrameTick;
+        QueryPerformanceCounter(&nextFrameTick);
+        #endif
+
         while (running) {
-            refreshAutoViewSize();
             #ifdef _WIN32
-            LARGE_INTEGER startTick;
-            QueryPerformanceCounter(&startTick);
-                        double targetFrameTime = 1000.0 / std::max(1.0, targetTps);
+            long long ticksPerFrame = static_cast<long long>(tpsFrequency / std::max(1.0, targetTps));
+            // 预测本帧理想的结束时间点
+            long long deadlineTick = nextFrameTick.QuadPart + ticksPerFrame;
             #endif
+
+            refreshAutoViewSize();
 
             // --- 1. 逻辑更新开始 ---
             handleInput();
@@ -164,42 +170,40 @@ namespace TilelandWorld {
 
             // --- TPS 休眠控制 ---
             #ifdef _WIN32
-            // 计算目标截止时间的 Ticks
-            long long targetFrameTicks = static_cast<long long>(tpsFrequency / std::max(1.0, targetTps));
-            long long deadlineTick = startTick.QuadPart + targetFrameTicks;
-            
             LARGE_INTEGER currentTick;
             
-            // 1. 粗放休眠阶段：利用 Sleep 释放 CPU
-            // 只要距离目标时间还远（比如 > 1.5ms），就进行 Sleep(1)
-            // 这里的缓冲设为 1.5ms 是因为在 timeBeginPeriod(1) 下，Sleep(1) 实际可能睡 1.5-2ms
+            // 1. 粗放休眠阶段
             while (true) {
                 QueryPerformanceCounter(&currentTick);
                 double remainingMs = (double)(deadlineTick - currentTick.QuadPart) / pcFreq;
                 
-                // 当剩余时间小于等于 1.0ms 时，跳出休眠循环，进入精确忙等
-                if (remainingMs <= 1.0) break; 
+                if (remainingMs <= 1.5) break; 
 
-                if (remainingMs > 1.5) {
+                if (remainingMs > 2) {
                     Sleep(1); 
                 } else {
-                    // 剩余时间在 1.0ms 到 1.5ms 之间，主动让渡当前时间片但不进入长时间睡眠
                     std::this_thread::yield();
                 }
             }
 
-            // 2. 精确忙等阶段：自旋直到到达 deadline
-            // 这部分会消耗一个核心的 CPU 到 100%，但只需持续 0.5ms，能换取微秒级的帧同步精度
+            // 2. 精确忙等阶段
             while (true) {
                 QueryPerformanceCounter(&currentTick);
                 if (currentTick.QuadPart >= deadlineTick) break;
-                YieldProcessor(); // 提示 CPU 这是一个空转循环，优化性能功耗
+                YieldProcessor(); 
             }
 
-            // TPS 计算逻辑
+            // 下一帧的起点严格对齐本帧的终点
+            nextFrameTick.QuadPart = deadlineTick;
+
+            // 防加速保护
+            if (currentTick.QuadPart > deadlineTick + ticksPerFrame) {
+                nextFrameTick = currentTick;
+            }
+
+            // TPS 统计
             tickCount++;
-            QueryPerformanceCounter(&nowLI);
-            long long now = nowLI.QuadPart;
+            long long now = currentTick.QuadPart;
             double elapsedSeconds = (double)(now - lastTpsTime) / tpsFrequency;
             if (elapsedSeconds >= 1.0) {
                 currentTps = tickCount / elapsedSeconds;
