@@ -164,19 +164,39 @@ namespace TilelandWorld {
 
             // --- TPS 休眠控制 ---
             #ifdef _WIN32
-            LARGE_INTEGER endTick;
-            QueryPerformanceCounter(&endTick);
-            double elapsedMs = (endTick.QuadPart - startTick.QuadPart) / pcFreq;
+            // 计算目标截止时间的 Ticks
+            long long targetFrameTicks = static_cast<long long>(tpsFrequency / std::max(1.0, targetTps));
+            long long deadlineTick = startTick.QuadPart + targetFrameTicks;
             
-            if (elapsedMs < targetFrameTime) {
-                DWORD sleepTime = static_cast<DWORD>(targetFrameTime - elapsedMs);
-                // 保持最小睡眠时间为 1ms 以让渡 CPU，除非时间非常紧迫
-                if (sleepTime > 0) {
-                    Sleep(sleepTime); 
+            LARGE_INTEGER currentTick;
+            
+            // 1. 粗放休眠阶段：利用 Sleep 释放 CPU
+            // 只要距离目标时间还远（比如 > 1.5ms），就进行 Sleep(1)
+            // 这里的缓冲设为 1.5ms 是因为在 timeBeginPeriod(1) 下，Sleep(1) 实际可能睡 1.5-2ms
+            while (true) {
+                QueryPerformanceCounter(&currentTick);
+                double remainingMs = (double)(deadlineTick - currentTick.QuadPart) / pcFreq;
+                
+                // 当剩余时间小于等于 1.0ms 时，跳出休眠循环，进入精确忙等
+                if (remainingMs <= 1.0) break; 
+
+                if (remainingMs > 1.5) {
+                    Sleep(1); 
+                } else {
+                    // 剩余时间在 1.0ms 到 1.5ms 之间，主动让渡当前时间片但不进入长时间睡眠
+                    std::this_thread::yield();
                 }
             }
 
-            // 新增：TPS 计算逻辑
+            // 2. 精确忙等阶段：自旋直到到达 deadline
+            // 这部分会消耗一个核心的 CPU 到 100%，但只需持续 0.5ms，能换取微秒级的帧同步精度
+            while (true) {
+                QueryPerformanceCounter(&currentTick);
+                if (currentTick.QuadPart >= deadlineTick) break;
+                YieldProcessor(); // 提示 CPU 这是一个空转循环，优化性能功耗
+            }
+
+            // TPS 计算逻辑
             tickCount++;
             QueryPerformanceCounter(&nowLI);
             long long now = nowLI.QuadPart;
