@@ -98,17 +98,17 @@ namespace TilelandWorld
         HANDLE hProcess = GetCurrentProcess();
         // 注意：REALTIME_PRIORITY_CLASS 极其危险，可能导致鼠标键盘无响应。
         // 建议使用 HIGH_PRIORITY_CLASS 用于测试。
-        if (!SetPriorityClass(hProcess, HIGH_PRIORITY_CLASS))
-        {
-            DWORD err = GetLastError();
-            if (err == ERROR_ACCESS_DENIED)
-            {
-                LOG_ERROR("需要管理员权限以设置高优先级");
-            }
-        }else
-        {
-            LOG_INFO("已将进程优先级设置为 HIGH_PRIORITY_CLASS");
-        }
+        // if (!SetPriorityClass(hProcess, HIGH_PRIORITY_CLASS))
+        // {
+        //     DWORD err = GetLastError();
+        //     if (err == ERROR_ACCESS_DENIED)
+        //     {
+        //         LOG_ERROR("需要管理员权限以设置高优先级");
+        //     }
+        // }else
+        // {
+        //     LOG_INFO("已将进程优先级设置为 HIGH_PRIORITY_CLASS");
+        // }
         
         // 移除此处的 SetThreadPriority，移至 renderLoop 内部
 #endif
@@ -170,15 +170,15 @@ namespace TilelandWorld
 #ifdef _WIN32
         // --- 在线程内部设置自身优先级 ---
         // GetCurrentThread() 返回的是当前线程的伪句柄，始终有效且权限最高
-        if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL))
-        {
-            DWORD err = GetLastError();
-            LOG_ERROR("设置渲染线程优先级失败: " + std::to_string(err));
-        }
-        else
-        {
-            LOG_INFO("已在线程内部将渲染线程优先级设置为 THREAD_PRIORITY_ABOVE_NORMAL");
-        }
+        // if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL))
+        // {
+        //     DWORD err = GetLastError();
+        //     LOG_ERROR("设置渲染线程优先级失败: " + std::to_string(err));
+        // }
+        // else
+        // {
+        //     LOG_INFO("已在线程内部将渲染线程优先级设置为 THREAD_PRIORITY_ABOVE_NORMAL");
+        // }
 
         TIMECAPS tc;
         if (timeGetDevCaps(&tc, sizeof(TIMECAPS)) == TIMERR_NOERROR)

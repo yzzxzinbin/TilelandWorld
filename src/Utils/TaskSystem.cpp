@@ -7,7 +7,7 @@ namespace TilelandWorld {
     TaskSystem::TaskSystem(int threadCount) {
         if (threadCount <= 0) {
             // 至少保留一个核心给主逻辑/渲染，最少开启1个工作线程
-            threadCount = std::max(1u, std::thread::hardware_concurrency() - 2);
+            threadCount = std::max(1u, std::thread::hardware_concurrency() - 8);
         }
 
         LOG_INFO("Initializing TaskSystem with " + std::to_string(threadCount) + " worker threads.");

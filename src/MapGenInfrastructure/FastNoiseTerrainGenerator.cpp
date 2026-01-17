@@ -232,7 +232,7 @@ namespace TilelandWorld
 
         // --- Runtime SIMD Level Check (Optional but good for verification) ---
         FastSIMD::eLevel detectedLevel = noiseSource->GetSIMDLevel();
-        LOG_INFO("Runtime SIMD level: " + std::to_string(detectedLevel));
+        // LOG_INFO("Runtime SIMD level: " + std::to_string(detectedLevel));
         // *** Check against the requested SSE4.1 level ***
         if (detectedLevel != targetLevel)
         {
