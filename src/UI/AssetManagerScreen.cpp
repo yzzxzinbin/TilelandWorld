@@ -673,7 +673,7 @@ namespace UI {
         std::string name = getSelectedAssetName();
         if (name.empty()) return;
         input->stop();
-        ImageAsset asset = manager.loadAsset(name);
+        YuiLayeredImage asset = manager.loadLayeredAsset(name);
         YuiEditorScreen editor(manager, name, asset);
         editor.show();
         refreshList(name);

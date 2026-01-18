@@ -26,7 +26,7 @@ namespace {
 namespace TilelandWorld {
 namespace UI {
 
-YuiEditorScreen::YuiEditorScreen(AssetManager& manager_, std::string assetName_, ImageAsset asset_)
+YuiEditorScreen::YuiEditorScreen(AssetManager& manager_, std::string assetName_, YuiLayeredImage asset_)
     : manager(manager_), assetName(std::move(assetName_)), working(std::move(asset_)), surface(100, 40) {
 }
 
@@ -52,7 +52,7 @@ void YuiEditorScreen::show() {
             if (!running) break;
         }
     }
-    manager.saveAsset(working, assetName);
+    manager.saveLayeredAsset(working, assetName);
     painter.reset();
     input.stop();
 }
@@ -75,9 +75,9 @@ void YuiEditorScreen::renderFrame() {
 
     propPanelW = hasSelection ? 28 : 0;
     canvasX = 2;
-    canvasY = 5; // leave a blank row below the toolbar
+    canvasY = 4;
     canvasW = std::max(10, surface.getWidth() - canvasX - 2 - propPanelW);
-    canvasH = std::max(6, surface.getHeight() - canvasY - 1);
+    canvasH = std::max(6, surface.getHeight() - canvasY - 2);
 
     surface.fillRect(canvasX, canvasY, canvasW, canvasH, theme.itemFg, theme.panel, " ");
     surface.drawFrame(canvasX, canvasY, canvasW, canvasH, kFrame, theme.itemFg, theme.panel);
@@ -87,6 +87,10 @@ void YuiEditorScreen::renderFrame() {
     if (hasSelection) {
         drawPropertyPanel();
     }
+
+    surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), 
+        "Space: toggle tool | Mouse wheel: scroll | Drag (hand): pan | Q: save & back", 
+        theme.hintFg, theme.background);
 }
 
 static constexpr int kToolbarY = 3; // leave a blank line above the toolbar
@@ -104,7 +108,6 @@ void YuiEditorScreen::drawToolbar() {
     };
     drawBtn(hand, activeTool == Tool::Hand);
     drawBtn(prop, activeTool == Tool::Property);
-    surface.drawText(x, y, "Space: toggle tool | Mouse wheel: scroll | Drag (hand): pan | Q: save & back", theme.hintFg, theme.background);
 }
 
 void YuiEditorScreen::drawCanvas() {
@@ -123,10 +126,10 @@ void YuiEditorScreen::drawCanvas() {
             RGBColor fg = theme.itemFg;
             std::string glyph = " ";
             if (ax >= 0 && ax < working.getWidth() && ay >= 0 && ay < working.getHeight()) {
-                const auto& cell = working.getCell(ax, ay);
+                const auto cell = working.compositeCell(ax, ay);
                 glyph = cell.character.empty() ? " " : cell.character;
                 fg = cell.fg;
-                bg = cell.bg;
+                bg = (cell.bgA == 0) ? theme.panel : cell.bg;
                 if (hoverValid && ax == hoverX && ay == hoverY) {
                     fg = TuiUtils::blendColor(fg, {255,255,255}, 0.2);
                     bg = TuiUtils::blendColor(bg, {255,255,255}, 0.2);
@@ -189,7 +192,7 @@ void YuiEditorScreen::drawPropertyPanel() {
     surface.fillRect(x + 1, y + 1, w - 2, 1, theme.title, theme.background, " ");
     surface.drawText(x + 2, y + 1, "Properties", theme.title, theme.background);
 
-    const auto& cell = hasStaged ? stagedCell : working.getCell(selX, selY);
+    const auto& cell = hasStaged ? stagedCell : working.getActiveCell(selX, selY);
     int line = y + 3;
     surface.drawText(x + 2, line++, "Pos: (" + std::to_string(selX) + "," + std::to_string(selY) + ")", theme.itemFg, theme.panel);
     surface.drawText(x + 2, line, "Glyph:", theme.itemFg, theme.panel);
@@ -325,7 +328,7 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
                     selX = ax;
                     selY = ay;
                     hasSelection = true;
-                    originalCell = working.getCell(selX, selY);
+                    originalCell = working.getActiveCell(selX, selY);
                     stagedCell = originalCell;
                     hasStaged = true;
                 }
@@ -365,27 +368,27 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
                 if (openGlyphDialog(glyph, glyph)) {
                     stagedCell.character = glyph.empty() ? " " : glyph;
                     hasStaged = true;
-                    working.setCell(selX, selY, stagedCell);
+                    working.setActiveCell(selX, selY, stagedCell);
                 }
             } else if (ev.button == 0 && ev.pressed && my == lineFg) {
                 RGBColor newColor = stagedCell.fg;
                 if (openColorPicker(newColor, newColor)) {
                     stagedCell.fg = newColor;
                     hasStaged = true;
-                    working.setCell(selX, selY, stagedCell);
+                    working.setActiveCell(selX, selY, stagedCell);
                 }
             } else if (ev.button == 0 && ev.pressed && my == lineBg) {
                 RGBColor newColor = stagedCell.bg;
                 if (openColorPicker(newColor, newColor)) {
                     stagedCell.bg = newColor;
                     hasStaged = true;
-                    working.setCell(selX, selY, stagedCell);
+                    working.setActiveCell(selX, selY, stagedCell);
                 }
             } else if (ev.button == 0 && ev.pressed && my == btnY) {
                 if (mx >= okX && mx < okX + static_cast<int>(okLabel.size())) {
                     // Confirm
                     if (hasStaged) {
-                        working.setCell(selX, selY, stagedCell);
+                        working.setActiveCell(selX, selY, stagedCell);
                         originalCell = stagedCell;
                     }
                     hasSelection = false;
@@ -393,7 +396,7 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
                 } else if (mx >= cancelX && mx < cancelX + static_cast<int>(cancelLabel.size())) {
                     // Cancel -> revert staged and working to original
                     stagedCell = originalCell;
-                    working.setCell(selX, selY, originalCell);
+                    working.setActiveCell(selX, selY, originalCell);
                     hasSelection = false;
                     hasStaged = false;
                 }
@@ -493,7 +496,7 @@ void YuiEditorScreen::handleKey(const InputEvent& ev, bool& running) {
             selY = std::clamp(selY, 0, working.getHeight() - 1);
             
             // Update staged cell
-            originalCell = working.getCell(selX, selY);
+            originalCell = working.getActiveCell(selX, selY);
             stagedCell = originalCell;
             hasStaged = true;
 

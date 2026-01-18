@@ -7,6 +7,7 @@
 #include "../Controllers/InputController.h"
 #include "../ImgAssetsInfrastructure/AssetManager.h"
 #include "../ImgAssetsInfrastructure/ImageAsset.h"
+#include "../ImgAssetsInfrastructure/YuiLayer.h"
 #include <string>
 #include <memory>
 
@@ -15,7 +16,7 @@ namespace UI {
 
 class YuiEditorScreen {
 public:
-    YuiEditorScreen(AssetManager& manager, std::string assetName, ImageAsset asset);
+    YuiEditorScreen(AssetManager& manager, std::string assetName, YuiLayeredImage asset);
     void show();
 
 private:
@@ -23,7 +24,7 @@ private:
 
     AssetManager& manager;
     std::string assetName;
-    ImageAsset working;
+    YuiLayeredImage working;
     TuiSurface surface;
     TuiPainter painter;
     TuiTheme theme;

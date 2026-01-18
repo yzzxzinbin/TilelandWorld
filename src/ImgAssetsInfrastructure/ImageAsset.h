@@ -13,6 +13,8 @@ namespace TilelandWorld {
         std::string character; // UTF-8 character (e.g., "▄")
         RGBColor fg;
         RGBColor bg;
+        uint8_t fgA{255};
+        uint8_t bgA{255};
     };
 
     class ImageAsset {

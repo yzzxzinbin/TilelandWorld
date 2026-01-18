@@ -1,6 +1,7 @@
 #include "AssetManager.h"
 #include "ImageLoader.h"
 #include "ImageConverter.h"
+#include "YuiLayer.h"
 #include <filesystem>
 #include <algorithm>
 #include <system_error>
@@ -161,6 +162,11 @@ namespace TilelandWorld {
         return asset.save(outPath.string());
     }
 
+    bool AssetManager::saveLayeredAsset(const YuiLayeredImage& asset, const std::string& assetName) {
+        fs::path outPath = fs::path(rootDir) / (assetName + ".tlimg");
+        return asset.save(outPath.string());
+    }
+
     bool AssetManager::deleteAsset(const std::string& assetName) {
         fs::path p = fs::path(rootDir) / (assetName + ".tlimg");
         bool removed = false;
@@ -206,6 +212,11 @@ namespace TilelandWorld {
     ImageAsset AssetManager::loadAsset(const std::string& assetName) const {
         fs::path p = fs::path(rootDir) / (assetName + ".tlimg");
         return ImageAsset::load(p.string());
+    }
+
+    YuiLayeredImage AssetManager::loadLayeredAsset(const std::string& assetName) const {
+        fs::path p = fs::path(rootDir) / (assetName + ".tlimg");
+        return YuiLayeredImage::load(p.string());
     }
 
 }

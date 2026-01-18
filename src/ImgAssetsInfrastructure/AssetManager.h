@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include "ImageAsset.h"
+#include "YuiLayer.h"
 
 namespace TilelandWorld {
 
@@ -46,6 +47,10 @@ namespace TilelandWorld {
 
         // Load an asset by name
         ImageAsset loadAsset(const std::string& assetName) const;
+
+        // Layer-aware asset APIs (TLIMG v2)
+        bool saveLayeredAsset(const YuiLayeredImage& asset, const std::string& assetName);
+        YuiLayeredImage loadLayeredAsset(const std::string& assetName) const;
 
         const std::string& getRootDir() const { return rootDir; }
 
