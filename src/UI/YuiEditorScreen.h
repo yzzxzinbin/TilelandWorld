@@ -60,23 +60,35 @@ private:
     bool hoverConfirm{false};
     bool hoverCancel{false};
 
+    // Layers panel
+    bool showLayers{false};
+    int layerPanelW{28};
+    int layerPanelX{0};
+    bool hoverLayerUp{false};
+    bool hoverLayerDown{false};
+    bool dragLayerOpacity{false};
+
     // Layout cache
     int canvasX{0};
     int canvasY{0};
     int canvasW{0};
     int canvasH{0};
     int propPanelW{0};
+    int propPanelX{0};
+    int rightPanelGap{0};
 
     void renderFrame();
     void drawToolbar();
     void drawCanvas();
     void drawScrollbars();
     void drawPropertyPanel();
+    void drawLayerPanel();
+    bool handleLayerPanelMouse(const InputEvent& ev);
     void handleMouse(const InputEvent& ev, bool& running);
     void handleKey(const InputEvent& ev, bool& running);
     void clampScroll();
     bool isInsideCanvas(int x, int y) const;
-    bool openColorPicker(RGBColor initial, RGBColor& outColor);
+    bool openColorPicker(RGBColor initial, uint8_t initialA, RGBColor& outColor, uint8_t& outA);
     bool openGlyphDialog(const std::string& initial, std::string& outGlyph);
 };
 

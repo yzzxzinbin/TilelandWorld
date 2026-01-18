@@ -74,10 +74,23 @@ void YuiEditorScreen::renderFrame() {
     drawToolbar();
 
     propPanelW = hasSelection ? 28 : 0;
+    layerPanelW = showLayers ? 28 : 0;
+    int rightPanels = 0;
+    if (propPanelW > 0) rightPanels += propPanelW;
+    if (layerPanelW > 0) rightPanels += layerPanelW;
+    if (propPanelW > 0 && layerPanelW > 0) rightPanels += 1; // gap
+
     canvasX = 2;
     canvasY = 4;
-    canvasW = std::max(10, surface.getWidth() - canvasX - 2 - propPanelW);
+    canvasW = std::max(10, surface.getWidth() - canvasX - 2 - rightPanels);
     canvasH = std::max(6, surface.getHeight() - canvasY - 2);
+
+    if (layerPanelW > 0) {
+        layerPanelX = surface.getWidth() - layerPanelW - 2;
+    }
+    if (propPanelW > 0) {
+        propPanelX = (layerPanelW > 0) ? (layerPanelX - 1 - propPanelW) : (surface.getWidth() - propPanelW - 2);
+    }
 
     surface.fillRect(canvasX, canvasY, canvasW, canvasH, theme.itemFg, theme.panel, " ");
     surface.drawFrame(canvasX, canvasY, canvasW, canvasH, kFrame, theme.itemFg, theme.panel);
@@ -86,6 +99,9 @@ void YuiEditorScreen::renderFrame() {
     drawScrollbars();
     if (hasSelection) {
         drawPropertyPanel();
+    }
+    if (showLayers) {
+        drawLayerPanel();
     }
 
     surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), 
@@ -99,6 +115,7 @@ void YuiEditorScreen::drawToolbar() {
     int y = kToolbarY;
     std::string hand = activeTool == Tool::Hand ? "[ Hand ]" : "  Hand  ";
     std::string prop = activeTool == Tool::Property ? "[ Property ]" : "  Property  ";
+    std::string layers = showLayers ? "[ Layers ]" : "  Layers  ";
     int x = 2;
     auto drawBtn = [&](const std::string& label, bool active) {
         RGBColor bg = active ? darken(theme.accent, 0.6) : theme.accent;
@@ -108,6 +125,7 @@ void YuiEditorScreen::drawToolbar() {
     };
     drawBtn(hand, activeTool == Tool::Hand);
     drawBtn(prop, activeTool == Tool::Property);
+    drawBtn(layers, showLayers);
 }
 
 void YuiEditorScreen::drawCanvas() {
@@ -183,7 +201,7 @@ void YuiEditorScreen::drawScrollbars() {
 }
 
 void YuiEditorScreen::drawPropertyPanel() {
-    int x = surface.getWidth() - propPanelW - 2;
+    int x = propPanelX;
     int y = canvasY;
     int w = propPanelW;
     int h = canvasH;
@@ -200,10 +218,12 @@ void YuiEditorScreen::drawPropertyPanel() {
     std::ostringstream fgss;
     fgss << "FG: " << (int)cell.fg.r << "," << (int)cell.fg.g << "," << (int)cell.fg.b;
     surface.drawText(x + 2, line++, fgss.str(), theme.itemFg, theme.panel);
+    surface.drawText(x + 2, line++, "FG A: " + std::to_string((int)cell.fgA), theme.itemFg, theme.panel);
     std::ostringstream bgss;
     bgss << "BG: " << (int)cell.bg.r << "," << (int)cell.bg.g << "," << (int)cell.bg.b;
     surface.drawText(x + 2, line++, bgss.str(), theme.itemFg, theme.panel);
-    surface.drawText(x + 2, line++, "Click FG/BG to edit (HSV)", theme.hintFg, theme.panel);
+    surface.drawText(x + 2, line++, "BG A: " + std::to_string((int)cell.bgA), theme.itemFg, theme.panel);
+    surface.drawText(x + 2, line++, "Click FG/BG to edit RGBA", theme.hintFg, theme.panel);
     surface.drawText(x + 2, line++, "Click glyph to change", theme.hintFg, theme.panel);
 
     // Buttons
@@ -228,6 +248,125 @@ void YuiEditorScreen::drawPropertyPanel() {
     paintBtn(cancelX, cancelLabel, hoverCancel);
 }
 
+void YuiEditorScreen::drawLayerPanel() {
+    int x = layerPanelX;
+    int y = canvasY;
+    int w = layerPanelW;
+    int h = canvasH;
+    surface.fillRect(x, y, w, h, theme.itemFg, theme.panel, " ");
+    surface.drawFrame(x, y, w, h, kFrame, theme.itemFg, theme.panel);
+    surface.fillRect(x + 1, y + 1, w - 2, 1, theme.title, theme.background, " ");
+    surface.drawText(x + 2, y + 1, "Layers", theme.title, theme.background);
+
+    int upX = x + w - 4;
+    int downX = x + w - 2;
+    RGBColor upFg = hoverLayerUp ? theme.focusFg : theme.title;
+    RGBColor upBg = hoverLayerUp ? theme.focusBg : theme.background;
+    RGBColor downFg = hoverLayerDown ? theme.focusFg : theme.title;
+    RGBColor downBg = hoverLayerDown ? theme.focusBg : theme.background;
+    surface.drawText(upX, y + 1, "↿", upFg, upBg);
+    surface.drawText(downX, y + 1, "⇂", downFg, downBg);
+
+    int listStart = y + 3;
+    int listRows = std::max(0, h - 6);
+    int layerCount = static_cast<int>(working.getLayerCount());
+    for (int row = 0; row < listRows && row < layerCount; ++row) {
+        int layerIndex = layerCount - 1 - row;
+        const auto& layer = working.getLayer(static_cast<size_t>(layerIndex));
+        bool active = (layerIndex == working.getActiveLayerIndex());
+        RGBColor bg = active ? theme.focusBg : theme.panel;
+        RGBColor fg = active ? theme.focusFg : theme.itemFg;
+        surface.fillRect(x + 1, listStart + row, w - 2, 1, fg, bg, " ");
+        std::string vis = layer.isVisible() ? "[V]" : "[ ]";
+        surface.drawText(x + 2, listStart + row, vis, fg, bg);
+        std::string name = TuiUtils::trimToUtf8VisualWidth(layer.getName(), static_cast<size_t>(std::max(0, w - 8)));
+        surface.drawText(x + 6, listStart + row, name, fg, bg);
+    }
+
+    const auto& activeLayer = working.activeLayerRef();
+    int infoY = y + h - 3;
+    int barY = y + h - 2;
+    int opacityPct = static_cast<int>(std::round(activeLayer.getOpacity() * 100.0));
+    surface.drawText(x + 2, infoY, "Opacity: " + std::to_string(opacityPct) + "%", theme.itemFg, theme.panel);
+
+    int barX = x + 2;
+    int barW = std::max(1, w - 4);
+    int filled = static_cast<int>(std::round(activeLayer.getOpacity() * (barW - 1)));
+    filled = std::clamp(filled, 0, std::max(0, barW - 1));
+    surface.fillRect(barX, barY, barW, 1, theme.itemFg, theme.panel, " ");
+    if (barW > 0) {
+        surface.fillRect(barX, barY, filled + 1, 1, theme.focusFg, theme.focusBg, " ");
+    }
+}
+
+bool YuiEditorScreen::handleLayerPanelMouse(const InputEvent& ev) {
+    if (!showLayers) return false;
+    int x = layerPanelX;
+    int y = canvasY;
+    int w = layerPanelW;
+    int h = canvasH;
+
+    if (ev.button == 0 && !ev.pressed && !ev.move) {
+        dragLayerOpacity = false;
+    }
+
+    if (ev.x < x || ev.x >= x + w || ev.y < y || ev.y >= y + h) {
+        return false;
+    }
+
+    int titleY = y + 1;
+    int upX = x + w - 4;
+    int downX = x + w - 2;
+
+    if (ev.move) {
+        hoverLayerUp = (ev.y == titleY && ev.x == upX);
+        hoverLayerDown = (ev.y == titleY && ev.x == downX);
+    }
+
+    if (ev.button == 0 && ev.pressed && ev.y == titleY) {
+        int idx = working.getActiveLayerIndex();
+        int count = static_cast<int>(working.getLayerCount());
+        if (ev.x == upX && idx < count - 1) {
+            working.moveLayer(idx, idx + 1);
+        } else if (ev.x == downX && idx > 0) {
+            working.moveLayer(idx, idx - 1);
+        }
+        return true;
+    }
+
+    int listStart = y + 3;
+    int listRows = std::max(0, h - 6);
+    int layerCount = static_cast<int>(working.getLayerCount());
+    if (ev.y >= listStart && ev.y < listStart + listRows) {
+        int row = ev.y - listStart;
+        if (row < layerCount) {
+            int layerIndex = layerCount - 1 - row;
+            if (ev.button == 0 && ev.pressed) {
+                if (ev.x >= x + 2 && ev.x < x + 5) {
+                    auto& layer = working.getLayer(static_cast<size_t>(layerIndex));
+                    layer.setVisible(!layer.isVisible());
+                } else {
+                    working.setActiveLayerIndex(layerIndex);
+                }
+            }
+            return true;
+        }
+    }
+
+    int barY = y + h - 2;
+    int barX = x + 2;
+    int barW = std::max(1, w - 4);
+    if ((ev.button == 0 && ev.pressed && ev.y == barY) || (ev.move && dragLayerOpacity)) {
+        double t = (barW > 1) ? (static_cast<double>(ev.x - barX) / (barW - 1)) : 0.0;
+        t = std::clamp(t, 0.0, 1.0);
+        working.activeLayerRef().setOpacity(t);
+        dragLayerOpacity = true;
+        return true;
+    }
+
+    return true;
+}
+
 void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     int mx = ev.x;
     int my = ev.y;
@@ -235,16 +374,22 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     hoverVThumb = false;
     hoverConfirm = false;
     hoverCancel = false;
+    hoverLayerUp = false;
+    hoverLayerDown = false;
     // Toolbar button hit-test
     if (my == kToolbarY) {
         int x = 2;
         std::string handLabel = activeTool == Tool::Hand ? "[ Hand ]" : "  Hand  ";
         std::string propLabel = activeTool == Tool::Property ? "[ Property ]" : "  Property  ";
+        std::string layersLabel = showLayers ? "[ Layers ]" : "  Layers  ";
         int handStart = x;
         int handEnd = handStart + static_cast<int>(handLabel.size());
         x = handEnd + 2;
         int propStart = x;
         int propEnd = propStart + static_cast<int>(propLabel.size());
+        x = propEnd + 2;
+        int layersStart = x;
+        int layersEnd = layersStart + static_cast<int>(layersLabel.size());
 
         if (ev.button == 0 && ev.pressed) {
             if (mx >= handStart && mx < handEnd) {
@@ -253,10 +398,17 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
             } else if (mx >= propStart && mx < propEnd) {
                 activeTool = Tool::Property;
                 dragging = false;
+            } else if (mx >= layersStart && mx < layersEnd) {
+                showLayers = !showLayers;
+                dragging = false;
             }
         }
         // Do not treat toolbar clicks as canvas interactions
         if (ev.button == 0 && ev.pressed) return;
+    }
+
+    if (handleLayerPanelMouse(ev)) {
+        return;
     }
     if (isInsideCanvas(mx, my)) {
         int localX = mx - (canvasX + 1);
@@ -346,12 +498,12 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
 
     if (hasSelection) {
         // check property panel interactions
-        int px = surface.getWidth() - propPanelW - 2;
+        int px = propPanelX;
         int py = canvasY;
         if (mx >= px && mx < px + propPanelW && my >= py && my < py + canvasH) {
             int lineGlyph = py + 4;
             int lineFg = lineGlyph + 1;
-            int lineBg = lineFg + 1;
+            int lineBg = lineFg + 2;
             int btnY = py + canvasH - 2;
             std::string okLabel = "[Confirm]";
             std::string cancelLabel = "[Cancel]";
@@ -372,15 +524,19 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
                 }
             } else if (ev.button == 0 && ev.pressed && my == lineFg) {
                 RGBColor newColor = stagedCell.fg;
-                if (openColorPicker(newColor, newColor)) {
+                uint8_t newAlpha = stagedCell.fgA;
+                if (openColorPicker(newColor, newAlpha, newColor, newAlpha)) {
                     stagedCell.fg = newColor;
+                    stagedCell.fgA = newAlpha;
                     hasStaged = true;
                     working.setActiveCell(selX, selY, stagedCell);
                 }
             } else if (ev.button == 0 && ev.pressed && my == lineBg) {
                 RGBColor newColor = stagedCell.bg;
-                if (openColorPicker(newColor, newColor)) {
+                uint8_t newAlpha = stagedCell.bgA;
+                if (openColorPicker(newColor, newAlpha, newColor, newAlpha)) {
                     stagedCell.bg = newColor;
+                    stagedCell.bgA = newAlpha;
                     hasStaged = true;
                     working.setActiveCell(selX, selY, stagedCell);
                 }
@@ -535,19 +691,20 @@ bool YuiEditorScreen::isInsideCanvas(int x, int y) const {
     return x >= canvasX + 1 && x < canvasX + canvasW - 1 && y >= canvasY + 1 && y < canvasY + canvasH - 1;
 }
 
-bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
+bool YuiEditorScreen::openColorPicker(RGBColor initial, uint8_t initialA, RGBColor& outColor, uint8_t& outA) {
     double h=0, s=0, v=0;
     TuiUtils::rgbToHsv(initial, h, s, v);
+    uint8_t currentA = initialA;
     bool running = true;
     bool accepted = false;
     const int svW = 64;
     const int svH = 28;
-    const int boxW = svW + 16 + 3;
+    const int boxW = svW + 16 + 6;
     const int boxH = svH + 7;
     int dx = (surface.getWidth() - boxW) / 2;
     int dy = (surface.getHeight() - boxH) / 2;
 
-    enum class ColorDragMode { None, Window, SV, Hue, Red, Green, Blue };
+    enum class ColorDragMode { None, Window, SV, Hue, Red, Green, Blue, Alpha };
     ColorDragMode dragMode = ColorDragMode::None;
 
     auto clampDialog = [&]() {
@@ -616,6 +773,7 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
         int rX = hueX + hueW + 1;
         int gX = rX + 3;
         int bX = gX + 3;
+        int aX = bX + 3;
 
         auto drawComponentBar = [&](int x, uint8_t val, RGBColor fg, RGBColor bg) {
             double totalLevel = (val / 255.0) * (svH * 8.0);
@@ -638,6 +796,7 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
         drawComponentBar(rX, currentRGB.r, {255, 60, 60}, {60, 0, 0});
         drawComponentBar(gX, currentRGB.g, {60, 255, 60}, {0, 60, 0});
         drawComponentBar(bX, currentRGB.b, {60, 60, 255}, {0, 0, 60});
+        drawComponentBar(aX, currentA, {220, 220, 220}, {40, 40, 40});
 
         RGBColor preview = currentRGB;
         int previewY = dy + svH + 4;
@@ -650,7 +809,8 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
         RGBColor textColor = (preview.r * 299 + preview.g * 587 + preview.b * 114 > 128000) 
                              ? RGBColor{0, 0, 0} : RGBColor{255, 255, 255};
         std::ostringstream infoss;
-        infoss << " RGB: " << (int)preview.r << "," << (int)preview.g << "," << (int)preview.b
+         infoss << " RGB: " << (int)preview.r << "," << (int)preview.g << "," << (int)preview.b
+             << " A: " << (int)currentA
                << "  HSV: " << (int)std::round(h) << "° " 
                << (int)std::round(s * 100) << "% " 
                << (int)std::round(v * 100) << "%";
@@ -686,6 +846,8 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
                             dragMode = ColorDragMode::Green;
                         } else if (ev.x >= bX && ev.x < bX + 2 && ev.y >= svY && ev.y < svY + svH) {
                             dragMode = ColorDragMode::Blue;
+                        } else if (ev.x >= aX && ev.x < aX + 2 && ev.y >= svY && ev.y < svY + svH) {
+                            dragMode = ColorDragMode::Alpha;
                         }
                     } else if (!ev.move) {
                         dragMode = ColorDragMode::None;
@@ -710,6 +872,9 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
                 v = 1.0 - std::clamp(preciseY - svY, 0.0, static_cast<double>(svH) - 1.0) / std::max(1, svH - 1);
             } else if (dragMode == ColorDragMode::Hue) {
                 h = 360.0 * std::clamp(preciseY - svY, 0.0, static_cast<double>(svH) - 1.0) / std::max(1, svH - 1);
+            } else if (dragMode == ColorDragMode::Alpha) {
+                double factor = 1.0 - std::clamp(preciseY - svY, 0.0, static_cast<double>(svH)) / static_cast<double>(svH);
+                currentA = static_cast<uint8_t>(std::clamp(factor * 255.0, 0.0, 255.0));
             } else {
                 // RGB Adjust - Use continuous range for better precision with 8-level blocks
                 double factor = 1.0 - std::clamp(preciseY - svY, 0.0, static_cast<double>(svH)) / static_cast<double>(svH);
@@ -728,6 +893,7 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
     }
     if (accepted) {
         outColor = TuiUtils::hsvToRgb(h, s, v);
+        outA = currentA;
     }
     return accepted;
 }
