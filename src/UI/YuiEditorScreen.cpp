@@ -539,7 +539,7 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
     bool accepted = false;
     const int svW = 64;
     const int svH = 28;
-    const int boxW = svW + 16 + 4;
+    const int boxW = svW + 16 + 3;
     const int boxH = svH + 7;
     int dx = (surface.getWidth() - boxW) / 2;
     int dy = (surface.getHeight() - boxH) / 2;
@@ -573,6 +573,12 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
         surface.fillRect(dx + 1, dy + 1, boxW - 2, 1, theme.title, theme.background, " ");
         surface.drawText(dx + 2, dy + 1, "HSV Picker", theme.title, theme.background);
 
+        // Cancel button in title bar
+        bool isHoverCancel = (preciseY >= dy + 1 && preciseY < dy + 2 && preciseX >= dx + boxW - 10 && preciseX < dx + boxW - 2);
+        RGBColor cancelFg = isHoverCancel ? RGBColor{255, 255, 255} : theme.title;
+        RGBColor cancelBg = isHoverCancel ? RGBColor{200, 50, 50} : theme.background;
+        surface.drawText(dx + boxW - 10, dy + 1, "[CANCEL]", cancelFg, cancelBg);
+
         int svX = dx + 2;
         int svY = dy + 3;
         // Draw SV plane for current hue
@@ -586,8 +592,8 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
         }
 
         // Marker on SV plane
-        int markX = svX + static_cast<int>(std::round(s * (svW - 1)));
-        int markY = svY + static_cast<int>(std::round((1.0 - v) * (svH - 1)));
+        int markX = svX + static_cast<int>(s * (svW - 1));
+        int markY = svY + static_cast<int>((1.0 - v) * (svH - 1));
         surface.drawText(markX, markY, "+", {0,0,0}, {255,255,255});
 
         // Hue bar
@@ -598,7 +604,7 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
             RGBColor c = TuiUtils::hsvToRgb(hh, 1.0, 1.0);
             surface.fillRect(hueX, svY + py, hueW, 1, c, c, " ");
         }
-        int hueMarkY = svY + static_cast<int>(std::round(h / 360.0 * (svH - 1)));
+        int hueMarkY = svY + static_cast<int>(h / 360.0 * (svH - 1));
         RGBColor curHueColor = TuiUtils::hsvToRgb(h, 1.0, 1.0);
         surface.drawText(hueX, hueMarkY, " << ", {255,255,255}, curHueColor);
 
@@ -660,7 +666,10 @@ bool YuiEditorScreen::openColorPicker(RGBColor initial, RGBColor& outColor) {
                 if (ev.button == 0) {
                     if (ev.pressed) {
                         bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + boxW - 1);
-                        if (onTitle) {
+                        if (ev.y == dy + 1 && ev.x >= dx + boxW - 10 && ev.x < dx + boxW - 2) {
+                            running = false; // Clicked Cancel
+                            break;
+                        } else if (onTitle) {
                             dragMode = ColorDragMode::Window;
                             dragStartX = ev.x; dragStartY = ev.y;
                             dragOriginX = dx; dragOriginY = dy;

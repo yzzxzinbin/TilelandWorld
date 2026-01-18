@@ -243,8 +243,8 @@ namespace TilelandWorld {
         if (keyDown('D')) viewX++;
 
         // 使用左右箭头快速切换楼层
-        if (keyDown(VK_LEFT)) currentZ--;
-        if (keyDown(VK_RIGHT)) currentZ++;
+        // if (keyDown(VK_LEFT)) currentZ--;
+        // if (keyDown(VK_RIGHT)) currentZ++;
 
         if (keyDown('Q') || keyDown(VK_ESCAPE)) running = false;
     }
