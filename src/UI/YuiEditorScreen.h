@@ -9,6 +9,7 @@
 #include "../ImgAssetsInfrastructure/ImageAsset.h"
 #include "../ImgAssetsInfrastructure/YuiLayer.h"
 #include "ContextMenu.h"
+#include "TextField.h"
 #include <string>
 #include <memory>
 
@@ -70,6 +71,9 @@ private:
     bool hoverLayerAdd{false};
     bool hoverLayerImport{false};
     bool dragLayerOpacity{false};
+    double pendingOpacity{1.0};
+    TextFieldState opacityInputState;
+    std::string opacityText;
 
     // Context menu
     bool showLayerMenu{false};

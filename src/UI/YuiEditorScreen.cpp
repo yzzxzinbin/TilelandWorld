@@ -30,6 +30,8 @@ namespace UI {
 
 YuiEditorScreen::YuiEditorScreen(AssetManager& manager_, std::string assetName_, YuiLayeredImage asset_)
     : manager(manager_), assetName(std::move(assetName_)), working(std::move(asset_)), surface(100, 40) {
+    pendingOpacity = working.getLayer(working.getActiveLayerIndex()).getOpacity();
+    opacityText = std::to_string(static_cast<int>(pendingOpacity * 100));
 }
 
 void YuiEditorScreen::show() {
@@ -48,25 +50,57 @@ void YuiEditorScreen::show() {
         for (const auto& ev : events) {
             if (showLayerMenu) {
                 bool close = false;
-                std::vector<std::string> opts = {"Move Up", "Move Down", "Rename", "Delete"};
+                std::vector<std::string> opts;
+                if (layerMenuIdx == -1) {
+                    opts = {"New Layer", "Import Layer"};
+                } else {
+                    opts = {"Move Up", "Move Down", "Rename", "Delete"};
+                }
                 int sel = ContextMenu::handleInput(ev, opts, layerMenuState, close);
                 if (sel != -1) {
-                    if (sel == 0) { // Move Up
-                        if (layerMenuIdx < (int)working.getLayerCount() - 1)
-                            working.moveLayer(layerMenuIdx, layerMenuIdx + 1);
-                    } else if (sel == 1) { // Move Down
-                        if (layerMenuIdx > 0)
-                            working.moveLayer(layerMenuIdx, layerMenuIdx - 1);
-                    } else if (sel == 2) { // Rename
-                        std::string newName;
-                        showLayerMenu = false;
-                        if (openRenameDialog(working.getLayer(layerMenuIdx).getName(), newName)) {
-                            working.getLayer(layerMenuIdx).setName(newName);
+                    if (layerMenuIdx == -1) {
+                        if (sel == 0) { // New Layer
+                             int idx = static_cast<int>(working.getLayerCount()) + 1;
+                             YuiLayer layer(working.getWidth(), working.getHeight(), "Layer " + std::to_string(idx));
+                             working.addLayer(layer);
+                        } else if (sel == 1) { // Import Layer
+                             input.stop();
+                             DirectoryBrowserScreen browser(manager.getRootDir(), true, ".tlimg");
+                             auto paths = browser.show();
+                             if (!paths.empty()) {
+                                 for (const auto& path : paths) {
+                                     ImageAsset asset = ImageAsset::load(path);
+                                     YuiLayer layer(working.getWidth(), working.getHeight(), "Imported");
+                                     int maxW = std::min(asset.getWidth(), working.getWidth());
+                                     int maxH = std::min(asset.getHeight(), working.getHeight());
+                                     for (int yy = 0; yy < maxH; ++yy) {
+                                         for (int xx = 0; xx < maxW; ++xx) {
+                                             layer.setCell(xx, yy, asset.getCell(xx, yy));
+                                         }
+                                     }
+                                     working.addLayer(layer);
+                                 }
+                             }
+                             input.start();
                         }
-                    } else if (sel == 3) { // Delete
-                        showLayerMenu = false;
-                        if (working.getLayerCount() > 1) {
-                            working.removeLayer(layerMenuIdx);
+                    } else {
+                        if (sel == 0) { // Move Up
+                            if (layerMenuIdx < (int)working.getLayerCount() - 1)
+                                working.moveLayer(layerMenuIdx, layerMenuIdx + 1);
+                        } else if (sel == 1) { // Move Down
+                            if (layerMenuIdx > 0)
+                                working.moveLayer(layerMenuIdx, layerMenuIdx - 1);
+                        } else if (sel == 2) { // Rename
+                            std::string newName;
+                            showLayerMenu = false;
+                            if (openRenameDialog(working.getLayer(layerMenuIdx).getName(), newName)) {
+                                working.getLayer(layerMenuIdx).setName(newName);
+                            }
+                        } else if (sel == 3) { // Delete
+                            showLayerMenu = false;
+                            if (working.getLayerCount() > 1) {
+                                working.removeLayer(layerMenuIdx);
+                            }
                         }
                     }
                     showLayerMenu = false;
@@ -139,7 +173,13 @@ void YuiEditorScreen::renderFrame() {
     }
 
     if (showLayerMenu) {
-        ContextMenu::render(surface, {"Move Up", "Move Down", "Rename", "Delete"}, layerMenuState);
+        std::vector<std::string> opts;
+        if (layerMenuIdx == -1) {
+            opts = {"New Layer", "Import Layer"};
+        } else {
+            opts = {"Move Up", "Move Down", "Rename", "Delete"};
+        }
+        ContextMenu::render(surface, opts, layerMenuState);
     }
 
     surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), 
@@ -298,15 +338,24 @@ void YuiEditorScreen::drawLayerPanel() {
 
     int upX = x + w - 4;
     int downX = x + w - 2;
-    RGBColor upFg = hoverLayerUp ? theme.focusFg : theme.title;
-    RGBColor upBg = hoverLayerUp ? theme.focusBg : theme.background;
-    RGBColor downFg = hoverLayerDown ? theme.focusFg : theme.title;
-    RGBColor downBg = hoverLayerDown ? theme.focusBg : theme.background;
-    surface.drawText(upX, y + 1, "↿", upFg, upBg);
-    surface.drawText(downX, y + 1, "⇂", downFg, downBg);
 
-    int listStart = y + 3;
-    int listRows = std::max(0, h - 8);
+    int toolbarY = y + 2;
+    surface.fillRect(x + 1, toolbarY, w - 2, 1, theme.itemFg, theme.panel, " ");
+    
+    // Icons row: + (New), ↧ (Import), ↿ (Up), ⇂ (Down)
+    auto drawIcon = [&](int ix, const std::string& icon, bool hot) {
+        RGBColor fg = hot ? theme.focusFg : theme.itemFg;
+        RGBColor bg = hot ? theme.focusBg : theme.panel;
+        surface.drawText(ix, toolbarY, icon, fg, bg);
+    };
+
+    drawIcon(x + 2, "＋", hoverLayerAdd);
+    drawIcon(x + 5, "↧", hoverLayerImport);
+    drawIcon(x + w - 6, "↿", hoverLayerUp);
+    drawIcon(x + w - 3, "⇂", hoverLayerDown);
+
+    int listStart = y + 4;
+    int listRows = std::max(0, h - 9);
     int layerCount = static_cast<int>(working.getLayerCount());
     for (int row = 0; row < listRows && row < layerCount; ++row) {
         int layerIndex = layerCount - 1 - row;
@@ -315,37 +364,44 @@ void YuiEditorScreen::drawLayerPanel() {
         RGBColor bg = active ? theme.focusBg : theme.panel;
         RGBColor fg = active ? theme.focusFg : theme.itemFg;
         surface.fillRect(x + 1, listStart + row, w - 2, 1, fg, bg, " ");
-        std::string vis = layer.isVisible() ? "[V]" : "[ ]";
+        std::string vis = layer.isVisible() ? "◎" : "◌";
         surface.drawText(x + 2, listStart + row, vis, fg, bg);
         std::string name = TuiUtils::trimToUtf8VisualWidth(layer.getName(), static_cast<size_t>(std::max(0, w - 8)));
-        surface.drawText(x + 6, listStart + row, name, fg, bg);
+        surface.drawText(x + 5, listStart + row, name, fg, bg);
     }
-
-    int btnY = y + h - 5;
-    std::string addLabel = "[+ New]";
-    std::string importLabel = "[Import]";
-    int addX = x + 2;
-    int importX = x + w - 2 - static_cast<int>(importLabel.size());
-    RGBColor addFg = hoverLayerAdd ? theme.background : theme.itemFg;
-    RGBColor addBg = hoverLayerAdd ? theme.focusBg : theme.panel;
-    RGBColor impFg = hoverLayerImport ? theme.background : theme.itemFg;
-    RGBColor impBg = hoverLayerImport ? theme.focusBg : theme.panel;
-    surface.drawText(addX, btnY, addLabel, addFg, addBg);
-    surface.drawText(importX, btnY, importLabel, impFg, impBg);
 
     const auto& activeLayer = working.activeLayerRef();
     int infoY = y + h - 3;
     int barY = y + h - 2;
-    int opacityPct = static_cast<int>(std::round(activeLayer.getOpacity() * 100.0));
-    surface.drawText(x + 2, infoY, "Opacity: " + std::to_string(opacityPct) + "%", theme.itemFg, theme.panel);
+    
+    // Opacity input
+    surface.drawText(x + 2, infoY, "Opacity:", theme.itemFg, theme.panel);
+    
+    if (!dragLayerOpacity && !opacityInputState.focused) {
+        int pct = static_cast<int>(std::round(activeLayer.getOpacity() * 100.0));
+        opacityText = std::to_string(pct);
+    }
+    
+    TextFieldStyle opStyle;
+    opStyle.width = 6;
+    opStyle.panelBg = theme.background;
+    opStyle.focusBg = theme.focusBg;
+    opStyle.focusFg = theme.focusFg;
+    TextField::render(surface, x + 11, infoY, opacityText, opacityInputState, opStyle);
+    surface.drawText(x + 17, infoY, "%", theme.itemFg, theme.panel);
 
     int barX = x + 2;
     int barW = std::max(1, w - 4);
-    int filled = static_cast<int>(std::round(activeLayer.getOpacity() * (barW - 1)));
-    filled = std::clamp(filled, 0, std::max(0, barW - 1));
-    surface.fillRect(barX, barY, barW, 1, theme.itemFg, theme.panel, " ");
-    if (barW > 0) {
-        surface.fillRect(barX, barY, filled + 1, 1, theme.focusFg, theme.focusBg, " ");
+    double displayOpacity = dragLayerOpacity ? pendingOpacity : activeLayer.getOpacity();
+    int filled = static_cast<int>(std::round(displayOpacity * barW));
+    filled = std::clamp(filled, 0, barW);
+
+    // Track (background) - Using hint gray
+    surface.fillRect(barX, barY, barW, 1, theme.hintFg, darken(theme.hintFg, 0.2), "░");
+    
+    // Thumb/Fill (foreground) - Using accent blue
+    if (filled > 0) {
+        surface.fillRect(barX, barY, filled, 1, {255, 255, 255}, theme.accent, " ");
     }
 }
 
@@ -357,110 +413,144 @@ bool YuiEditorScreen::handleLayerPanelMouse(const InputEvent& ev) {
     int h = canvasH;
 
     if (ev.button == 0 && !ev.pressed && !ev.move) {
-        dragLayerOpacity = false;
+        if (dragLayerOpacity) {
+            working.setLayerOpacity(working.getActiveLayerIndex(), pendingOpacity);
+            dragLayerOpacity = false;
+        }
     }
 
     if (ev.x < x || ev.x >= x + w || ev.y < y || ev.y >= y + h) {
         return false;
     }
 
-    int titleY = y + 1;
-    int upX = x + w - 4;
-    int downX = x + w - 2;
+    int toolbarY = y + 2;
+    int addX = x + 2;
+    int impX = x + 5;
+    int upX = x + w - 6;
+    int downX = x + w - 3;
 
     if (ev.move) {
-        hoverLayerUp = (ev.y == titleY && ev.x == upX);
-        hoverLayerDown = (ev.y == titleY && ev.x == downX);
+        hoverLayerAdd = (ev.y == toolbarY && ev.x >= addX && ev.x < addX + 2);
+        hoverLayerImport = (ev.y == toolbarY && ev.x >= impX && ev.x < impX + 2);
+        hoverLayerUp = (ev.y == toolbarY && ev.x >= upX && ev.x < upX + 2);
+        hoverLayerDown = (ev.y == toolbarY && ev.x >= downX && ev.x < downX + 2);
     }
 
-    if (ev.button == 0 && ev.pressed && ev.y == titleY) {
+    if (ev.button == 0 && ev.pressed && ev.y == toolbarY) {
+        if (ev.x >= addX && ev.x < addX + 2) {
+             int idx = static_cast<int>(working.getLayerCount()) + 1;
+             YuiLayer layer(working.getWidth(), working.getHeight(), "Layer " + std::to_string(idx));
+             working.addLayer(layer);
+             return true;
+        }
+        if (ev.x >= impX && ev.x < impX + 2) {
+             // Import logic (same as before)
+             input.stop();
+             DirectoryBrowserScreen browser(manager.getRootDir(), true, ".tlimg");
+             auto paths = browser.show();
+             if (!paths.empty()) {
+                 for (const auto& path : paths) {
+                     ImageAsset asset = ImageAsset::load(path);
+                     YuiLayer layer(working.getWidth(), working.getHeight(), "Imported");
+                     int maxW = std::min(asset.getWidth(), working.getWidth());
+                     int maxH = std::min(asset.getHeight(), working.getHeight());
+                     for (int yy = 0; yy < maxH; ++yy) {
+                         for (int xx = 0; xx < maxW; ++xx) {
+                             layer.setCell(xx, yy, asset.getCell(xx, yy));
+                         }
+                     }
+                     working.addLayer(layer);
+                 }
+             }
+             input.start();
+             return true;
+        }
+
         int idx = working.getActiveLayerIndex();
         int count = static_cast<int>(working.getLayerCount());
-        if (ev.x == upX && idx < count - 1) {
+        if (ev.x >= upX && ev.x < upX + 2 && idx < count - 1) {
             working.moveLayer(idx, idx + 1);
-        } else if (ev.x == downX && idx > 0) {
+        } else if (ev.x >= downX && ev.x < downX + 2 && idx > 0) {
             working.moveLayer(idx, idx - 1);
         }
         return true;
     }
 
-    int listStart = y + 3;
-    int listRows = std::max(0, h - 8);
+    int listStart = y + 4;
+    int listRows = std::max(0, h - 9);
     int layerCount = static_cast<int>(working.getLayerCount());
+    
+    // Check for context menu on empty space
+    if (ev.button == 2 && ev.pressed) {
+        bool inList = (ev.y >= listStart && ev.y < listStart + listRows);
+        int row = ev.y - listStart;
+        if (inList && row < layerCount) {
+             int layerIndex = layerCount - 1 - row;
+             showLayerMenu = true;
+             layerMenuIdx = layerIndex;
+             layerMenuState.visible = true;
+             layerMenuState.x = ev.x;
+             layerMenuState.y = ev.y;
+             layerMenuState.selectedIndex = 0;
+             layerMenuState.width = ContextMenu::calculateWidth({"Move Up", "Move Down", "Rename", "Delete"});
+        } else {
+             // Clicked on empty space of panel
+             showLayerMenu = true;
+             layerMenuIdx = -1; // special value for panel menu
+             layerMenuState.visible = true;
+             layerMenuState.x = ev.x;
+             layerMenuState.y = ev.y;
+             layerMenuState.selectedIndex = 0;
+             layerMenuState.width = ContextMenu::calculateWidth({"New Layer", "Import Layer"});
+        }
+        return true;
+    }
+
     if (ev.y >= listStart && ev.y < listStart + listRows) {
         int row = ev.y - listStart;
         if (row < layerCount) {
             int layerIndex = layerCount - 1 - row;
-            if (ev.button == 2 && ev.pressed) {
-                showLayerMenu = true;
-                layerMenuIdx = layerIndex;
-                layerMenuState.visible = true;
-                layerMenuState.x = ev.x;
-                layerMenuState.y = ev.y;
-                layerMenuState.selectedIndex = 0;
-                layerMenuState.width = ContextMenu::calculateWidth({"Move Up", "Move Down", "Rename", "Delete"});
-                return true;
-            }
             if (ev.button == 0 && ev.pressed) {
                 if (ev.x >= x + 2 && ev.x < x + 5) {
                     const auto& layer = working.getLayer(static_cast<size_t>(layerIndex));
                     working.setLayerVisible(layerIndex, !layer.isVisible());
                 } else {
                     working.setActiveLayerIndex(layerIndex);
-                }
-            }
-            return true;
-        }
-    }
-
-    int btnY = y + h - 5;
-    std::string addLabel = "[+ New]";
-    std::string importLabel = "[Import]";
-    int addX = x + 2;
-    int importX = x + w - 2 - static_cast<int>(importLabel.size());
-    if (ev.move && ev.y == btnY) {
-        hoverLayerAdd = (ev.x >= addX && ev.x < addX + static_cast<int>(addLabel.size()));
-        hoverLayerImport = (ev.x >= importX && ev.x < importX + static_cast<int>(importLabel.size()));
-    }
-    if (ev.button == 0 && ev.pressed && ev.y == btnY) {
-        if (ev.x >= addX && ev.x < addX + static_cast<int>(addLabel.size())) {
-            int idx = static_cast<int>(working.getLayerCount()) + 1;
-            YuiLayer layer(working.getWidth(), working.getHeight(), "Layer " + std::to_string(idx));
-            working.addLayer(layer);
-            return true;
-        }
-        if (ev.x >= importX && ev.x < importX + static_cast<int>(importLabel.size())) {
-            input.stop();
-            DirectoryBrowserScreen browser(manager.getRootDir(), true, ".tlimg");
-            auto paths = browser.show();
-            if (!paths.empty()) {
-                for (const auto& path : paths) {
-                    ImageAsset asset = ImageAsset::load(path);
-                    YuiLayer layer(working.getWidth(), working.getHeight(), "Imported");
-                    int maxW = std::min(asset.getWidth(), working.getWidth());
-                    int maxH = std::min(asset.getHeight(), working.getHeight());
-                    for (int yy = 0; yy < maxH; ++yy) {
-                        for (int xx = 0; xx < maxW; ++xx) {
-                            layer.setCell(xx, yy, asset.getCell(xx, yy));
-                        }
+                    pendingOpacity = working.getLayer(layerIndex).getOpacity();
+                    if (!opacityInputState.focused) {
+                        opacityText = std::to_string(static_cast<int>(pendingOpacity * 100));
                     }
-                    working.addLayer(layer);
                 }
             }
-            input.start();
             return true;
         }
     }
 
+    int infoY = y + h - 3;
     int barY = y + h - 2;
     int barX = x + 2;
     int barW = std::max(1, w - 4);
+
+    // Opacity TextField interaction (Mouse)
+    TextFieldStyle opStyle;
+    opStyle.width = 6;
+    if (TextField::handleInput(ev, opacityText, opacityInputState, opStyle)) {
+        return true;
+    }
+
     if ((ev.button == 0 && ev.pressed && ev.y == barY) || (ev.move && dragLayerOpacity)) {
         double t = (barW > 1) ? (static_cast<double>(ev.x - barX) / (barW - 1)) : 0.0;
         t = std::clamp(t, 0.0, 1.0);
-        working.setLayerOpacity(working.getActiveLayerIndex(), t);
+        pendingOpacity = t;
         dragLayerOpacity = true;
+        if (!opacityInputState.focused) {
+            opacityText = std::to_string(static_cast<int>(pendingOpacity * 100));
+        }
         return true;
+    }
+
+    if (ev.button == 0 && ev.pressed) {
+        opacityInputState.focused = false;
     }
 
     return true;
@@ -502,6 +592,10 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
             } else if (mx >= layersStart && mx < layersEnd) {
                 showLayers = !showLayers;
                 dragging = false;
+                if (showLayers) {
+                     pendingOpacity = working.getLayer(working.getActiveLayerIndex()).getOpacity();
+                     opacityText = std::to_string(static_cast<int>(pendingOpacity * 100));
+                }
             }
         }
         // Do not treat toolbar clicks as canvas interactions
@@ -722,6 +816,28 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
 }
 
 void YuiEditorScreen::handleKey(const InputEvent& ev, bool& running) {
+    if (opacityInputState.focused) {
+        if (ev.key == InputKey::Enter || ev.key == InputKey::Escape) {
+            opacityInputState.focused = false;
+            try {
+                int val = std::stoi(opacityText);
+                double opacity = std::clamp(val / 100.0, 0.0, 1.0);
+                working.setLayerOpacity(working.getActiveLayerIndex(), opacity);
+                pendingOpacity = opacity;
+            } catch (...) {}
+            return;
+        }
+        TextFieldStyle opStyle;
+        opStyle.charFilter = [](char32_t c) { return c >= '0' && c <= '9'; };
+        TextField::handleInput(ev, opacityText, opacityInputState, opStyle);
+        // Live update pendingOpacity if possible
+        try {
+            int val = std::stoi(opacityText);
+            pendingOpacity = std::clamp(val / 100.0, 0.0, 1.0);
+        } catch (...) {}
+        return;
+    }
+
     if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {
         running = false;
         return;
