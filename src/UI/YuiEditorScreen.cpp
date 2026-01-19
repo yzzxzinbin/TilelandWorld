@@ -54,7 +54,7 @@ void YuiEditorScreen::show() {
                 if (layerMenuIdx == -1) {
                     opts = {"New Layer", "Import Layer"};
                 } else {
-                    opts = {"Move Up", "Move Down", "Rename", "Delete"};
+                    opts = {"Move Up", "Move Down", "Top", "Bottom", "Rename", "Delete"};
                 }
                 int sel = ContextMenu::handleInput(ev, opts, layerMenuState, close);
                 if (sel != -1) {
@@ -69,16 +69,22 @@ void YuiEditorScreen::show() {
                              auto paths = browser.show();
                              if (!paths.empty()) {
                                  for (const auto& path : paths) {
-                                     ImageAsset asset = ImageAsset::load(path);
-                                     YuiLayer layer(working.getWidth(), working.getHeight(), "Imported");
-                                     int maxW = std::min(asset.getWidth(), working.getWidth());
-                                     int maxH = std::min(asset.getHeight(), working.getHeight());
-                                     for (int yy = 0; yy < maxH; ++yy) {
-                                         for (int xx = 0; xx < maxW; ++xx) {
-                                             layer.setCell(xx, yy, asset.getCell(xx, yy));
+                                     YuiLayeredImage imported = YuiLayeredImage::load(path);
+                                     for (size_t i = 0; i < imported.getLayerCount(); ++i) {
+                                         const auto& srcLayer = imported.getLayer(i);
+                                         YuiLayer newLayer(working.getWidth(), working.getHeight(), srcLayer.getName());
+                                         newLayer.setOpacity(srcLayer.getOpacity());
+                                         newLayer.setVisible(srcLayer.isVisible());
+
+                                         int maxW = std::min(srcLayer.getWidth(), working.getWidth());
+                                         int maxH = std::min(srcLayer.getHeight(), working.getHeight());
+                                         for (int yy = 0; yy < maxH; ++yy) {
+                                             for (int xx = 0; xx < maxW; ++xx) {
+                                                 newLayer.setCell(xx, yy, srcLayer.getCell(xx, yy));
+                                             }
                                          }
+                                         working.addLayer(newLayer);
                                      }
-                                     working.addLayer(layer);
                                  }
                              }
                              input.start();
@@ -90,13 +96,17 @@ void YuiEditorScreen::show() {
                         } else if (sel == 1) { // Move Down
                             if (layerMenuIdx > 0)
                                 working.moveLayer(layerMenuIdx, layerMenuIdx - 1);
-                        } else if (sel == 2) { // Rename
+                        } else if (sel == 2) { // Top
+                            working.moveLayer(layerMenuIdx, (int)working.getLayerCount() - 1);
+                        } else if (sel == 3) { // Bottom
+                            working.moveLayer(layerMenuIdx, 0);
+                        } else if (sel == 4) { // Rename
                             std::string newName;
                             showLayerMenu = false;
                             if (openRenameDialog(working.getLayer(layerMenuIdx).getName(), newName)) {
                                 working.getLayer(layerMenuIdx).setName(newName);
                             }
-                        } else if (sel == 3) { // Delete
+                        } else if (sel == 5) { // Delete
                             showLayerMenu = false;
                             if (working.getLayerCount() > 1) {
                                 working.removeLayer(layerMenuIdx);
@@ -181,7 +191,7 @@ void YuiEditorScreen::renderFrame() {
         if (layerMenuIdx == -1) {
             opts = {"New Layer", "Import Layer"};
         } else {
-            opts = {"Move Up", "Move Down", "Rename", "Delete"};
+            opts = {"Move Up", "Move Down", "Top", "Bottom", "Rename", "Delete"};
         }
         ContextMenu::render(surface, opts, layerMenuState);
     }
@@ -448,22 +458,28 @@ bool YuiEditorScreen::handleLayerPanelMouse(const InputEvent& ev) {
              return true;
         }
         if (ev.x >= impX && ev.x < impX + 2) {
-             // Import logic (same as before)
+             // Import logic
              input.stop();
              DirectoryBrowserScreen browser(manager.getRootDir(), true, ".tlimg");
              auto paths = browser.show();
              if (!paths.empty()) {
                  for (const auto& path : paths) {
-                     ImageAsset asset = ImageAsset::load(path);
-                     YuiLayer layer(working.getWidth(), working.getHeight(), "Imported");
-                     int maxW = std::min(asset.getWidth(), working.getWidth());
-                     int maxH = std::min(asset.getHeight(), working.getHeight());
-                     for (int yy = 0; yy < maxH; ++yy) {
-                         for (int xx = 0; xx < maxW; ++xx) {
-                             layer.setCell(xx, yy, asset.getCell(xx, yy));
+                     YuiLayeredImage imported = YuiLayeredImage::load(path);
+                     for (size_t i = 0; i < imported.getLayerCount(); ++i) {
+                         const auto& srcLayer = imported.getLayer(i);
+                         YuiLayer newLayer(working.getWidth(), working.getHeight(), srcLayer.getName());
+                         newLayer.setOpacity(srcLayer.getOpacity());
+                         newLayer.setVisible(srcLayer.isVisible());
+
+                         int maxW = std::min(srcLayer.getWidth(), working.getWidth());
+                         int maxH = std::min(srcLayer.getHeight(), working.getHeight());
+                         for (int yy = 0; yy < maxH; ++yy) {
+                             for (int xx = 0; xx < maxW; ++xx) {
+                                 newLayer.setCell(xx, yy, srcLayer.getCell(xx, yy));
+                             }
                          }
+                         working.addLayer(newLayer);
                      }
-                     working.addLayer(layer);
                  }
              }
              input.start();
@@ -496,7 +512,7 @@ bool YuiEditorScreen::handleLayerPanelMouse(const InputEvent& ev) {
              layerMenuState.x = ev.x;
              layerMenuState.y = ev.y;
              layerMenuState.selectedIndex = 0;
-             layerMenuState.width = ContextMenu::calculateWidth({"Move Up", "Move Down", "Rename", "Delete"});
+             layerMenuState.width = ContextMenu::calculateWidth({"Move Up", "Move Down", "Top", "Bottom", "Rename", "Delete"});
         } else {
              // Clicked on empty space of panel
              showLayerMenu = true;
