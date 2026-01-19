@@ -13,20 +13,26 @@ namespace {
     constexpr int kMaskSize = 8; // 8x8 subcells
     struct GlyphMask {
         std::array<uint8_t, kMaskSize * kMaskSize> data{};
+        uint64_t bitmask{0};
         int onCount{0};
     };
 
     GlyphMask makeMask(const std::function<bool(int,int)>& test) {
         GlyphMask mask;
         int count = 0;
+        uint64_t bm = 0;
         for (int y = 0; y < kMaskSize; ++y) {
             for (int x = 0; x < kMaskSize; ++x) {
                 bool on = test(x, y);
                 mask.data[y * kMaskSize + x] = on ? 1 : 0;
-                if (on) ++count;
+                if (on) {
+                    ++count;
+                    bm |= (1ULL << (y * kMaskSize + x));
+                }
             }
         }
         mask.onCount = count;
+        mask.bitmask = bm;
         return mask;
     }
 
@@ -345,81 +351,196 @@ RGBColor YuiLayeredImage::blendToBackground(const RGBColor& bg, const RGBColor& 
 }
 
 ImageCell YuiLayeredImage::compositeCellInternal(int x, int y) const {
-    int grid = 1;
-    for (const auto& layer : layers) {
-        if (!layer.isVisible()) continue;
-        const auto& cell = layer.getCell(x, y);
-        int need = requiredGridForGlyph(cell.character);
-        if (need > grid) grid = need;
-        if (grid == 8) break;
-    }
+        // 1. 获取所有可见且有贡献的图格，并寻找最顶层的完全不透明实心层
+        struct ActiveLayer {
+            const YuiLayer* layer;
+            ImageCell cell;
+            int grid;
+        };
+        std::vector<ActiveLayer> active;
+        active.reserve(layers.size());
 
-    std::array<RGBColor, kMaskSize * kMaskSize> subColors;
-    std::array<uint8_t, kMaskSize * kMaskSize> subAlpha{};
-    for (int i = 0; i < kMaskSize * kMaskSize; ++i) {
-        subColors[i] = {0, 0, 0};
-        subAlpha[i] = 0;
-    }
+        for (int i = 0; i < (int)layers.size(); ++i) {
+            if (!layers[i].isVisible()) continue;
+            const auto& cell = layers[i].getCell(x, y);
+            
+            // 跳过完全透明的层（如果是组合层且alpha都是0）
+            if (layers[i].getOpacity() <= 0.001) continue;
 
-    int count = grid * grid;
+            // 检查是否是完全不透明的实心块（█ 或 空格，且覆盖所有内容）
+            bool isSolid = false;
+            double layerOp = layers[i].getOpacity();
+            if (layerOp >= 0.999) {
+                if (cell.character == "█") {
+                    if (cell.fgA == 255) isSolid = true;
+                } else if (cell.character == " " || cell.character.empty()) {
+                    if (cell.bgA == 255) isSolid = true;
+                } else if (cell.fgA == 255 && cell.bgA == 255 && 
+                           cell.fg.r == cell.bg.r && cell.fg.g == cell.bg.g && cell.fg.b == cell.bg.b) {
+                    isSolid = true;
+                }
+            }
 
-    for (const auto& layer : layers) {
-        if (!layer.isVisible()) continue;
-        const auto& cell = layer.getCell(x, y);
-        const std::string& glyph = cell.character.empty() ? " " : cell.character;
-        double layerOpacity = layer.getOpacity();
-        uint8_t fgA = static_cast<uint8_t>(std::clamp(static_cast<int>(cell.fgA * layerOpacity + 0.5), 0, 255));
-        uint8_t bgA = static_cast<uint8_t>(std::clamp(static_cast<int>(cell.bgA * layerOpacity + 0.5), 0, 255));
-
-        for (int i = 0; i < count; ++i) {
-            int gx = i % grid;
-            int gy = i / grid;
-            const bool on = glyphOnGrid(glyph, gx, gy, grid);
-            const RGBColor srcColor = on ? cell.fg : cell.bg;
-            const uint8_t srcAlpha = on ? fgA : bgA;
-            blendOver(subColors[i], subAlpha[i], srcColor, srcAlpha);
-        }
-    }
-
-    const auto& candidates = candidateGlyphs(grid);
-    double bestScore = std::numeric_limits<double>::max();
-    std::string bestGlyph = " ";
-    RGBColor bestFg{0, 0, 0};
-    RGBColor bestBg{0, 0, 0};
-
-    for (const auto& glyph : candidates) {
-        RGBColor fg = avgColor(subColors, subAlpha, true, glyph, grid);
-        RGBColor bg = avgColor(subColors, subAlpha, false, glyph, grid);
-
-        double score = 0.0;
-        for (int i = 0; i < count; ++i) {
-            int gx = i % grid;
-            int gy = i / grid;
-            const RGBColor& target = subColors[i];
-            const RGBColor& ref = glyphOnGrid(glyph, gx, gy, grid) ? fg : bg;
-            double w = subAlpha[i] / 255.0;
-            double dr = static_cast<double>(target.r) - ref.r;
-            double dg = static_cast<double>(target.g) - ref.g;
-            double db = static_cast<double>(target.b) - ref.b;
-            score += (dr * dr + dg * dg + db * db) * w;
+            if (isSolid) {
+                active.clear();
+            }
+            active.push_back(ActiveLayer{ &layers[i], cell, requiredGridForGlyph(cell.character) });
         }
 
-        if (score < bestScore) {
-            bestScore = score;
-            bestGlyph = glyph;
-            bestFg = fg;
-            bestBg = bg;
-        }
-    }
+        if (active.empty()) return YuiLayer::emptyCell;
 
-    ImageCell out;
-    out.character = bestGlyph;
-    out.fg = bestFg;
-    out.bg = bestBg;
-    out.fgA = 255;
-    out.bgA = 255;
-    return out;
-}
+        // 2. 快速路径优化
+        
+        // 只有一层：直接返回
+        if (active.size() == 1) {
+            ImageCell res = active[0].cell;
+            double op = active[0].layer->getOpacity();
+            if (op < 0.999) {
+                res.fgA = (uint8_t)(res.fgA * op);
+                res.bgA = (uint8_t)(res.bgA * op);
+            }
+            return res;
+        }
+
+        // 两层优化：底层实心 + 顶层有形状且背景透明且不透明度为1
+        if (active.size() == 2) {
+            const auto& base = active[0];
+            const auto& top = active[1];
+            // 判定基础层是否实心
+            bool baseIsSolid = false;
+            RGBColor baseColor = {0,0,0};
+            if (base.layer->getOpacity() >= 0.999) {
+                if (base.cell.character == "█" && base.cell.fgA == 255) {
+                    baseIsSolid = true; baseColor = base.cell.fg;
+                } else if ((base.cell.character == " " || base.cell.character.empty()) && base.cell.bgA == 255) {
+                    baseIsSolid = true; baseColor = base.cell.bg;
+                }
+            }
+
+            if (baseIsSolid && top.layer->getOpacity() >= 0.999 && top.cell.bgA == 0) {
+                ImageCell res = top.cell;
+                res.bg = baseColor;
+                res.bgA = 255;
+                return res;
+            }
+        }
+
+        // 全部都是实心块的叠加 (Grid 1)
+        bool allGrid1 = true;
+        for (const auto& a : active) {
+            if (a.grid > 1) { allGrid1 = false; break; }
+        }
+        if (allGrid1) {
+            RGBColor finalFg = {0,0,0}, finalBg = {0,0,0};
+            uint8_t fgA = 0, bgA = 0;
+            for (const auto& a : active) {
+                double op = a.layer->getOpacity();
+                uint8_t curFgA = (uint8_t)(a.cell.fgA * op + 0.5);
+                uint8_t curBgA = (uint8_t)(a.cell.bgA * op + 0.5);
+                // 这里简化的 Grid 1 混合：假设字符为 █
+                if (a.cell.character == " ") {
+                    blendOver(finalFg, fgA, a.cell.bg, curBgA);
+                    blendOver(finalBg, bgA, a.cell.bg, curBgA);
+                } else {
+                    blendOver(finalFg, fgA, a.cell.fg, curFgA);
+                    blendOver(finalBg, bgA, a.cell.bg, curBgA);
+                }
+            }
+            ImageCell res;
+            res.character = "█";
+            res.fg = finalFg; res.bg = finalBg;
+            res.fgA = 255; res.bgA = 255;
+            return res;
+        }
+
+        // 3. 降级到网格采样 (Slow Path)
+        int grid = 1;
+        for (const auto& a : active) if (a.grid > grid) grid = a.grid;
+
+        std::array<RGBColor, kMaskSize * kMaskSize> subColors;
+        std::array<uint8_t, kMaskSize * kMaskSize> subAlpha{};
+        subColors.fill({0,0,0});
+        subAlpha.fill(0);
+
+        int count = grid * grid;
+        for (const auto& a : active) {
+            const std::string& glyph = a.cell.character.empty() ? " " : a.cell.character;
+            double layerOpacity = a.layer->getOpacity();
+            uint8_t fgA = (uint8_t)(a.cell.fgA * layerOpacity + 0.5);
+            uint8_t bgA = (uint8_t)(a.cell.bgA * layerOpacity + 0.5);
+
+            // 提前获取 Grid 8 的 bitmask 以便加速（如果是 Grid 8）
+            if (grid == 8) {
+                uint64_t mask = getMaskForGlyph(glyph).bitmask;
+                for (int i = 0; i < 64; ++i) {
+                    bool on = (mask >> i) & 1;
+                    blendOver(subColors[i], subAlpha[i], on ? a.cell.fg : a.cell.bg, on ? fgA : bgA);
+                }
+            } else {
+                for (int i = 0; i < count; ++i) {
+                    int gx = i % grid; int gy = i / grid;
+                    bool on = glyphOnGrid(glyph, gx, gy, grid);
+                    blendOver(subColors[i], subAlpha[i], on ? a.cell.fg : a.cell.bg, on ? fgA : bgA);
+                }
+            }
+        }
+
+        const auto& candidates = candidateGlyphs(grid);
+        double bestScore = -1e18; // 注意：我们要最大化精度的增益项
+        ImageCell best;
+        best.character = " ";
+        best.fgA = 255; best.bgA = 255;
+
+        for (const auto& cand : candidates) {
+            double sumR_on = 0, sumG_on = 0, sumB_on = 0, sumW_on = 0;
+            double sumR_off = 0, sumG_off = 0, sumB_off = 0, sumW_off = 0;
+
+            if (grid == 8) {
+                uint64_t mask = getMaskForGlyph(cand).bitmask;
+                for (int i = 0; i < 64; ++i) {
+                    double w = subAlpha[i] / 255.0;
+                    if (w <= 0.001) continue;
+                    if ((mask >> i) & 1) {
+                        sumR_on += subColors[i].r * w; sumG_on += subColors[i].g * w; sumB_on += subColors[i].b * w; sumW_on += w;
+                    } else {
+                        sumR_off += subColors[i].r * w; sumG_off += subColors[i].g * w; sumB_off += subColors[i].b * w; sumW_off += w;
+                    }
+                }
+            } else {
+                for (int i = 0; i < count; ++i) {
+                    int gx = i % grid; int gy = i / grid;
+                    double w = subAlpha[i] / 255.0;
+                    if (w <= 0.001) continue;
+                    if (glyphOnGrid(cand, gx, gy, grid)) {
+                        sumR_on += subColors[i].r * w; sumG_on += subColors[i].g * w; sumB_on += subColors[i].b * w; sumW_on += w;
+                    } else {
+                        sumR_off += subColors[i].r * w; sumG_off += subColors[i].g * w; sumB_off += subColors[i].b * w; sumW_off += w;
+                    }
+                }
+            }
+
+            // 计算增益 (Sum1^2 / Sw)
+            double currentGain = 0;
+            if (sumW_on > 0.001) currentGain += (sumR_on*sumR_on + sumG_on*sumG_on + sumB_on*sumB_on) / sumW_on;
+            if (sumW_off > 0.001) currentGain += (sumR_off*sumR_off + sumG_off*sumG_off + sumB_off*sumB_off) / sumW_off;
+
+            if (currentGain > bestScore) {
+                bestScore = currentGain;
+                best.character = cand;
+                if (sumW_on > 0.001) {
+                    best.fg = {(uint8_t)(sumR_on/sumW_on + 0.5), (uint8_t)(sumG_on/sumW_on + 0.5), (uint8_t)(sumB_on/sumW_on + 0.5)};
+                } else {
+                    best.fg = {0,0,0};
+                }
+                if (sumW_off > 0.001) {
+                    best.bg = {(uint8_t)(sumR_off/sumW_off + 0.5), (uint8_t)(sumG_off/sumW_off + 0.5), (uint8_t)(sumB_off/sumW_off + 0.5)};
+                } else {
+                    best.bg = {0,0,0};
+                }
+            }
+        }
+        return best;
+    }
 
 ImageCell YuiLayeredImage::compositeCell(int x, int y) const {
     ensureCompositeCache();

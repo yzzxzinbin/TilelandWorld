@@ -34,6 +34,8 @@ public:
     void resize(int newWidth, int newHeight);
     void clear(const ImageCell& fillCell = ImageCell{});
 
+    static ImageCell emptyCell;
+
 private:
     std::string name{"Layer"};
     int width{0};
@@ -41,7 +43,6 @@ private:
     std::vector<ImageCell> cells;
     double opacity{1.0};
     bool visible{true};
-    static ImageCell emptyCell;
 };
 
 struct YuiImageMetadata {
