@@ -110,7 +110,7 @@ private:
     // Dialogs
     void showImportDialog(const std::vector<std::string>& filePaths);
     // Show detailed info about current image asset
-    void showInfoDialog(const std::string& assetName, const ImageAsset& asset);
+    void showInfoDialog(const std::string& assetName, const YuiImageMetadata& meta);
 };
 
 }

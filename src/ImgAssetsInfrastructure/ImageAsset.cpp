@@ -67,7 +67,7 @@ namespace TilelandWorld {
 
         uint16_t ver;
         in.read(reinterpret_cast<char*>(&ver), sizeof(ver));
-        if (ver == 2) {
+        if (ver == 2 || ver == 3) {
             in.close();
             YuiLayeredImage layered = YuiLayeredImage::load(path);
             return layered.flatten();

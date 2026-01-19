@@ -47,9 +47,11 @@ namespace TilelandWorld {
 
         // Load an asset by name
         ImageAsset loadAsset(const std::string& assetName) const;
+        ImageAsset loadPreview(const std::string& assetName) const;
+        YuiImageMetadata loadImageMetadata(const std::string& assetName) const;
 
-        // Layer-aware asset APIs (TLIMG v2)
-        bool saveLayeredAsset(const YuiLayeredImage& asset, const std::string& assetName);
+        // Layer-aware asset APIs (TLIMG v2/v3/v4)
+        bool saveLayeredAsset(const YuiLayeredImage& asset, const std::string& assetName, int px = -1, int py = -1, int pw = -1, int ph = -1);
         YuiLayeredImage loadLayeredAsset(const std::string& assetName) const;
 
         const std::string& getRootDir() const { return rootDir; }

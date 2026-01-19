@@ -431,6 +431,208 @@ ImageAsset YuiLayeredImage::flatten() const {
     return compositeCache;
 }
 
+YuiImageMetadata YuiLayeredImage::calculateMetadata() const {
+    YuiImageMetadata stats;
+    stats.width = width;
+    stats.height = height;
+    
+    ImageAsset flat = flatten();
+    std::unordered_map<std::string, int> glyphUsage;
+    std::unordered_set<uint32_t> colorSet;
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const auto& cell = flat.getCell(x, y);
+            if (!cell.character.empty()) {
+                glyphUsage[cell.character]++;
+            } else {
+                glyphUsage[" "]++;
+            }
+            uint32_t fgC = (static_cast<uint32_t>(cell.fg.r) << 16) | (static_cast<uint32_t>(cell.fg.g) << 8) | static_cast<uint32_t>(cell.fg.b);
+            uint32_t bgC = (static_cast<uint32_t>(cell.bg.r) << 16) | (static_cast<uint32_t>(cell.bg.g) << 8) | static_cast<uint32_t>(cell.bg.b);
+            colorSet.insert(fgC);
+            colorSet.insert(bgC);
+        }
+    }
+
+    stats.uniqueGlyphs = static_cast<int>(glyphUsage.size());
+    stats.uniqueColors = static_cast<int>(colorSet.size());
+
+    std::vector<std::pair<std::string, int>> glyphs(glyphUsage.begin(), glyphUsage.end());
+    std::sort(glyphs.begin(), glyphs.end(), [](const auto& a, const auto& b) {
+        if (a.second != b.second) return a.second > b.second;
+        return a.first < b.first;
+    });
+
+    for (size_t i = 0; i < std::min<size_t>(glyphs.size(), 10); ++i) {
+        stats.topGlyphs.push_back(glyphs[i]);
+    }
+
+    return stats;
+}
+
+ImageAsset YuiLayeredImage::loadPreview(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return ImageAsset(0, 0);
+
+    char magic[5] = {0};
+    in.read(magic, 5);
+    if (std::string(magic, 5) != "TLIMG") return ImageAsset(0, 0);
+
+    uint16_t ver = 0;
+    in.read(reinterpret_cast<char*>(&ver), sizeof(ver));
+
+    if (ver == 4) {
+        in.seekg(8, std::ios::cur); // skip statsOffset
+        uint64_t previewOffset = 0;
+        in.read(reinterpret_cast<char*>(&previewOffset), 8);
+        if (previewOffset == 0) return ImageAsset(0, 0);
+
+        in.seekg(previewOffset);
+        uint16_t pw = 0, ph = 0;
+        in.read(reinterpret_cast<char*>(&pw), 2);
+        in.read(reinterpret_cast<char*>(&ph), 2);
+        if (pw == 0 || ph == 0) return ImageAsset(0, 0);
+
+        ImageAsset preview(pw, ph);
+        for (int i = 0; i < pw * ph; ++i) {
+            uint8_t len = 0;
+            in.read(reinterpret_cast<char*>(&len), 1);
+            std::string ch;
+            if (len > 0) {
+                ch.resize(len);
+                in.read(&ch[0], len);
+            }
+            RGBColor fg{}, bg{};
+            uint8_t fgA = 255, bgA = 255;
+            in.read(reinterpret_cast<char*>(&fg.r), 1);
+            in.read(reinterpret_cast<char*>(&fg.g), 1);
+            in.read(reinterpret_cast<char*>(&fg.b), 1);
+            in.read(reinterpret_cast<char*>(&fgA), 1);
+            in.read(reinterpret_cast<char*>(&bg.r), 1);
+            in.read(reinterpret_cast<char*>(&bg.g), 1);
+            in.read(reinterpret_cast<char*>(&bg.b), 1);
+            in.read(reinterpret_cast<char*>(&bgA), 1);
+
+            ImageCell cell{ch, fg, bg, fgA, bgA};
+            preview.setCell(i % pw, i / pw, cell);
+        }
+        return preview;
+    }
+
+    if (ver < 3) return ImageAsset(0, 0);
+
+    uint16_t w = 0, h = 0;
+    in.read(reinterpret_cast<char*>(&w), sizeof(w));
+    in.read(reinterpret_cast<char*>(&h), sizeof(h));
+
+    uint16_t layerCount = 0;
+    in.read(reinterpret_cast<char*>(&layerCount), sizeof(layerCount));
+
+    // Skip layers
+    for (uint16_t li = 0; li < layerCount; ++li) {
+        uint16_t layerIndex = 0;
+        in.read(reinterpret_cast<char*>(&layerIndex), sizeof(layerIndex));
+        uint8_t nameLen = 0;
+        in.read(reinterpret_cast<char*>(&nameLen), sizeof(nameLen));
+        if (nameLen > 0) in.seekg(nameLen, std::ios::cur);
+        in.seekg(2, std::ios::cur); // opacity, visible
+
+        for (int i = 0; i < w * h; ++i) {
+            uint8_t len = 0;
+            in.read(reinterpret_cast<char*>(&len), sizeof(len));
+            if (len > 0) in.seekg(len, std::ios::cur);
+            in.seekg(8, std::ios::cur); // fgRGBA, bgRGBA
+        }
+    }
+
+    // Read Preview block
+    uint16_t previewIdx = 0;
+    in.read(reinterpret_cast<char*>(&previewIdx), sizeof(previewIdx));
+    uint8_t pNameLen = 0;
+    in.read(reinterpret_cast<char*>(&pNameLen), sizeof(pNameLen));
+    if (pNameLen > 0) in.seekg(pNameLen, std::ios::cur);
+    in.seekg(2, std::ios::cur); // opacity, visible
+
+    uint16_t pw = 0, ph = 0;
+    in.read(reinterpret_cast<char*>(&pw), sizeof(pw));
+    in.read(reinterpret_cast<char*>(&ph), sizeof(ph));
+
+    if (pw == 0 || ph == 0) return ImageAsset(0, 0);
+
+    ImageAsset preview(pw, ph);
+    for (int i = 0; i < pw * ph; ++i) {
+        uint8_t len = 0;
+        in.read(reinterpret_cast<char*>(&len), sizeof(len));
+        std::string ch;
+        if (len > 0) {
+            ch.resize(len);
+            in.read(&ch[0], len);
+        }
+        RGBColor fg{}, bg{};
+        uint8_t fgA = 255, bgA = 255;
+        in.read(reinterpret_cast<char*>(&fg.r), 1);
+        in.read(reinterpret_cast<char*>(&fg.g), 1);
+        in.read(reinterpret_cast<char*>(&fg.b), 1);
+        in.read(reinterpret_cast<char*>(&fgA), 1);
+        in.read(reinterpret_cast<char*>(&bg.r), 1);
+        in.read(reinterpret_cast<char*>(&bg.g), 1);
+        in.read(reinterpret_cast<char*>(&bg.b), 1);
+        in.read(reinterpret_cast<char*>(&bgA), 1);
+
+        ImageCell cell;
+        cell.character = ch;
+        cell.fg = fg; cell.bg = bg;
+        cell.fgA = fgA; cell.bgA = bgA;
+        preview.setCell(i % pw, i / pw, cell);
+    }
+
+    return preview;
+}
+
+YuiImageMetadata YuiLayeredImage::loadImageMetadata(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+
+    char magic[5] = {0};
+    in.read(magic, 5);
+    if (std::string(magic, 5) != "TLIMG") return {};
+
+    uint16_t ver = 0;
+    in.read(reinterpret_cast<char*>(&ver), sizeof(ver));
+
+    if (ver == 4) {
+        uint64_t statsOffset = 0;
+        in.read(reinterpret_cast<char*>(&statsOffset), 8);
+        if (statsOffset == 0) return {};
+
+        in.seekg(statsOffset);
+        YuiImageMetadata stats;
+        in.read(reinterpret_cast<char*>(&stats.width), 4);
+        in.read(reinterpret_cast<char*>(&stats.height), 4);
+        in.read(reinterpret_cast<char*>(&stats.uniqueGlyphs), 4);
+        in.read(reinterpret_cast<char*>(&stats.uniqueColors), 4);
+        uint16_t topCount = 0;
+        in.read(reinterpret_cast<char*>(&topCount), 2);
+        for (int i = 0; i < topCount; ++i) {
+            uint8_t gl = 0;
+            in.read(reinterpret_cast<char*>(&gl), 1);
+            std::string s(gl, ' ');
+            if (gl > 0) in.read(&s[0], gl);
+            int count = 0;
+            in.read(reinterpret_cast<char*>(&count), 4);
+            stats.topGlyphs.push_back({s, count});
+        }
+        return stats;
+    }
+
+    // Older versions: Load and calculate
+    in.close();
+    YuiLayeredImage layered = load(path);
+    if (layered.getWidth() == 0) return {};
+    return layered.calculateMetadata();
+}
+
 YuiLayeredImage YuiLayeredImage::fromImageAsset(const ImageAsset& asset) {
     YuiLayeredImage layered(asset.getWidth(), asset.getHeight());
     YuiLayer& layer = layered.activeLayerRef();
@@ -452,6 +654,73 @@ YuiLayeredImage YuiLayeredImage::load(const std::string& path) {
 
     uint16_t ver = 0;
     in.read(reinterpret_cast<char*>(&ver), sizeof(ver));
+
+    if (ver == 4) {
+        uint64_t statsOffset = 0, previewOffset = 0;
+        uint16_t layerCount = 0;
+        in.read(reinterpret_cast<char*>(&statsOffset), 8);
+        in.read(reinterpret_cast<char*>(&previewOffset), 8);
+        in.read(reinterpret_cast<char*>(&layerCount), 2);
+
+        std::vector<uint64_t> metaOffsets(layerCount);
+        std::vector<uint64_t> dataOffsets(layerCount);
+        for (int i = 0; i < layerCount; ++i) in.read(reinterpret_cast<char*>(&metaOffsets[i]), 8);
+        for (int i = 0; i < layerCount; ++i) in.read(reinterpret_cast<char*>(&dataOffsets[i]), 8);
+
+        // Read Width/Height from stats block
+        in.seekg(statsOffset);
+        int w = 0, h = 0;
+        in.read(reinterpret_cast<char*>(&w), 4);
+        in.read(reinterpret_cast<char*>(&h), 4);
+
+        YuiLayeredImage layered(w, h);
+        layered.layers.clear();
+        layered.layers.resize(layerCount);
+
+        for (int i = 0; i < layerCount; ++i) {
+            in.seekg(metaOffsets[i]);
+            uint16_t idx = 0;
+            in.read(reinterpret_cast<char*>(&idx), 2);
+            uint8_t nameLen = 0;
+            in.read(reinterpret_cast<char*>(&nameLen), 1);
+            std::string name(nameLen, ' ');
+            if (nameLen > 0) in.read(&name[0], nameLen);
+            uint8_t opacity = 255, visible = 1;
+            in.read(reinterpret_cast<char*>(&opacity), 1);
+            in.read(reinterpret_cast<char*>(&visible), 1);
+
+            YuiLayer layer(w, h, name);
+            layer.setOpacity(opacity / 255.0);
+            layer.setVisible(visible != 0);
+
+            in.seekg(dataOffsets[i]);
+            for (int cellIdx = 0; cellIdx < w * h; ++cellIdx) {
+                uint8_t len = 0;
+                in.read(reinterpret_cast<char*>(&len), 1);
+                std::string ch;
+                if (len > 0) {
+                    ch.resize(len);
+                    in.read(&ch[0], len);
+                }
+                RGBColor fg{}, bg{};
+                uint8_t fgA = 255, bgA = 255;
+                in.read(reinterpret_cast<char*>(&fg.r), 1);
+                in.read(reinterpret_cast<char*>(&fg.g), 1);
+                in.read(reinterpret_cast<char*>(&fg.b), 1);
+                in.read(reinterpret_cast<char*>(&fgA), 1);
+                in.read(reinterpret_cast<char*>(&bg.r), 1);
+                in.read(reinterpret_cast<char*>(&bg.g), 1);
+                in.read(reinterpret_cast<char*>(&bg.b), 1);
+                in.read(reinterpret_cast<char*>(&bgA), 1);
+
+                ImageCell cell{ch, fg, bg, fgA, bgA};
+                layer.setCell(cellIdx % w, cellIdx / w, cell);
+            }
+            layered.layers[idx < layerCount ? idx : i] = std::move(layer);
+        }
+        layered.setActiveLayerIndex(0);
+        return layered;
+    }
 
     uint16_t w = 0, h = 0;
     in.read(reinterpret_cast<char*>(&w), sizeof(w));
@@ -485,7 +754,7 @@ YuiLayeredImage YuiLayeredImage::load(const std::string& path) {
         return fromImageAsset(flat);
     }
 
-    if (ver != 2) return YuiLayeredImage(0, 0);
+    if (ver != 2 && ver != 3) return YuiLayeredImage(0, 0);
 
     uint16_t layerCount = 0;
     in.read(reinterpret_cast<char*>(&layerCount), sizeof(layerCount));
@@ -549,49 +818,98 @@ YuiLayeredImage YuiLayeredImage::load(const std::string& path) {
     return layered;
 }
 
-bool YuiLayeredImage::save(const std::string& path) const {
+bool YuiLayeredImage::save(const std::string& path, int previewX, int previewY, int previewW, int previewH) const {
     std::ofstream out(path, std::ios::binary);
     if (!out) return false;
 
     const char magic[] = "TLIMG";
     out.write(magic, 5);
-
-    uint16_t ver = 2;
+    uint16_t ver = 4;
     out.write(reinterpret_cast<const char*>(&ver), sizeof(ver));
 
-    uint16_t w = static_cast<uint16_t>(width);
-    uint16_t h = static_cast<uint16_t>(height);
-    out.write(reinterpret_cast<const char*>(&w), sizeof(w));
-    out.write(reinterpret_cast<const char*>(&h), sizeof(h));
-
     uint16_t layerCount = static_cast<uint16_t>(layers.size());
-    out.write(reinterpret_cast<const char*>(&layerCount), sizeof(layerCount));
+    std::streampos indexPos = out.tellp();
+    
+    // Reserve index space (8 + 8 + 2 + 8 * layerCount + 8 * layerCount)
+    uint64_t dummy = 0;
+    out.write(reinterpret_cast<const char*>(&dummy), 8); // imageStatsOffset
+    out.write(reinterpret_cast<const char*>(&dummy), 8); // previewOffset
+    out.write(reinterpret_cast<const char*>(&layerCount), 2);
+    for (int i = 0; i < layerCount * 2; ++i) {
+        out.write(reinterpret_cast<const char*>(&dummy), 8);
+    }
 
-    for (uint16_t i = 0; i < layerCount; ++i) {
-        const auto& layer = layers[i];
-        uint16_t layerIndex = i;
-        out.write(reinterpret_cast<const char*>(&layerIndex), sizeof(layerIndex));
+    uint64_t imageStatsOffset = static_cast<uint64_t>(out.tellp());
+    YuiImageMetadata stats = calculateMetadata();
+    out.write(reinterpret_cast<const char*>(&stats.width), 4);
+    out.write(reinterpret_cast<const char*>(&stats.height), 4);
+    out.write(reinterpret_cast<const char*>(&stats.uniqueGlyphs), 4);
+    out.write(reinterpret_cast<const char*>(&stats.uniqueColors), 4);
+    uint16_t topCount = static_cast<uint16_t>(stats.topGlyphs.size());
+    out.write(reinterpret_cast<const char*>(&topCount), 2);
+    for (const auto& tg : stats.topGlyphs) {
+        uint8_t gl = static_cast<uint8_t>(std::min<size_t>(tg.first.size(), 255));
+        out.write(reinterpret_cast<const char*>(&gl), 1);
+        out.write(tg.first.data(), gl);
+        out.write(reinterpret_cast<const char*>(&tg.second), 4);
+    }
 
-        uint8_t nameLen = static_cast<uint8_t>(std::min<size_t>(layer.getName().size(), 255));
-        out.write(reinterpret_cast<const char*>(&nameLen), sizeof(nameLen));
-        if (nameLen > 0) {
-            out.write(layer.getName().data(), nameLen);
-        }
+    uint64_t previewOffset = 0;
+    if (previewW > 0 && previewH > 0) {
+        previewOffset = static_cast<uint64_t>(out.tellp());
+        int actualPX = std::clamp(previewX, 0, width - 1);
+        int actualPY = std::clamp(previewY, 0, height - 1);
+        int actualPW = std::min(previewW, width - actualPX);
+        int actualPH = std::min(previewH, height - actualPY);
 
-        uint8_t opacityByte = static_cast<uint8_t>(std::clamp(static_cast<int>(layer.getOpacity() * 255.0 + 0.5), 0, 255));
-        uint8_t visibleByte = layer.isVisible() ? 1 : 0;
-        out.write(reinterpret_cast<const char*>(&opacityByte), sizeof(opacityByte));
-        out.write(reinterpret_cast<const char*>(&visibleByte), sizeof(visibleByte));
+        uint16_t pw = static_cast<uint16_t>(actualPW);
+        uint16_t ph = static_cast<uint16_t>(actualPH);
+        out.write(reinterpret_cast<const char*>(&pw), 2);
+        out.write(reinterpret_cast<const char*>(&ph), 2);
 
-        for (int cellIndex = 0; cellIndex < width * height; ++cellIndex) {
-            int x = cellIndex % width;
-            int y = cellIndex / width;
-            const auto& cell = layer.getCell(x, y);
-            uint8_t len = static_cast<uint8_t>(std::min<size_t>(cell.character.size(), 255));
-            out.write(reinterpret_cast<const char*>(&len), sizeof(len));
-            if (len > 0) {
-                out.write(cell.character.data(), len);
+        ensureCompositeCache();
+        for (int py = 0; py < actualPH; ++py) {
+            for (int px = 0; px < actualPW; ++px) {
+                const auto& cell = compositeCache.getCell(actualPX + px, actualPY + py);
+                uint8_t len = static_cast<uint8_t>(std::min<size_t>(cell.character.size(), 255));
+                out.write(reinterpret_cast<const char*>(&len), 1);
+                if (len > 0) out.write(cell.character.data(), len);
+                out.write(reinterpret_cast<const char*>(&cell.fg.r), 1);
+                out.write(reinterpret_cast<const char*>(&cell.fg.g), 1);
+                out.write(reinterpret_cast<const char*>(&cell.fg.b), 1);
+                out.write(reinterpret_cast<const char*>(&cell.fgA), 1);
+                out.write(reinterpret_cast<const char*>(&cell.bg.r), 1);
+                out.write(reinterpret_cast<const char*>(&cell.bg.g), 1);
+                out.write(reinterpret_cast<const char*>(&cell.bg.b), 1);
+                out.write(reinterpret_cast<const char*>(&cell.bgA), 1);
             }
+        }
+    }
+
+    std::vector<uint64_t> layerMetaOffsets(layerCount);
+    for (uint16_t i = 0; i < layerCount; ++i) {
+        layerMetaOffsets[i] = static_cast<uint64_t>(out.tellp());
+        const auto& layer = layers[i];
+        uint16_t lIdx = i;
+        out.write(reinterpret_cast<const char*>(&lIdx), 2);
+        uint8_t nameLen = static_cast<uint8_t>(std::min<size_t>(layer.getName().size(), 255));
+        out.write(reinterpret_cast<const char*>(&nameLen), 1);
+        out.write(layer.getName().data(), nameLen);
+        uint8_t opacity = static_cast<uint8_t>(layer.getOpacity() * 255.0 + 0.5);
+        uint8_t visible = layer.isVisible() ? 1 : 0;
+        out.write(reinterpret_cast<const char*>(&opacity), 1);
+        out.write(reinterpret_cast<const char*>(&visible), 1);
+    }
+
+    std::vector<uint64_t> layerDataOffsets(layerCount);
+    for (uint16_t i = 0; i < layerCount; ++i) {
+        layerDataOffsets[i] = static_cast<uint64_t>(out.tellp());
+        const auto& layer = layers[i];
+        for (int cellIndex = 0; cellIndex < width * height; ++cellIndex) {
+            const auto& cell = layer.getCell(cellIndex % width, cellIndex / width);
+            uint8_t len = static_cast<uint8_t>(std::min<size_t>(cell.character.size(), 255));
+            out.write(reinterpret_cast<const char*>(&len), 1);
+            if (len > 0) out.write(cell.character.data(), len);
             out.write(reinterpret_cast<const char*>(&cell.fg.r), 1);
             out.write(reinterpret_cast<const char*>(&cell.fg.g), 1);
             out.write(reinterpret_cast<const char*>(&cell.fg.b), 1);
@@ -602,6 +920,14 @@ bool YuiLayeredImage::save(const std::string& path) const {
             out.write(reinterpret_cast<const char*>(&cell.bgA), 1);
         }
     }
+
+    // Write indexes
+    out.seekp(indexPos);
+    out.write(reinterpret_cast<const char*>(&imageStatsOffset), 8);
+    out.write(reinterpret_cast<const char*>(&previewOffset), 8);
+    out.write(reinterpret_cast<const char*>(&layerCount), 2);
+    for (uint64_t off : layerMetaOffsets) out.write(reinterpret_cast<const char*>(&off), 8);
+    for (uint64_t off : layerDataOffsets) out.write(reinterpret_cast<const char*>(&off), 8);
 
     return out.good();
 }

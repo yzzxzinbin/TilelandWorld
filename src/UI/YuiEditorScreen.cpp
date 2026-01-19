@@ -120,7 +120,7 @@ void YuiEditorScreen::show() {
             if (!running) break;
         }
     }
-    manager.saveLayeredAsset(working, assetName);
+    manager.saveLayeredAsset(working, assetName, scrollX, scrollY, std::max(0, canvasW - 2), std::max(0, canvasH - 2));
     painter.reset();
     input.stop();
 }

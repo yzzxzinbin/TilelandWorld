@@ -44,6 +44,14 @@ private:
     static ImageCell emptyCell;
 };
 
+struct YuiImageMetadata {
+    int width{0};
+    int height{0};
+    int uniqueGlyphs{0};
+    int uniqueColors{0};
+    std::vector<std::pair<std::string, int>> topGlyphs;
+};
+
 class YuiLayeredImage {
 public:
     YuiLayeredImage() = default;
@@ -76,10 +84,13 @@ public:
 
     ImageCell compositeCell(int x, int y) const;
     ImageAsset flatten() const;
+    YuiImageMetadata calculateMetadata() const;
 
     static YuiLayeredImage fromImageAsset(const ImageAsset& asset);
     static YuiLayeredImage load(const std::string& path);
-    bool save(const std::string& path) const;
+    static ImageAsset loadPreview(const std::string& path);
+    static YuiImageMetadata loadImageMetadata(const std::string& path);
+    bool save(const std::string& path, int previewX = -1, int previewY = -1, int previewW = -1, int previewH = -1) const;
 
 private:
     int width{0};

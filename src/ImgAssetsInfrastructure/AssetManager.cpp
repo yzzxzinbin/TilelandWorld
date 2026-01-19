@@ -162,9 +162,9 @@ namespace TilelandWorld {
         return asset.save(outPath.string());
     }
 
-    bool AssetManager::saveLayeredAsset(const YuiLayeredImage& asset, const std::string& assetName) {
+    bool AssetManager::saveLayeredAsset(const YuiLayeredImage& asset, const std::string& assetName, int px, int py, int pw, int ph) {
         fs::path outPath = fs::path(rootDir) / (assetName + ".tlimg");
-        return asset.save(outPath.string());
+        return asset.save(outPath.string(), px, py, pw, ph);
     }
 
     bool AssetManager::deleteAsset(const std::string& assetName) {
@@ -212,6 +212,16 @@ namespace TilelandWorld {
     ImageAsset AssetManager::loadAsset(const std::string& assetName) const {
         fs::path p = fs::path(rootDir) / (assetName + ".tlimg");
         return ImageAsset::load(p.string());
+    }
+
+    ImageAsset AssetManager::loadPreview(const std::string& assetName) const {
+        fs::path p = fs::path(rootDir) / (assetName + ".tlimg");
+        return YuiLayeredImage::loadPreview(p.string());
+    }
+
+    YuiImageMetadata AssetManager::loadImageMetadata(const std::string& assetName) const {
+        fs::path p = fs::path(rootDir) / (assetName + ".tlimg");
+        return YuiLayeredImage::loadImageMetadata(p.string());
     }
 
     YuiLayeredImage AssetManager::loadLayeredAsset(const std::string& assetName) const {

@@ -116,20 +116,9 @@ namespace UI {
                             else if (result == 1) renameCurrent();
                             else if (result == 2) deleteCurrentAssetOrFolder();
                             else if (result == 3) {
-                                loadPreview();
                                 std::string assetName = getSelectedAssetName();
-                                ImageAsset copy;
-                                bool ready = false;
-                                {
-                                    std::lock_guard<std::mutex> lock(previewMutex);
-                                    if (previewLoaded && lastPreviewName == assetName) {
-                                        copy = currentPreview;
-                                        ready = true;
-                                    }
-                                }
-                                if (ready) {
-                                    showInfoDialog(assetName, copy);
-                                }
+                                YuiImageMetadata meta = manager.loadImageMetadata(assetName);
+                                showInfoDialog(assetName, meta);
                             } else if (result == 4) {
                                 moveCurrentAsset();
                             } else if (result == 5) {
@@ -249,20 +238,9 @@ namespace UI {
                                     } else if (onRename) {
                                         renameCurrent();
                                     } else if (onInfo) {
-                                        loadPreview();
                                         std::string assetName = getSelectedAssetName();
-                                        ImageAsset copy;
-                                        bool ready = false;
-                                        {
-                                            std::lock_guard<std::mutex> lock(previewMutex);
-                                            if (previewLoaded && lastPreviewName == assetName) {
-                                                copy = currentPreview;
-                                                ready = true;
-                                            }
-                                        }
-                                        if (ready) {
-                                            showInfoDialog(assetName, copy);
-                                        }
+                                        YuiImageMetadata meta = manager.loadImageMetadata(assetName);
+                                        showInfoDialog(assetName, meta);
                                     }
                                 }
                             }
@@ -501,13 +479,18 @@ namespace UI {
 
         taskSystem.submit([this, assetName]() {
             try {
-                ImageAsset loaded = manager.loadAsset(assetName);
+                ImageAsset loaded = manager.loadPreview(assetName);
                 
                 std::lock_guard<std::mutex> lock(previewMutex);
                 if (loadingAssetName == assetName) {
-                    currentPreview = std::move(loaded);
-                    lastPreviewName = assetName;
-                    previewLoaded = true;
+                    if (loaded.getWidth() > 0) {
+                        currentPreview = std::move(loaded);
+                        lastPreviewName = assetName;
+                        previewLoaded = true;
+                    } else {
+                        previewLoaded = false;
+                        lastPreviewName = assetName; // avoid re-loading failed ones
+                    }
                     isLoading = false;
                 }
             } catch (...) {
@@ -1445,7 +1428,7 @@ namespace UI {
         input->stop();
     }
 
-void AssetManagerScreen::showInfoDialog(const std::string& assetName, const ImageAsset& asset) {
+void AssetManagerScreen::showInfoDialog(const std::string& assetName, const YuiImageMetadata& meta) {
     int w = surface.getWidth();
     int h = surface.getHeight();
     std::vector<std::string> lines;
@@ -1457,61 +1440,24 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
     }
     lines.push_back("Resource: " + assetDisp);
 
-    if (asset.getWidth() <= 0 || asset.getHeight() <= 0) {
-        lines.push_back("No image loaded");
+    if (meta.width <= 0 || meta.height <= 0) {
+        lines.push_back("No image metadata available");
     } else {
-        lines.push_back("Width: " + std::to_string(asset.getWidth()));
-        lines.push_back("Height: " + std::to_string(asset.getHeight()));
-        int wcells = asset.getWidth();
-        int hcells = asset.getHeight();
-        std::set<std::string> glyphs;
-        std::set<std::string> fgset;
-        std::set<std::string> bgset;
-        std::map<std::string,int> glyphCount;
-        for (int y = 0; y < hcells; ++y) {
-            for (int x = 0; x < wcells; ++x) {
-                const auto& c = asset.getCell(x, y);
-                glyphs.insert(c.character);
-                glyphCount[c.character]++;
-                fgset.insert(std::to_string(c.fg.r) + "," + std::to_string(c.fg.g) + "," + std::to_string(c.fg.b));
-                bgset.insert(std::to_string(c.bg.r) + "," + std::to_string(c.bg.g) + "," + std::to_string(c.bg.b));
-            }
-        }
-        int totalCells = wcells * hcells;
-        lines.push_back("Cells: " + std::to_string(totalCells));
-        lines.push_back("Unique glyphs: " + std::to_string((int)glyphs.size()));
-        lines.push_back("Unique foreground colors: " + std::to_string((int)fgset.size()));
-        lines.push_back("Unique background colors: " + std::to_string((int)bgset.size()));
+        lines.push_back("Width: " + std::to_string(meta.width));
+        lines.push_back("Height: " + std::to_string(meta.height));
+        lines.push_back("Cells: " + std::to_string(meta.width * meta.height));
+        lines.push_back("Unique glyphs: " + std::to_string(meta.uniqueGlyphs));
+        lines.push_back("Unique colors: " + std::to_string(meta.uniqueColors));
 
-        // glyphs by frequency (no ellipsis unless dialog would overflow screen)
-        std::vector<std::pair<std::string,int>> glyphVec(glyphCount.begin(), glyphCount.end());
-        std::sort(glyphVec.begin(), glyphVec.end(), [](const auto& a, const auto& b){
-            if (a.second != b.second) return a.second > b.second;
-            return a.first < b.first;
-        });
-
-        std::vector<std::string> glyphLines;
-        glyphLines.reserve(glyphVec.size() + 1);
-        glyphLines.push_back("Top glyphs (by cells):");
-        for (const auto& kv : glyphVec) {
-            double pct = totalCells > 0 ? (static_cast<double>(kv.second) * 100.0 / static_cast<double>(totalCells)) : 0.0;
-            std::ostringstream ss; ss << "  '" << kv.first << "' x " << kv.second << " (" << std::fixed << std::setprecision(1) << pct << "%)";
-            glyphLines.push_back(ss.str());
-        }
-
-        int maxDh = std::max(7, h - 4);
-        int neededDhAll = static_cast<int>(lines.size() + glyphLines.size()) + 7;
-        if (neededDhAll <= maxDh) {
-            lines.insert(lines.end(), glyphLines.begin(), glyphLines.end());
-        } else {
-            int availableGlyphLines = std::max(0, maxDh - 7 - static_cast<int>(lines.size()));
-            if (availableGlyphLines > 0) {
-                int take = std::min(static_cast<int>(glyphLines.size()), availableGlyphLines);
-                lines.insert(lines.end(), glyphLines.begin(), glyphLines.begin() + take);
-                if (static_cast<int>(glyphLines.size()) > take) {
-                    int remaining = static_cast<int>(glyphLines.size()) - take;
-                    lines.push_back("  ..." + std::to_string(remaining) + " more glyphs");
-                }
+        if (!meta.topGlyphs.empty()) {
+            lines.push_back("");
+            lines.push_back("Top glyphs (by cells):");
+            int total = meta.width * meta.height;
+            for (const auto& tg : meta.topGlyphs) {
+                double pct = total > 0 ? (static_cast<double>(tg.second) * 100.0 / static_cast<double>(total)) : 0.0;
+                std::ostringstream ss; 
+                ss << "  '" << tg.first << "' x " << tg.second << " (" << std::fixed << std::setprecision(1) << pct << "%)";
+                lines.push_back(ss.str());
             }
         }
     }
@@ -1611,7 +1557,10 @@ void AssetManagerScreen::showInfoDialog(const std::string& assetName, const Imag
 
     void AssetManagerScreen::drawPreview(int x, int y, int w, int h) {
         std::lock_guard<std::mutex> lock(previewMutex);
-        if (!previewLoaded) return;
+        if (!previewLoaded) {
+            surface.drawCenteredText(x, y + h / 2, w, "No preview available", theme.hintFg, theme.panel);
+            return;
+        }
 
         // Center the image
         int imgW = currentPreview.getWidth();
