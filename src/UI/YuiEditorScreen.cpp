@@ -135,6 +135,10 @@ void YuiEditorScreen::renderFrame() {
     }
 #endif
 
+    if (showLayers) {
+        opacityInputState.updateCaret();
+    }
+
     surface.clear(theme.itemFg, theme.background, " ");
     surface.fillRect(0, 0, surface.getWidth(), 1, theme.accent, theme.accent, " ");
     surface.fillRect(0, surface.getHeight() - 1, surface.getWidth(), 1, theme.accent, theme.accent, " ");

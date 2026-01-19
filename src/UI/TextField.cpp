@@ -145,9 +145,14 @@ bool TextField::handleInput(const InputEvent& ev, std::string& text, TextFieldSt
 
         if (ev.pressed && ev.button == 0) {
             if (inBounds) {
+                bool firstFocus = !state.focused;
                 state.focused = true;
                 state.forceCaretOn();
-                if (state.mode == CursorMode::Block) {
+                
+                if (firstFocus) {
+                    state.caretIndex = (int)text.size();
+                    state.clearSelection();
+                } else {
                     int clickPos = ev.x - state.renderX - 1;
                     state.caretIndex = std::clamp(state.lastRenderScrollOffset + clickPos, 0, (int)text.size());
 
@@ -157,13 +162,13 @@ bool TextField::handleInput(const InputEvent& ev, std::string& text, TextFieldSt
                     } else {
                         state.selectionEnd = state.caretIndex;
                     }
-                    state.dragging = true;
                 }
+                state.dragging = true;
                 return true;
             } else {
                 state.focused = false;
             }
-        } else if (ev.move && state.dragging && state.mode == CursorMode::Block) {
+        } else if (ev.move && state.dragging) {
             int clickPos = ev.x - state.renderX - 1;
             state.caretIndex = std::clamp(state.lastRenderScrollOffset + clickPos, 0, (int)text.size());
             state.selectionEnd = state.caretIndex;
