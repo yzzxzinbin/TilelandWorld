@@ -68,6 +68,9 @@ public:
     void removeLayer(int index);
     void moveLayer(int from, int to);
 
+    void setLayerVisible(int index, bool visible);
+    void setLayerOpacity(int index, double opacity);
+
     ImageCell getActiveCell(int x, int y) const;
     void setActiveCell(int x, int y, const ImageCell& cell);
 
@@ -83,6 +86,13 @@ private:
     int height{0};
     std::vector<YuiLayer> layers;
     int activeLayer{0};
+
+    mutable ImageAsset compositeCache;
+    mutable bool cacheDirty{true};
+
+    void markDirty();
+    void ensureCompositeCache() const;
+    ImageCell compositeCellInternal(int x, int y) const;
 
     static void blendOver(RGBColor& dstColor, uint8_t& dstAlpha, const RGBColor& srcColor, uint8_t srcAlpha);
     static RGBColor blendToBackground(const RGBColor& bg, const RGBColor& fg, uint8_t fgAlpha);

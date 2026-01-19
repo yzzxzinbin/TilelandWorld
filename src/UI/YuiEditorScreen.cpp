@@ -1,5 +1,7 @@
 #include "YuiEditorScreen.h"
 #include "TuiUtils.h"
+#include "DirectoryBrowserScreen.h"
+#include "TextField.h"
 #include "../Utils/EnvConfig.h"
 #include <algorithm>
 #include <sstream>
@@ -44,6 +46,38 @@ void YuiEditorScreen::show() {
             continue;
         }
         for (const auto& ev : events) {
+            if (showLayerMenu) {
+                bool close = false;
+                std::vector<std::string> opts = {"Move Up", "Move Down", "Rename", "Delete"};
+                int sel = ContextMenu::handleInput(ev, opts, layerMenuState, close);
+                if (sel != -1) {
+                    if (sel == 0) { // Move Up
+                        if (layerMenuIdx < (int)working.getLayerCount() - 1)
+                            working.moveLayer(layerMenuIdx, layerMenuIdx + 1);
+                    } else if (sel == 1) { // Move Down
+                        if (layerMenuIdx > 0)
+                            working.moveLayer(layerMenuIdx, layerMenuIdx - 1);
+                    } else if (sel == 2) { // Rename
+                        std::string newName;
+                        showLayerMenu = false;
+                        if (openRenameDialog(working.getLayer(layerMenuIdx).getName(), newName)) {
+                            working.getLayer(layerMenuIdx).setName(newName);
+                        }
+                    } else if (sel == 3) { // Delete
+                        showLayerMenu = false;
+                        if (working.getLayerCount() > 1) {
+                            working.removeLayer(layerMenuIdx);
+                        }
+                    }
+                    showLayerMenu = false;
+                }
+                if (close) showLayerMenu = false;
+                if (ev.type == InputEvent::Type::Mouse && ev.pressed) {
+                    // fall through if clicked outside but menu was visible? 
+                    // No, ContextMenu::handleInput should consume most things.
+                }
+                continue;
+            }
             if (ev.type == InputEvent::Type::Mouse) {
                 handleMouse(ev, running);
             } else if (ev.type == InputEvent::Type::Key) {
@@ -102,6 +136,10 @@ void YuiEditorScreen::renderFrame() {
     }
     if (showLayers) {
         drawLayerPanel();
+    }
+
+    if (showLayerMenu) {
+        ContextMenu::render(surface, {"Move Up", "Move Down", "Rename", "Delete"}, layerMenuState);
     }
 
     surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), 
@@ -268,7 +306,7 @@ void YuiEditorScreen::drawLayerPanel() {
     surface.drawText(downX, y + 1, "⇂", downFg, downBg);
 
     int listStart = y + 3;
-    int listRows = std::max(0, h - 6);
+    int listRows = std::max(0, h - 8);
     int layerCount = static_cast<int>(working.getLayerCount());
     for (int row = 0; row < listRows && row < layerCount; ++row) {
         int layerIndex = layerCount - 1 - row;
@@ -282,6 +320,18 @@ void YuiEditorScreen::drawLayerPanel() {
         std::string name = TuiUtils::trimToUtf8VisualWidth(layer.getName(), static_cast<size_t>(std::max(0, w - 8)));
         surface.drawText(x + 6, listStart + row, name, fg, bg);
     }
+
+    int btnY = y + h - 5;
+    std::string addLabel = "[+ New]";
+    std::string importLabel = "[Import]";
+    int addX = x + 2;
+    int importX = x + w - 2 - static_cast<int>(importLabel.size());
+    RGBColor addFg = hoverLayerAdd ? theme.background : theme.itemFg;
+    RGBColor addBg = hoverLayerAdd ? theme.focusBg : theme.panel;
+    RGBColor impFg = hoverLayerImport ? theme.background : theme.itemFg;
+    RGBColor impBg = hoverLayerImport ? theme.focusBg : theme.panel;
+    surface.drawText(addX, btnY, addLabel, addFg, addBg);
+    surface.drawText(importX, btnY, importLabel, impFg, impBg);
 
     const auto& activeLayer = working.activeLayerRef();
     int infoY = y + h - 3;
@@ -335,20 +385,69 @@ bool YuiEditorScreen::handleLayerPanelMouse(const InputEvent& ev) {
     }
 
     int listStart = y + 3;
-    int listRows = std::max(0, h - 6);
+    int listRows = std::max(0, h - 8);
     int layerCount = static_cast<int>(working.getLayerCount());
     if (ev.y >= listStart && ev.y < listStart + listRows) {
         int row = ev.y - listStart;
         if (row < layerCount) {
             int layerIndex = layerCount - 1 - row;
+            if (ev.button == 2 && ev.pressed) {
+                showLayerMenu = true;
+                layerMenuIdx = layerIndex;
+                layerMenuState.visible = true;
+                layerMenuState.x = ev.x;
+                layerMenuState.y = ev.y;
+                layerMenuState.selectedIndex = 0;
+                layerMenuState.width = ContextMenu::calculateWidth({"Move Up", "Move Down", "Rename", "Delete"});
+                return true;
+            }
             if (ev.button == 0 && ev.pressed) {
                 if (ev.x >= x + 2 && ev.x < x + 5) {
-                    auto& layer = working.getLayer(static_cast<size_t>(layerIndex));
-                    layer.setVisible(!layer.isVisible());
+                    const auto& layer = working.getLayer(static_cast<size_t>(layerIndex));
+                    working.setLayerVisible(layerIndex, !layer.isVisible());
                 } else {
                     working.setActiveLayerIndex(layerIndex);
                 }
             }
+            return true;
+        }
+    }
+
+    int btnY = y + h - 5;
+    std::string addLabel = "[+ New]";
+    std::string importLabel = "[Import]";
+    int addX = x + 2;
+    int importX = x + w - 2 - static_cast<int>(importLabel.size());
+    if (ev.move && ev.y == btnY) {
+        hoverLayerAdd = (ev.x >= addX && ev.x < addX + static_cast<int>(addLabel.size()));
+        hoverLayerImport = (ev.x >= importX && ev.x < importX + static_cast<int>(importLabel.size()));
+    }
+    if (ev.button == 0 && ev.pressed && ev.y == btnY) {
+        if (ev.x >= addX && ev.x < addX + static_cast<int>(addLabel.size())) {
+            int idx = static_cast<int>(working.getLayerCount()) + 1;
+            YuiLayer layer(working.getWidth(), working.getHeight(), "Layer " + std::to_string(idx));
+            working.addLayer(layer);
+            return true;
+        }
+        if (ev.x >= importX && ev.x < importX + static_cast<int>(importLabel.size())) {
+            input.stop();
+            DirectoryBrowserScreen browser(manager.getRootDir(), true, ".tlimg");
+            auto paths = browser.show();
+            if (!paths.empty()) {
+                for (const auto& path : paths) {
+                    ImageAsset asset = ImageAsset::load(path);
+                    YuiLayer layer(working.getWidth(), working.getHeight(), "Imported");
+                    int maxW = std::min(asset.getWidth(), working.getWidth());
+                    int maxH = std::min(asset.getHeight(), working.getHeight());
+                    for (int yy = 0; yy < maxH; ++yy) {
+                        for (int xx = 0; xx < maxW; ++xx) {
+                            layer.setCell(xx, yy, asset.getCell(xx, yy));
+                        }
+                    }
+                    working.addLayer(layer);
+                }
+            }
+            input.start();
             return true;
         }
     }
@@ -359,7 +458,7 @@ bool YuiEditorScreen::handleLayerPanelMouse(const InputEvent& ev) {
     if ((ev.button == 0 && ev.pressed && ev.y == barY) || (ev.move && dragLayerOpacity)) {
         double t = (barW > 1) ? (static_cast<double>(ev.x - barX) / (barW - 1)) : 0.0;
         t = std::clamp(t, 0.0, 1.0);
-        working.activeLayerRef().setOpacity(t);
+        working.setLayerOpacity(working.getActiveLayerIndex(), t);
         dragLayerOpacity = true;
         return true;
     }
@@ -376,6 +475,8 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     hoverCancel = false;
     hoverLayerUp = false;
     hoverLayerDown = false;
+    hoverLayerAdd = false;
+    hoverLayerImport = false;
     // Toolbar button hit-test
     if (my == kToolbarY) {
         int x = 2;
@@ -1009,6 +1110,126 @@ bool YuiEditorScreen::openGlyphDialog(const std::string& initial, std::string& o
     }
     if (accepted) {
         outGlyph = glyph;
+    }
+    return accepted;
+}
+
+bool YuiEditorScreen::openRenameDialog(const std::string& initial, std::string& outName) {
+    std::string name = initial;
+    bool running = true;
+    bool accepted = false;
+    int boxW = 50;
+    int boxH = 9;
+    int dx = (surface.getWidth() - boxW) / 2;
+    int dy = (surface.getHeight() - boxH) / 2;
+    
+    TextFieldState inputState;
+    inputState.focused = true;
+    inputState.caretIndex = (int)name.size();
+    inputState.mode = CursorMode::IBeam;
+
+    auto clampDialog = [&]() {
+        dx = std::clamp(dx, 0, std::max(0, surface.getWidth() - boxW));
+        dy = std::clamp(dy, 0, std::max(0, surface.getHeight() - boxH));
+    };
+
+    bool dragging = false;
+    int dragStartX = 0, dragStartY = 0;
+    int dragOriginX = 0, dragOriginY = 0;
+    bool hoverOk = false, hoverCancel = false;
+
+    while (running) {
+        inputState.updateCaret();
+        clampDialog();
+        renderFrame();
+        
+        surface.drawFrame(dx, dy, boxW, boxH, kFrame, theme.itemFg, theme.panel);
+        surface.fillRect(dx + 1, dy + 1, boxW - 2, 1, theme.title, theme.background, " ");
+        surface.drawText(dx + 2, dy + 1, "Rename Layer", theme.title, theme.background);
+        
+        surface.drawText(dx + 2, dy + 3, "New Name:", theme.itemFg, theme.panel);
+        
+        TextFieldStyle fieldStyle;
+        fieldStyle.width = boxW - 4;
+        fieldStyle.focusBg = theme.focusBg;
+        fieldStyle.focusFg = theme.focusFg;
+        fieldStyle.panelBg = theme.panel;
+        fieldStyle.caretChar = '|';
+        TextField::render(surface, dx + 2, dy + 4, name, inputState, fieldStyle);
+        
+        std::string okLbl = "[ OK ]";
+        std::string cancelLbl = "[ Cancel ]";
+        int okX = dx + (boxW / 2) - static_cast<int>(okLbl.size()) - 1;
+        int cancelX = dx + (boxW / 2) + 1;
+        int btnY = dy + boxH - 2;
+
+        auto drawBtn = [&](const std::string& lbl, int x, bool hot) {
+            RGBColor bg = hot ? darken(theme.accent, 0.8) : theme.accent;
+            surface.drawText(x, btnY, lbl, theme.title, bg);
+        };
+        drawBtn(okLbl, okX, hoverOk);
+        drawBtn(cancelLbl, cancelX, hoverCancel);
+
+        surface.drawText(dx + 2, btnY - 1, "Enter: OK | Esc: cancel", theme.hintFg, theme.panel);
+
+        painter.present(surface, true, 1, 1);
+
+        auto events = input.pollEvents();
+        if (events.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            continue;
+        }
+        for (const auto& ev : events) {
+            if (TextField::handleInput(ev, name, inputState, fieldStyle)) {
+                continue;
+            }
+
+            if (ev.type == InputEvent::Type::Key) {
+                if (ev.key == InputKey::Escape) { running = false; break; }
+                if (ev.key == InputKey::Enter) {
+                    if (!name.empty()) {
+                        accepted = true; 
+                        running = false; 
+                    }
+                    break; 
+                }
+            } else if (ev.type == InputEvent::Type::Mouse) {
+                if (dragging) {
+                    dx = dragOriginX + (ev.x - dragStartX);
+                    dy = dragOriginY + (ev.y - dragStartY);
+                    clampDialog();
+                }
+                
+                hoverOk = (ev.y == btnY && ev.x >= okX && ev.x < okX + (int)okLbl.size());
+                hoverCancel = (ev.y == btnY && ev.x >= cancelX && ev.x < cancelX + (int)cancelLbl.size());
+
+                bool onTitle = (ev.y == dy + 1 && ev.x >= dx + 1 && ev.x < dx + boxW - 1);
+                if (ev.button == 0 && ev.pressed) {
+                    if (onTitle) {
+                        dragging = true;
+                        dragStartX = ev.x;
+                        dragStartY = ev.y;
+                        dragOriginX = dx;
+                        dragOriginY = dy;
+                    }
+                    if (hoverOk) {
+                        if (!name.empty()) {
+                            accepted = true;
+                            running = false;
+                        }
+                    }
+                    if (hoverCancel) {
+                        running = false;
+                    }
+                }
+                if (ev.button == 0 && !ev.pressed && !ev.move) {
+                    dragging = false;
+                }
+            }
+        }
+    }
+    if (accepted) {
+        outName = name;
     }
     return accepted;
 }

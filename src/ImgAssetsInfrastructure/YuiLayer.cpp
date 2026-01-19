@@ -1,8 +1,169 @@
 #include "YuiLayer.h"
 #include <fstream>
 #include <algorithm>
+#include <array>
+#include <unordered_map>
+#include <limits>
+#include <functional>
+#include <unordered_set>
 
 namespace TilelandWorld {
+
+namespace {
+    constexpr int kMaskSize = 8; // 8x8 subcells
+    struct GlyphMask {
+        std::array<uint8_t, kMaskSize * kMaskSize> data{};
+        int onCount{0};
+    };
+
+    GlyphMask makeMask(const std::function<bool(int,int)>& test) {
+        GlyphMask mask;
+        int count = 0;
+        for (int y = 0; y < kMaskSize; ++y) {
+            for (int x = 0; x < kMaskSize; ++x) {
+                bool on = test(x, y);
+                mask.data[y * kMaskSize + x] = on ? 1 : 0;
+                if (on) ++count;
+            }
+        }
+        mask.onCount = count;
+        return mask;
+    }
+
+    const std::unordered_map<std::string, GlyphMask>& glyphMasks() {
+        static std::unordered_map<std::string, GlyphMask> masks = {
+            {" ", makeMask([](int, int) { return false; })},
+            {"█", makeMask([](int, int) { return true; })},
+            {"▀", makeMask([](int, int y) { return y < 4; })},
+            {"▄", makeMask([](int, int y) { return y >= 4; })},
+            {"▌", makeMask([](int x, int) { return x < 4; })},
+            {"▐", makeMask([](int x, int) { return x >= 4; })},
+
+            // Quadrants (2x2 -> 4x4 blocks)
+            {"▘", makeMask([](int x, int y) { return x < 4 && y < 4; })},
+            {"▝", makeMask([](int x, int y) { return x >= 4 && y < 4; })},
+            {"▖", makeMask([](int x, int y) { return x < 4 && y >= 4; })},
+            {"▗", makeMask([](int x, int y) { return x >= 4 && y >= 4; })},
+            {"▚", makeMask([](int x, int y) { return (x < 4 && y < 4) || (x >= 4 && y >= 4); })},
+            {"▞", makeMask([](int x, int y) { return (x >= 4 && y < 4) || (x < 4 && y >= 4); })},
+            {"▙", makeMask([](int x, int y) { return (x < 4 && y >= 4) || (x < 4 && y < 4) || (x >= 4 && y >= 4); })},
+            {"▛", makeMask([](int x, int y) { return (x < 4 && y < 4) || (x >= 4 && y < 4) || (x < 4 && y >= 4); })},
+            {"▜", makeMask([](int x, int y) { return (x < 4 && y < 4) || (x >= 4 && y < 4) || (x >= 4 && y >= 4); })},
+            {"▟", makeMask([](int x, int y) { return (x >= 4 && y < 4) || (x < 4 && y >= 4) || (x >= 4 && y >= 4); })},
+
+            // Left 1/8 blocks
+            {"▏", makeMask([](int x, int) { return x < 1; })},
+            {"▎", makeMask([](int x, int) { return x < 2; })},
+            {"▍", makeMask([](int x, int) { return x < 3; })},
+            {"▋", makeMask([](int x, int) { return x < 5; })},
+            {"▊", makeMask([](int x, int) { return x < 6; })},
+            {"▉", makeMask([](int x, int) { return x < 7; })},
+
+            // Lower 1/8 blocks
+            {"▁", makeMask([](int, int y) { return y >= 7; })},
+            {"▂", makeMask([](int, int y) { return y >= 6; })},
+            {"▃", makeMask([](int, int y) { return y >= 5; })},
+            {"▅", makeMask([](int, int y) { return y >= 3; })},
+            {"▆", makeMask([](int, int y) { return y >= 2; })},
+            {"▇", makeMask([](int, int y) { return y >= 1; })}
+        };
+        return masks;
+    }
+
+    const GlyphMask& getMaskForGlyph(const std::string& glyph) {
+        const auto& masks = glyphMasks();
+        auto it = masks.find(glyph);
+        if (it != masks.end()) return it->second;
+        static GlyphMask full = makeMask([](int, int) { return true; });
+        return full;
+    }
+
+    int requiredGridForGlyph(const std::string& glyph) {
+        if (glyph.empty() || glyph == " " || glyph == "█") return 1;
+        static const std::unordered_set<std::string> grid2 = {
+            "▀","▄","▌","▐",
+            "▘","▝","▖","▗","▚","▞","▙","▛","▜","▟"
+        };
+        static const std::unordered_set<std::string> grid8 = {
+            "▏","▎","▍","▋","▊","▉",
+            "▁","▂","▃","▅","▆","▇"
+        };
+        if (grid2.count(glyph)) return 2;
+        if (grid8.count(glyph)) return 8;
+        return 8;
+    }
+
+    bool glyphOnGrid(const std::string& glyph, int x, int y, int grid) {
+        if (grid == 1) {
+            return !(glyph.empty() || glyph == " ");
+        }
+        if (grid == 2) {
+            if (glyph == "█") return true;
+            if (glyph == " ") return false;
+            if (glyph == "▀") return y == 0;
+            if (glyph == "▄") return y == 1;
+            if (glyph == "▌") return x == 0;
+            if (glyph == "▐") return x == 1;
+            if (glyph == "▘") return x == 0 && y == 0;
+            if (glyph == "▝") return x == 1 && y == 0;
+            if (glyph == "▖") return x == 0 && y == 1;
+            if (glyph == "▗") return x == 1 && y == 1;
+            if (glyph == "▚") return (x == 0 && y == 0) || (x == 1 && y == 1);
+            if (glyph == "▞") return (x == 1 && y == 0) || (x == 0 && y == 1);
+            if (glyph == "▙") return !(x == 1 && y == 0);
+            if (glyph == "▛") return !(x == 1 && y == 1);
+            if (glyph == "▜") return !(x == 0 && y == 1);
+            if (glyph == "▟") return !(x == 0 && y == 0);
+            return true; // unknowns treated as full
+        }
+        const auto& mask = getMaskForGlyph(glyph.empty() ? " " : glyph);
+        return mask.data[y * kMaskSize + x] != 0;
+    }
+
+    const std::vector<std::string>& candidateGlyphs(int grid) {
+        static std::vector<std::string> grid1 = {" ", "█"};
+        static std::vector<std::string> grid2 = {
+            " ", "█",
+            "▀", "▄", "▌", "▐",
+            "▘", "▝", "▖", "▗", "▚", "▞", "▙", "▛", "▜", "▟"
+        };
+        static std::vector<std::string> grid8 = {
+            " ", "█",
+            "▀", "▄", "▌", "▐",
+            "▘", "▝", "▖", "▗", "▚", "▞", "▙", "▛", "▜", "▟",
+            "▏", "▎", "▍", "▋", "▊", "▉",
+            "▁", "▂", "▃", "▅", "▆", "▇"
+        };
+        if (grid <= 1) return grid1;
+        if (grid == 2) return grid2;
+        return grid8;
+    }
+
+    RGBColor avgColor(const std::array<RGBColor, kMaskSize * kMaskSize>& colors,
+                      const std::array<uint8_t, kMaskSize * kMaskSize>& weights,
+                      bool onMask, const std::string& glyph, int grid) {
+        uint64_t sumR = 0, sumG = 0, sumB = 0, sumW = 0;
+        int count = grid * grid;
+        for (int i = 0; i < count; ++i) {
+            int gx = i % grid;
+            int gy = i / grid;
+            if (glyphOnGrid(glyph, gx, gy, grid) != onMask) continue;
+            uint8_t w = weights[i];
+            sumR += static_cast<uint64_t>(colors[i].r) * w;
+            sumG += static_cast<uint64_t>(colors[i].g) * w;
+            sumB += static_cast<uint64_t>(colors[i].b) * w;
+            sumW += w;
+        }
+        if (sumW == 0) {
+            return {0, 0, 0};
+        }
+        return {
+            static_cast<uint8_t>(std::clamp<int>(static_cast<int>(sumR / sumW), 0, 255)),
+            static_cast<uint8_t>(std::clamp<int>(static_cast<int>(sumG / sumW), 0, 255)),
+            static_cast<uint8_t>(std::clamp<int>(static_cast<int>(sumB / sumW), 0, 255))
+        };
+    }
+}
 
 ImageCell YuiLayer::emptyCell = {" ", {0,0,0}, {0,0,0}};
 
@@ -37,6 +198,7 @@ void YuiLayer::clear(const ImageCell& fillCell) {
 YuiLayeredImage::YuiLayeredImage(int w, int h) : width(w), height(h) {
     layers.emplace_back(w, h, "Layer 1");
     activeLayer = 0;
+    cacheDirty = true;
 }
 
 YuiLayer& YuiLayeredImage::getLayer(size_t index) {
@@ -82,12 +244,14 @@ const YuiLayer& YuiLayeredImage::activeLayerRef() const {
 void YuiLayeredImage::addLayer(const YuiLayer& layer) {
     layers.push_back(layer);
     setActiveLayerIndex(static_cast<int>(layers.size()) - 1);
+    markDirty();
 }
 
 void YuiLayeredImage::insertLayer(int index, const YuiLayer& layer) {
     index = std::clamp(index, 0, static_cast<int>(layers.size()));
     layers.insert(layers.begin() + index, layer);
     setActiveLayerIndex(index);
+    markDirty();
 }
 
 void YuiLayeredImage::removeLayer(int index) {
@@ -101,6 +265,7 @@ void YuiLayeredImage::removeLayer(int index) {
     if (activeLayer >= static_cast<int>(layers.size())) {
         activeLayer = static_cast<int>(layers.size()) - 1;
     }
+    markDirty();
 }
 
 void YuiLayeredImage::moveLayer(int from, int to) {
@@ -110,6 +275,19 @@ void YuiLayeredImage::moveLayer(int from, int to) {
     layers.erase(layers.begin() + from);
     layers.insert(layers.begin() + to, layer);
     activeLayer = to;
+    markDirty();
+}
+
+void YuiLayeredImage::setLayerVisible(int index, bool visible) {
+    if (index < 0 || index >= static_cast<int>(layers.size())) return;
+    layers[static_cast<size_t>(index)].setVisible(visible);
+    markDirty();
+}
+
+void YuiLayeredImage::setLayerOpacity(int index, double opacity) {
+    if (index < 0 || index >= static_cast<int>(layers.size())) return;
+    layers[static_cast<size_t>(index)].setOpacity(opacity);
+    markDirty();
 }
 
 ImageCell YuiLayeredImage::getActiveCell(int x, int y) const {
@@ -118,6 +296,25 @@ ImageCell YuiLayeredImage::getActiveCell(int x, int y) const {
 
 void YuiLayeredImage::setActiveCell(int x, int y, const ImageCell& cell) {
     activeLayerRef().setCell(x, y, cell);
+    markDirty();
+}
+
+void YuiLayeredImage::markDirty() {
+    cacheDirty = true;
+}
+
+void YuiLayeredImage::ensureCompositeCache() const {
+    if (compositeCache.getWidth() != width || compositeCache.getHeight() != height) {
+        compositeCache = ImageAsset(width, height);
+        cacheDirty = true;
+    }
+    if (!cacheDirty) return;
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            compositeCache.setCell(x, y, compositeCellInternal(x, y));
+        }
+    }
+    cacheDirty = false;
 }
 
 void YuiLayeredImage::blendOver(RGBColor& dstColor, uint8_t& dstAlpha, const RGBColor& srcColor, uint8_t srcAlpha) {
@@ -147,56 +344,91 @@ RGBColor YuiLayeredImage::blendToBackground(const RGBColor& bg, const RGBColor& 
     return { blendChannel(bg.r, fg.r), blendChannel(bg.g, fg.g), blendChannel(bg.b, fg.b) };
 }
 
-ImageCell YuiLayeredImage::compositeCell(int x, int y) const {
-    RGBColor bg{0, 0, 0};
-    uint8_t bgA = 0;
+ImageCell YuiLayeredImage::compositeCellInternal(int x, int y) const {
+    int grid = 1;
+    for (const auto& layer : layers) {
+        if (!layer.isVisible()) continue;
+        const auto& cell = layer.getCell(x, y);
+        int need = requiredGridForGlyph(cell.character);
+        if (need > grid) grid = need;
+        if (grid == 8) break;
+    }
+
+    std::array<RGBColor, kMaskSize * kMaskSize> subColors;
+    std::array<uint8_t, kMaskSize * kMaskSize> subAlpha{};
+    for (int i = 0; i < kMaskSize * kMaskSize; ++i) {
+        subColors[i] = {0, 0, 0};
+        subAlpha[i] = 0;
+    }
+
+    int count = grid * grid;
 
     for (const auto& layer : layers) {
         if (!layer.isVisible()) continue;
         const auto& cell = layer.getCell(x, y);
+        const std::string& glyph = cell.character.empty() ? " " : cell.character;
         double layerOpacity = layer.getOpacity();
-        uint8_t effectiveBgA = static_cast<uint8_t>(std::clamp(static_cast<int>(cell.bgA * layerOpacity + 0.5), 0, 255));
-        blendOver(bg, bgA, cell.bg, effectiveBgA);
+        uint8_t fgA = static_cast<uint8_t>(std::clamp(static_cast<int>(cell.fgA * layerOpacity + 0.5), 0, 255));
+        uint8_t bgA = static_cast<uint8_t>(std::clamp(static_cast<int>(cell.bgA * layerOpacity + 0.5), 0, 255));
+
+        for (int i = 0; i < count; ++i) {
+            int gx = i % grid;
+            int gy = i / grid;
+            const bool on = glyphOnGrid(glyph, gx, gy, grid);
+            const RGBColor srcColor = on ? cell.fg : cell.bg;
+            const uint8_t srcAlpha = on ? fgA : bgA;
+            blendOver(subColors[i], subAlpha[i], srcColor, srcAlpha);
+        }
     }
 
-    std::string glyph = " ";
-    RGBColor fg = bg;
-    uint8_t fgA = 0;
+    const auto& candidates = candidateGlyphs(grid);
+    double bestScore = std::numeric_limits<double>::max();
+    std::string bestGlyph = " ";
+    RGBColor bestFg{0, 0, 0};
+    RGBColor bestBg{0, 0, 0};
 
-    for (int i = static_cast<int>(layers.size()) - 1; i >= 0; --i) {
-        const auto& layer = layers[static_cast<size_t>(i)];
-        if (!layer.isVisible()) continue;
-        const auto& cell = layer.getCell(x, y);
-        if (cell.character.empty() || cell.character == " ") continue;
-        double layerOpacity = layer.getOpacity();
-        uint8_t effectiveFgA = static_cast<uint8_t>(std::clamp(static_cast<int>(cell.fgA * layerOpacity + 0.5), 0, 255));
-        if (effectiveFgA == 0) continue;
-        glyph = cell.character;
-        fg = blendToBackground(bg, cell.fg, effectiveFgA);
-        fgA = 255;
-        break;
+    for (const auto& glyph : candidates) {
+        RGBColor fg = avgColor(subColors, subAlpha, true, glyph, grid);
+        RGBColor bg = avgColor(subColors, subAlpha, false, glyph, grid);
+
+        double score = 0.0;
+        for (int i = 0; i < count; ++i) {
+            int gx = i % grid;
+            int gy = i / grid;
+            const RGBColor& target = subColors[i];
+            const RGBColor& ref = glyphOnGrid(glyph, gx, gy, grid) ? fg : bg;
+            double w = subAlpha[i] / 255.0;
+            double dr = static_cast<double>(target.r) - ref.r;
+            double dg = static_cast<double>(target.g) - ref.g;
+            double db = static_cast<double>(target.b) - ref.b;
+            score += (dr * dr + dg * dg + db * db) * w;
+        }
+
+        if (score < bestScore) {
+            bestScore = score;
+            bestGlyph = glyph;
+            bestFg = fg;
+            bestBg = bg;
+        }
     }
 
     ImageCell out;
-    out.character = glyph;
-    out.fg = fg;
-    out.bg = bg;
-    out.fgA = fgA;
-    out.bgA = bgA;
+    out.character = bestGlyph;
+    out.fg = bestFg;
+    out.bg = bestBg;
+    out.fgA = 255;
+    out.bgA = 255;
     return out;
 }
 
+ImageCell YuiLayeredImage::compositeCell(int x, int y) const {
+    ensureCompositeCache();
+    return compositeCache.getCell(x, y);
+}
+
 ImageAsset YuiLayeredImage::flatten() const {
-    ImageAsset asset(width, height);
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            ImageCell c = compositeCell(x, y);
-            c.fgA = 255;
-            c.bgA = 255;
-            asset.setCell(x, y, c);
-        }
-    }
-    return asset;
+    ensureCompositeCache();
+    return compositeCache;
 }
 
 YuiLayeredImage YuiLayeredImage::fromImageAsset(const ImageAsset& asset) {

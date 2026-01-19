@@ -8,6 +8,7 @@
 #include "../ImgAssetsInfrastructure/AssetManager.h"
 #include "../ImgAssetsInfrastructure/ImageAsset.h"
 #include "../ImgAssetsInfrastructure/YuiLayer.h"
+#include "ContextMenu.h"
 #include <string>
 #include <memory>
 
@@ -66,7 +67,14 @@ private:
     int layerPanelX{0};
     bool hoverLayerUp{false};
     bool hoverLayerDown{false};
+    bool hoverLayerAdd{false};
+    bool hoverLayerImport{false};
     bool dragLayerOpacity{false};
+
+    // Context menu
+    bool showLayerMenu{false};
+    int layerMenuIdx{-1};
+    ContextMenuState layerMenuState{};
 
     // Layout cache
     int canvasX{0};
@@ -90,6 +98,7 @@ private:
     bool isInsideCanvas(int x, int y) const;
     bool openColorPicker(RGBColor initial, uint8_t initialA, RGBColor& outColor, uint8_t& outA);
     bool openGlyphDialog(const std::string& initial, std::string& outGlyph);
+    bool openRenameDialog(const std::string& initial, std::string& outName);
 };
 
 } // namespace UI
