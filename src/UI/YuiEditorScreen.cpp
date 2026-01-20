@@ -39,6 +39,18 @@ void YuiEditorScreen::show() {
     input.start();
     bool running = true;
     while (running) {
+        EnvConfig::getInstance().refresh();
+        if (dragLayerOpacity) {
+            auto runtime = EnvConfig::getInstance().getRuntimeInfo();
+            double preciseX = runtime.mouseCellWin.x - 1.0;
+            int barX = layerPanelX + 2;
+            int barW = std::max(1, layerPanelW - 4);
+            double t = (barW > 0) ? (preciseX - barX) / barW : 0.0;
+            pendingOpacity = std::clamp(t, 0.0, 1.0);
+            if (!opacityInputState.focused) {
+                opacityText = std::to_string(static_cast<int>(std::round(pendingOpacity * 100.0)));
+            }
+        }
         renderFrame();
         painter.present(surface, true, 1, 1);
 
@@ -407,15 +419,23 @@ void YuiEditorScreen::drawLayerPanel() {
     int barX = x + 2;
     int barW = std::max(1, w - 4);
     double displayOpacity = dragLayerOpacity ? pendingOpacity : activeLayer.getOpacity();
-    int filled = static_cast<int>(std::round(displayOpacity * barW));
-    filled = std::clamp(filled, 0, barW);
-
-    // Track (background) - Using hint gray
-    surface.fillRect(barX, barY, barW, 1, theme.hintFg, darken(theme.hintFg, 0.2), "░");
     
-    // Thumb/Fill (foreground) - Using accent blue
-    if (filled > 0) {
-        surface.fillRect(barX, barY, filled, 1, {255, 255, 255}, theme.accent, " ");
+    // Background - Solid dark gray (HSV Picker style)
+    RGBColor bgColor{40, 40, 40};
+    RGBColor fgColor{220, 220, 220};
+    surface.fillRect(barX, barY, barW, 1, bgColor, bgColor, " ");
+
+    const std::string hBlocks[] = {"▏", "▎", "▍", "▌", "▋", "▊", "▉"};
+    double totalLevel = displayOpacity * (barW * 8.0);
+    int fullCells = static_cast<int>(totalLevel) / 8;
+    int partialLevel = static_cast<int>(totalLevel) % 8;
+
+    for (int bx = 0; bx < barW; ++bx) {
+        if (bx < fullCells) {
+            surface.drawText(barX + bx, barY, "█", fgColor, bgColor);
+        } else if (bx == fullCells && partialLevel > 0) {
+            surface.drawText(barX + bx, barY, hBlocks[partialLevel - 1], fgColor, bgColor);
+        }
     }
 }
 
@@ -559,13 +579,7 @@ bool YuiEditorScreen::handleLayerPanelMouse(const InputEvent& ev) {
     }
 
     if ((ev.button == 0 && ev.pressed && ev.y == barY) || (ev.move && dragLayerOpacity)) {
-        double t = (barW > 1) ? (static_cast<double>(ev.x - barX) / (barW - 1)) : 0.0;
-        t = std::clamp(t, 0.0, 1.0);
-        pendingOpacity = t;
         dragLayerOpacity = true;
-        if (!opacityInputState.focused) {
-            opacityText = std::to_string(static_cast<int>(pendingOpacity * 100));
-        }
         return true;
     }
 
