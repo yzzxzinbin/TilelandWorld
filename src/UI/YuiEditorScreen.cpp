@@ -154,7 +154,7 @@ void YuiEditorScreen::renderFrame() {
     surface.fillRect(0, 0, surface.getWidth(), 1, theme.accent, theme.accent, " ");
     surface.fillRect(0, surface.getHeight() - 1, surface.getWidth(), 1, theme.accent, theme.accent, " ");
     surface.drawText(2, 1, "Unicode Image Editor - " + assetName, {0,0,0}, theme.accent);
-    drawToolbar();
+    drawMenubar();
 
     propPanelW = hasSelection ? 28 : 0;
     layerPanelW = showLayers ? 28 : 0;
@@ -163,7 +163,7 @@ void YuiEditorScreen::renderFrame() {
     if (layerPanelW > 0) rightPanels += layerPanelW;
     if (propPanelW > 0 && layerPanelW > 0) rightPanels += 1; // gap
 
-    canvasX = 2;
+    canvasX = 4;
     canvasY = 4;
     canvasW = std::max(10, surface.getWidth() - canvasX - 2 - rightPanels);
     canvasH = std::max(6, surface.getHeight() - canvasY - 2);
@@ -175,6 +175,7 @@ void YuiEditorScreen::renderFrame() {
         propPanelX = (layerPanelW > 0) ? (layerPanelX - 1 - propPanelW) : (surface.getWidth() - propPanelW - 2);
     }
 
+    drawSideToolbar();
     surface.fillRect(canvasX, canvasY, canvasW, canvasH, theme.itemFg, theme.panel, " ");
     surface.drawFrame(canvasX, canvasY, canvasW, canvasH, kFrame, theme.itemFg, theme.panel);
 
@@ -204,21 +205,43 @@ void YuiEditorScreen::renderFrame() {
 
 static constexpr int kToolbarY = 3; // leave a blank line above the toolbar
 
-void YuiEditorScreen::drawToolbar() {
+void YuiEditorScreen::drawMenubar() {
     int y = kToolbarY;
-    std::string hand = activeTool == Tool::Hand ? "[ Hand ]" : "  Hand  ";
-    std::string prop = activeTool == Tool::Property ? "[ Property ]" : "  Property  ";
+    std::string fileLabel = "  File  ";
     std::string layers = showLayers ? "[ Layers ]" : "  Layers  ";
-    int x = 2;
+    int x = 5;
     auto drawBtn = [&](const std::string& label, bool active) {
         RGBColor bg = active ? YuiUtils::darken(theme.accent, 0.6) : theme.accent;
         RGBColor fg = active ? RGBColor{255,255,255} : theme.title;
         surface.drawText(x, y, label, fg, bg);
         x += static_cast<int>(label.size()) + 2;
     };
-    drawBtn(hand, activeTool == Tool::Hand);
-    drawBtn(prop, activeTool == Tool::Property);
+    drawBtn(fileLabel, false);
     drawBtn(layers, showLayers);
+}
+
+void YuiEditorScreen::drawSideToolbar() {
+    int tbX = 1;
+    int tbW = 2;
+    int tbY = canvasY + 1;
+    int tbH = canvasH - 1;
+    
+    // Draw background for the sidebar
+    surface.fillRect(tbX, tbY, tbW, tbH, theme.panel, theme.panel, " ");
+    
+    // Hand Tool (👆)
+    bool handActive = activeMenu == Tool::Hand;
+    RGBColor handBg = handActive ? YuiUtils::darken(theme.accent, 0.6) : theme.panel;
+    RGBColor handFg = handActive ? RGBColor{255,255,255} : theme.itemFg;
+    surface.fillRect(tbX, tbY, tbW, 1, handBg, handBg, " ");
+    surface.drawText(tbX, tbY, "👆", handFg, handBg);
+    
+    // Property Tool (f129)
+    bool propActive = activeMenu == Tool::Property;
+    RGBColor propBg = propActive ? YuiUtils::darken(theme.accent, 0.6) : theme.panel;
+    RGBColor propFg = propActive ? RGBColor{255,255,255} : theme.itemFg;
+    surface.fillRect(tbX, tbY + 1, tbW, 1, propBg, propBg, " ");
+    surface.drawText(tbX, tbY + 1, "\xEF\x84\xA9\xEF\x84\xA9", propFg, propBg);
 }
 
 void YuiEditorScreen::drawCanvas() {
@@ -304,28 +327,34 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     hoverLayerDown = false;
     hoverLayerAdd = false;
     hoverLayerImport = false;
+
+    // Side toolbar hit-test
+    if (mx >= 1 && mx <= 2 && my >= 5 && my < 7) {
+        if (ev.pressed && ev.button == 0) {
+            int idx = my - 5;
+            if (idx == 0) {
+                activeMenu = Tool::Hand;
+            } else if (idx == 1) {
+                activeMenu = Tool::Property;
+            }
+        }
+        return;
+    }
+
     // Toolbar button hit-test
     if (my == kToolbarY) {
-        int x = 2;
-        std::string handLabel = activeTool == Tool::Hand ? "[ Hand ]" : "  Hand  ";
-        std::string propLabel = activeTool == Tool::Property ? "[ Property ]" : "  Property  ";
+        int x = 4;
+        std::string fileLabel = "  File  ";
         std::string layersLabel = showLayers ? "[ Layers ]" : "  Layers  ";
-        int handStart = x;
-        int handEnd = handStart + static_cast<int>(handLabel.size());
-        x = handEnd + 2;
-        int propStart = x;
-        int propEnd = propStart + static_cast<int>(propLabel.size());
-        x = propEnd + 2;
+        int fileStart = x;
+        int fileEnd = fileStart + static_cast<int>(fileLabel.size());
+        x = fileEnd + 2;
         int layersStart = x;
         int layersEnd = layersStart + static_cast<int>(layersLabel.size());
 
         if (ev.button == 0 && ev.pressed) {
-            if (mx >= handStart && mx < handEnd) {
-                activeTool = Tool::Hand;
-                dragging = false;
-            } else if (mx >= propStart && mx < propEnd) {
-                activeTool = Tool::Property;
-                dragging = false;
+            if (mx >= fileStart && mx < fileEnd) {
+                // File menu placeholder
             } else if (mx >= layersStart && mx < layersEnd) {
                 showLayers = !showLayers;
                 dragging = false;
@@ -367,7 +396,7 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     if (!showV) draggingVThumb = false;
 
     if (!ev.pressed && ev.button == 0 && ev.move) {
-        if (dragging && activeTool == Tool::Hand) {
+        if (dragging && activeMenu == Tool::Hand) {
             scrollX = dragStartScrollX - (mx - dragStartX);
             scrollY = dragStartScrollY - (my - dragStartY);
             clampScroll();
@@ -401,13 +430,13 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
             int localY = my - (canvasY + 1);
             int ax = scrollX + localX;
             int ay = scrollY + localY;
-            if (activeTool == Tool::Hand) {
+            if (activeMenu == Tool::Hand) {
                 dragging = true;
                 dragStartX = mx;
                 dragStartY = my;
                 dragStartScrollX = scrollX;
                 dragStartScrollY = scrollY;
-            } else if (activeTool == Tool::Property) {
+            } else if (activeMenu == Tool::Property) {
                 if (ax >= 0 && ax < working.getWidth() && ay >= 0 && ay < working.getHeight()) {
                     selX = ax;
                     selY = ay;
@@ -581,11 +610,11 @@ void YuiEditorScreen::handleKey(const InputEvent& ev, bool& running) {
     }
 
     if (ev.key == InputKey::Character && ev.ch == ' ') {
-        activeTool = (activeTool == Tool::Hand) ? Tool::Property : Tool::Hand;
+        activeMenu = (activeMenu == Tool::Hand) ? Tool::Property : Tool::Hand;
         return;
     }
 
-    if (activeTool == Tool::Property) {
+    if (activeMenu == Tool::Property) {
         bool moved = false;
         if (!hasSelection) {
             int viewW = canvasW - 2;

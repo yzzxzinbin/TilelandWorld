@@ -32,7 +32,7 @@ private:
     TuiTheme theme;
     InputController input;
 
-    Tool activeTool{Tool::Hand};
+    Tool activeMenu{Tool::Hand};
     int scrollX{0};
     int scrollY{0};
     bool dragging{false};
@@ -90,7 +90,8 @@ private:
     int rightPanelGap{0};
 
     void renderFrame();
-    void drawToolbar();
+    void drawMenubar();
+    void drawSideToolbar();
     void drawCanvas();
     void drawScrollbars();
     void drawPropertyPanel();
