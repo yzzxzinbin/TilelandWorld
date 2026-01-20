@@ -22,7 +22,7 @@ public:
     void show();
 
 private:
-    enum class Tool { Hand, Property };
+    enum class Tool { Hand, Property, RectSelect };
 
     AssetManager& manager;
     std::string assetName;
@@ -35,6 +35,13 @@ private:
     Tool activeMenu{Tool::Hand};
     int scrollX{0};
     int scrollY{0};
+
+    // Rect selection state
+    bool isRectSelecting{false};
+    int rectSelStartX{0}, rectSelStartY{0};
+    int rectSelEndX{0}, rectSelEndY{0};
+    bool hasRectSelection{false};
+
     bool dragging{false};
     int dragStartX{0};
     int dragStartY{0};
@@ -101,6 +108,7 @@ private:
     void handleKey(const InputEvent& ev, bool& running);
     void clampScroll();
     bool isInsideCanvas(int x, int y) const;
+    RGBColor getPerspectiveColor(const ImageCell& cell, const std::string& maskGlyph);
     bool openColorPicker(RGBColor initial, uint8_t initialA, RGBColor& outColor, uint8_t& outA);
     bool openGlyphDialog(const std::string& initial, std::string& outGlyph);
     bool openRenameDialog(const std::string& initial, std::string& outName);

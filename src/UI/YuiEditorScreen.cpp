@@ -199,7 +199,7 @@ void YuiEditorScreen::renderFrame() {
     }
 
     surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), 
-        "Space: toggle tool | Mouse wheel: scroll | Drag (hand): pan | Q: save & back", 
+        "Space: switch tool | Mouse wheel: scroll | Drag (hand): pan | Rect: drag select | Q: back", 
         theme.hintFg, theme.background);
 }
 
@@ -229,19 +229,17 @@ void YuiEditorScreen::drawSideToolbar() {
     // Draw background for the sidebar
     surface.fillRect(tbX, tbY, tbW, tbH, theme.panel, theme.panel, " ");
     
-    // Hand Tool (👆)
-    bool handActive = activeMenu == Tool::Hand;
-    RGBColor handBg = handActive ? YuiUtils::darken(theme.accent, 0.6) : theme.panel;
-    RGBColor handFg = handActive ? RGBColor{255,255,255} : theme.itemFg;
-    surface.fillRect(tbX, tbY, tbW, 1, handBg, handBg, " ");
-    surface.drawText(tbX, tbY, "👆", handFg, handBg);
-    
-    // Property Tool (f129)
-    bool propActive = activeMenu == Tool::Property;
-    RGBColor propBg = propActive ? YuiUtils::darken(theme.accent, 0.6) : theme.panel;
-    RGBColor propFg = propActive ? RGBColor{255,255,255} : theme.itemFg;
-    surface.fillRect(tbX, tbY + 1, tbW, 1, propBg, propBg, " ");
-    surface.drawText(tbX, tbY + 1, "\xEF\x84\xA9\xEF\x84\xA9", propFg, propBg);
+    auto drawTool = [&](int y, const std::string& icon, Tool tool) {
+        bool active = activeMenu == tool;
+        RGBColor bg = active ? YuiUtils::darken(theme.accent, 0.6) : theme.panel;
+        RGBColor fg = active ? RGBColor{255,255,255} : theme.itemFg;
+        surface.fillRect(tbX, y, tbW, 1, bg, bg, " ");
+        surface.drawText(tbX, y, icon, fg, bg);
+    };
+
+    drawTool(tbY, "👆", Tool::Hand);
+    drawTool(tbY + 1, "\xEF\x84\xA9\xEF\x84\xA9", Tool::Property);
+    drawTool(tbY + 2, "\xEF\x80\x89\xEF\x80\x89", Tool::RectSelect); // f009 (Rectangle)
 }
 
 void YuiEditorScreen::drawCanvas() {
@@ -274,6 +272,53 @@ void YuiEditorScreen::drawCanvas() {
             }
             surface.drawText(canvasX + 1 + vx, canvasY + 1 + vy, glyph, fg, bg);
         }
+    }
+
+    if (hasRectSelection) {
+        int x1 = rectSelStartX, y1 = rectSelStartY;
+        int x2 = rectSelEndX, y2 = rectSelEndY;
+        if (x1 > x2) std::swap(x1, x2);
+        if (y1 > y2) std::swap(y1, y2);
+
+        auto drawBorderCell = [&](int ax, int ay, const std::string& drawGlyph, const std::string& maskGlyph, bool swap) {
+            if (ax < 0 || ax >= working.getWidth() || ay < 0 || ay >= working.getHeight()) return;
+            int vx = ax - scrollX;
+            int vy = ay - scrollY;
+            if (vx < 0 || vx >= viewW || vy < 0 || vy >= viewH) return;
+            
+            ImageCell cell = working.compositeCell(ax, ay);
+            RGBColor bgBase = getPerspectiveColor(cell, maskGlyph);
+            
+            // Animated dashed effect (marching ants)
+            auto now = std::chrono::steady_clock::now().time_since_epoch();
+            int ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+            bool isAlt = ((ax + ay + (ms / 300)) % 2 == 0);
+            RGBColor lineCol = isAlt ? RGBColor{255, 255, 255} : RGBColor{60, 60, 60};
+            
+            if (swap) {
+                // For characters like ▇ (7/8 lower), we set background as the line color 
+                // and foreground as the perspective color to produce an inverted top-strip effect.
+                surface.drawText(canvasX + 1 + vx, canvasY + 1 + vy, drawGlyph, bgBase, lineCol);
+            } else {
+                surface.drawText(canvasX + 1 + vx, canvasY + 1 + vy, drawGlyph, lineCol, bgBase);
+            }
+        };
+
+        // Top/Bottom edges: using 1/8 blocks
+        for (int x = x1; x <= x2; x++) {
+            drawBorderCell(x, y1 - 1, "▁", "▄", false); // Top edge: lower 1/8 block
+            drawBorderCell(x, y2 + 1, "▇", "▀", true);  // Bottom edge: upper 1/8 (7/8 block swap)
+        }
+        // Left/Right edges: using 1/4 blocks
+        for (int y = y1; y <= y2; y++) {
+            drawBorderCell(x1 - 1, y, "▊", "▐", true);  // Left edge: right 1/4 (3/4 block swap)
+            drawBorderCell(x2 + 1, y, "▎", "▌", false); // Right edge: left 1/4
+        }
+        // Corners: Keep 2x2 series characters
+        drawBorderCell(x1 - 1, y1 - 1, "▗", "▗", false);
+        drawBorderCell(x2 + 1, y1 - 1, "▖", "▖", false);
+        drawBorderCell(x1 - 1, y2 + 1, "▝", "▝", false);
+        drawBorderCell(x2 + 1, y2 + 1, "▘", "▘", false);
     }
 }
 
@@ -329,13 +374,15 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     hoverLayerImport = false;
 
     // Side toolbar hit-test
-    if (mx >= 1 && mx <= 2 && my >= 5 && my < 7) {
+    if (mx >= 1 && mx <= 2 && my >= 5 && my < 8) {
         if (ev.pressed && ev.button == 0) {
             int idx = my - 5;
             if (idx == 0) {
                 activeMenu = Tool::Hand;
             } else if (idx == 1) {
                 activeMenu = Tool::Property;
+            } else if (idx == 2) {
+                activeMenu = Tool::RectSelect;
             }
         }
         return;
@@ -400,6 +447,9 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
             scrollX = dragStartScrollX - (mx - dragStartX);
             scrollY = dragStartScrollY - (my - dragStartY);
             clampScroll();
+        } else if (isRectSelecting) {
+            rectSelEndX = hoverX;
+            rectSelEndY = hoverY;
         } else if (draggingHThumb && showH) {
             int trackW = viewW;
             int trackX = canvasX + 1;
@@ -436,6 +486,13 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
                 dragStartY = my;
                 dragStartScrollX = scrollX;
                 dragStartScrollY = scrollY;
+            } else if (activeMenu == Tool::RectSelect) {
+                isRectSelecting = true;
+                rectSelStartX = ax;
+                rectSelStartY = ay;
+                rectSelEndX = ax;
+                rectSelEndY = ay;
+                hasRectSelection = true;
             } else if (activeMenu == Tool::Property) {
                 if (ax >= 0 && ax < working.getWidth() && ay >= 0 && ay < working.getHeight()) {
                     selX = ax;
@@ -455,6 +512,7 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
         dragging = false;
         draggingHThumb = false;
         draggingVThumb = false;
+        isRectSelecting = false;
     }
 
     if (hasSelection) {
@@ -610,7 +668,9 @@ void YuiEditorScreen::handleKey(const InputEvent& ev, bool& running) {
     }
 
     if (ev.key == InputKey::Character && ev.ch == ' ') {
-        activeMenu = (activeMenu == Tool::Hand) ? Tool::Property : Tool::Hand;
+        if (activeMenu == Tool::Hand) activeMenu = Tool::Property;
+        else if (activeMenu == Tool::Property) activeMenu = Tool::RectSelect;
+        else activeMenu = Tool::Hand;
         return;
     }
 

@@ -29,5 +29,54 @@ bool YuiEditorScreen::isInsideCanvas(int x, int y) const {
     return x >= canvasX + 1 && x < canvasX + canvasW - 1 && y >= canvasY + 1 && y < canvasY + canvasH - 1;
 }
 
+RGBColor YuiEditorScreen::getPerspectiveColor(const ImageCell& cell, const std::string& maskGlyph) {
+    auto getCoverage = [](const std::string& g) -> std::vector<int> {
+        if (g == "█") return {0,1,2,3};
+        if (g == "▀") return {0,1};
+        if (g == "▄") return {2,3};
+        if (g == "▌") return {0,2};
+        if (g == "▐") return {1,3};
+        if (g == "▘") return {0};
+        if (g == "▝") return {1};
+        if (g == "▖") return {2};
+        if (g == "▗") return {3};
+        if (g == "▚") return {0,3};
+        if (g == "▞") return {1,2};
+        if (g == "▛") return {0,1,2};
+        if (g == "▜") return {0,1,3};
+        if (g == "▙") return {0,2,3};
+        if (g == "▟") return {1,2,3};
+        return {}; 
+    };
+
+    std::vector<int> fgIndices = getCoverage(cell.character);
+    bool isFG[4] = {false, false, false, false};
+    for(int idx : fgIndices) isFG[idx] = true;
+    
+    // Handle precision characters by approximation if needed.
+    // For now, if getCoverage returned empty but it's not a space, we can assume it's a specialty block.
+    if (fgIndices.empty() && cell.character != " ") {
+        // Simple heuristic: if it contains vertical line chars, assume left/right bias.
+        // But let's keep it simple for now as per the "2x2 series" request.
+    }
+
+    std::vector<int> maskIndices = getCoverage(maskGlyph);
+    bool isMask[4] = {false, false, false, false};
+    for(int idx : maskIndices) isMask[idx] = true;
+
+    long r = 0, g = 0, b = 0;
+    int count = 0;
+    for(int i = 0; i < 4; ++i) {
+        if(!isMask[i]) {
+            RGBColor c = isFG[i] ? cell.fg : cell.bg;
+            r += c.r; g += c.g; b += c.b;
+            count++;
+        }
+    }
+    
+    if(count == 0) return cell.bg;
+    return { (uint8_t)(r/count), (uint8_t)(g/count), (uint8_t)(b/count) };
+}
+
 } // namespace UI
 } // namespace TilelandWorld
