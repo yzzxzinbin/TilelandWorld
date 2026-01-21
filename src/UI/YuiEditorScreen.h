@@ -49,6 +49,18 @@ private:
     int confirmedX1{0}, confirmedY1{0}, confirmedX2{0}, confirmedY2{0};
     std::vector<ImageCell> selectionBuffer;
     int selectionBufW{0}, selectionBufH{0};
+    int cutOriginX{0}, cutOriginY{0};
+    std::vector<ImageCell> originalRectData;
+
+    // Clipboard (transfer area)
+    std::vector<ImageCell> clipboardBuffer;
+    int clipboardW{0}, clipboardH{0};
+
+    // Canvas Context Menu
+    ContextMenuState canvasMenuState{};
+    std::vector<std::string> canvasMenuItems;
+    int canvasMenuType{0}; // 0: none, 1: selection menu, 2: general menu
+    int canvasMenuAX{0}, canvasMenuAY{0}; // coordinate where right-clicked
 
     bool dragging{false};
     int dragStartX{0};

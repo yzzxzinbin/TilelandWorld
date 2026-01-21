@@ -198,6 +198,10 @@ void YuiEditorScreen::renderFrame() {
         ContextMenu::render(surface, opts, layerMenuState);
     }
 
+    if (canvasMenuState.visible) {
+        ContextMenu::render(surface, canvasMenuItems, canvasMenuState);
+    }
+
     surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), 
         "Space: switch tool | Mouse wheel: scroll | Drag (hand): pan | Rect: drag select | Q: back", 
         theme.hintFg, theme.background);
@@ -381,6 +385,82 @@ void YuiEditorScreen::drawScrollbars() {
 void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     int mx = ev.x;
     int my = ev.y;
+
+    if (canvasMenuState.visible) {
+        bool requestClose = false;
+        int choice = ContextMenu::handleInput(ev, canvasMenuItems, canvasMenuState, requestClose);
+        if (choice >= 0) {
+            if (canvasMenuType == 1) { // Selection Menu
+                if (choice == 0) { // Copy
+                    clipboardBuffer = selectionBuffer;
+                    clipboardW = selectionBufW;
+                    clipboardH = selectionBufH;
+                    // Restore original cells if they were cut
+                    if (cutOriginX >= 0) {
+                        for (int i = 0; i < (int)originalRectData.size(); ++i) {
+                            int tx = cutOriginX + (i % selectionBufW);
+                            int ty = cutOriginY + (i / selectionBufW);
+                            if (tx >= 0 && ty >= 0 && tx < working.getWidth() && ty < working.getHeight())
+                                working.setActiveCell(tx, ty, originalRectData[i]);
+                        }
+                        cutOriginX = -1; // No longer a "Cut" selection, now a "Stamp"
+                    }
+                } else if (choice == 1) { // Cut
+                    clipboardBuffer = selectionBuffer;
+                    clipboardW = selectionBufW;
+                    clipboardH = selectionBufH;
+                    hasRectSelection = false;
+                    rectSelectionConfirmed = false;
+                    selectionBuffer.clear();
+                } else if (choice == 2) { // New Layer
+                    working.addLayer(YuiLayer(working.getWidth(), working.getHeight(), "New Layer " + std::to_string(working.getLayerCount() + 1)));
+                    working.setActiveLayerIndex(working.getLayerCount() - 1);
+                } else if (choice == 3) { // Delete
+                    hasRectSelection = false;
+                    rectSelectionConfirmed = false;
+                    selectionBuffer.clear();
+                }
+            } else if (canvasMenuType == 2) { // General Menu
+                if (choice == 0) { // Paste
+                    if (hasRectSelection && rectSelectionConfirmed) {
+                        // Restore previous selection if it was a Cut
+                        if (cutOriginX >= 0) {
+                            for (int i = 0; i < (int)originalRectData.size(); ++i) {
+                                int tx = cutOriginX + (i % selectionBufW);
+                                int ty = cutOriginY + (i / selectionBufW);
+                                if (tx >= 0 && ty >= 0 && tx < working.getWidth() && ty < working.getHeight())
+                                    working.setActiveCell(tx, ty, originalRectData[i]);
+                            }
+                        }
+                    }
+                    hasRectSelection = false;
+                    rectSelectionConfirmed = false;
+                    selectionBuffer.clear();
+
+                    selectionBuffer = clipboardBuffer;
+                    selectionBufW = clipboardW;
+                    selectionBufH = clipboardH;
+                    rectSelStartX = canvasMenuAX;
+                    rectSelStartY = canvasMenuAY;
+                    rectSelEndX = rectSelStartX + selectionBufW - 1;
+                    rectSelEndY = rectSelStartY + selectionBufH - 1;
+                    
+                    // Paste starts as a Stamp (no Cut origin)
+                    cutOriginX = -1;
+                    originalRectData.clear();
+
+                    hasRectSelection = true;
+                    rectSelectionConfirmed = true;
+                    activeMenu = Tool::Hand;
+                    movingSelection = false;
+                }
+            }
+        }
+        if (requestClose) canvasMenuState.visible = false;
+        if (ev.pressed) return;
+        if (ev.move && canvasMenuState.visible) return;
+    }
+
     hoverHThumb = false;
     hoverVThumb = false;
     hoverConfirm = false;
@@ -500,6 +580,49 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
         return;
     }
 
+    if (ev.button == 2 && ev.pressed) {
+        if (isInsideCanvas(mx, my)) {
+            int localX = mx - (canvasX + 1);
+            int localY = my - (canvasY + 1);
+            int ax = scrollX + localX;
+            int ay = scrollY + localY;
+            canvasMenuAX = ax;
+            canvasMenuAY = ay;
+
+            bool insideSelection = false;
+            if (hasRectSelection && rectSelectionConfirmed) {
+                int x1 = rectSelStartX, y1 = rectSelStartY, x2 = rectSelEndX, y2 = rectSelEndY;
+                if (x1 > x2) std::swap(x1, x2);
+                if (y1 > y2) std::swap(y1, y2);
+                if (ax >= x1 && ax <= x2 && ay >= y1 && ay <= y2) insideSelection = true;
+            }
+
+            if (insideSelection) {
+                canvasMenuType = 1;
+                canvasMenuItems = {"复制 (Copy)", "剪切 (Cut)", "创建新图层 (New Layer)", "删除 (Delete)"};
+                canvasMenuState.visible = true;
+                canvasMenuState.x = mx;
+                canvasMenuState.y = my;
+                canvasMenuState.selectedIndex = 0;
+                canvasMenuState.width = ContextMenu::calculateWidth(canvasMenuItems);
+            } else {
+                canvasMenuItems.clear();
+                if (!clipboardBuffer.empty()) {
+                    canvasMenuItems.push_back("粘贴 (Paste)");
+                }
+                if (!canvasMenuItems.empty()) {
+                    canvasMenuType = 2;
+                    canvasMenuState.visible = true;
+                    canvasMenuState.x = mx;
+                    canvasMenuState.y = my;
+                    canvasMenuState.selectedIndex = 0;
+                    canvasMenuState.width = ContextMenu::calculateWidth(canvasMenuItems);
+                }
+            }
+            return;
+        }
+    }
+
     if (ev.button == 0 && ev.pressed) {
         if (isInsideCanvas(mx, my)) {
             int localX = mx - (canvasX + 1);
@@ -543,10 +666,17 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
                         selectionBufH = y2 - y1 + 1;
                         selectionBuffer.clear();
                         selectionBuffer.reserve(selectionBufW * selectionBufH);
+                        originalRectData.clear();
+                        originalRectData.reserve(selectionBufW * selectionBufH);
+                        cutOriginX = x1;
+                        cutOriginY = y1;
+
                         auto& layer = working.activeLayerRef();
                         for (int ty = rectSelStartY; ty <= rectSelEndY; ++ty) {
                             for (int tx = rectSelStartX; tx <= rectSelEndX; ++tx) {
-                                selectionBuffer.push_back(layer.getCell(tx, ty));
+                                ImageCell cell = layer.getCell(tx, ty);
+                                selectionBuffer.push_back(cell);
+                                originalRectData.push_back(cell);
                                 working.setActiveCell(tx, ty, {" ", {0,0,0}, {0,0,0}, 0, 0});
                             }
                         }
@@ -754,6 +884,30 @@ void YuiEditorScreen::handleKey(const InputEvent& ev, bool& running) {
             rectSelectionConfirmed = false;
             isRectSelecting = false;
             selectionBuffer.clear();
+            return;
+        }
+    }
+
+    if (ev.key == InputKey::Escape) {
+        if (hasRectSelection && rectSelectionConfirmed) {
+            // Revert cut logic ONLY if it was a Cut (cutOriginX >= 0)
+            if (cutOriginX >= 0) {
+                for (int i = 0; i < (int)originalRectData.size(); ++i) {
+                    int tx = cutOriginX + (i % selectionBufW);
+                    int ty = cutOriginY + (i / selectionBufW);
+                    if (tx >= 0 && ty >= 0 && tx < working.getWidth() && ty < working.getHeight())
+                        working.setActiveCell(tx, ty, originalRectData[i]);
+                }
+            }
+            hasRectSelection = false;
+            rectSelectionConfirmed = false;
+            movingSelection = false;
+            selectionBuffer.clear();
+            return;
+        } else if (hasRectSelection) {
+            // Discard unconfirmed selection
+            hasRectSelection = false;
+            isRectSelecting = false;
             return;
         }
     }
