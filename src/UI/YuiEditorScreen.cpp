@@ -257,18 +257,35 @@ void YuiEditorScreen::drawCanvas() {
             RGBColor bg = theme.panel;
             RGBColor fg = theme.itemFg;
             std::string glyph = " ";
-            if (ax >= 0 && ax < working.getWidth() && ay >= 0 && ay < working.getHeight()) {
-                const auto cell = working.compositeCell(ax, ay);
-                glyph = cell.character.empty() ? " " : cell.character;
-                fg = cell.fg;
-                bg = (cell.bgA == 0) ? theme.panel : cell.bg;
-                if (hoverValid && ax == hoverX && ay == hoverY) {
+            if (ax < 0 || ax >= working.getWidth() || ay < 0 || ay >= working.getHeight()) continue;
+
+            ImageCell cell = working.compositeCell(ax, ay);
+            
+            // If movement is active or confirmed, we overlay selectionBuffer over this cell
+            if (hasRectSelection && rectSelectionConfirmed) {
+                int x1 = rectSelStartX, y1 = rectSelStartY, x2 = rectSelEndX, y2 = rectSelEndY;
+                if (x1 > x2) std::swap(x1, x2);
+                if (y1 > y2) std::swap(y1, y2);
+                if (ax >= x1 && ax <= x2 && ay >= y1 && ay <= y2) {
+                    int bx = ax - x1;
+                    int by = ay - y1;
+                    if (bx >= 0 && bx < selectionBufW && by >= 0 && by < selectionBufH) {
+                        cell = selectionBuffer[by * selectionBufW + bx];
+                    }
+                }
+            }
+
+            glyph = cell.character.empty() ? " " : cell.character;
+            fg = cell.fg;
+            bg = (cell.bgA == 0) ? theme.panel : cell.bg;
+            if (hoverValid && ax == hoverX && ay == hoverY) {
+                if (!movingSelection && (!rectSelectionConfirmed || activeMenu != Tool::Hand)) {
                     fg = TuiUtils::blendColor(fg, {255,255,255}, 0.2);
                     bg = TuiUtils::blendColor(bg, {255,255,255}, 0.2);
                 }
-                if (hasSelection && ax == selX && ay == selY) {
-                    bg = TuiUtils::blendColor(bg, theme.focusBg, 0.35);
-                }
+            }
+            if (hasSelection && ax == selX && ay == selY) {
+                bg = TuiUtils::blendColor(bg, theme.focusBg, 0.35);
             }
             surface.drawText(canvasX + 1 + vx, canvasY + 1 + vy, glyph, fg, bg);
         }
@@ -280,7 +297,7 @@ void YuiEditorScreen::drawCanvas() {
         if (x1 > x2) std::swap(x1, x2);
         if (y1 > y2) std::swap(y1, y2);
 
-        auto drawBorderCell = [&](int ax, int ay, const std::string& drawGlyph, const std::string& maskGlyph, bool swap) {
+        auto drawBorderCell = [&](int ax, int ay, const std::string& drawGlyph, const std::string& maskGlyph, bool swap, int interval = 1) {
             if (ax < 0 || ax >= working.getWidth() || ay < 0 || ay >= working.getHeight()) return;
             int vx = ax - scrollX;
             int vy = ay - scrollY;
@@ -292,7 +309,7 @@ void YuiEditorScreen::drawCanvas() {
             // Animated dashed effect (marching ants)
             auto now = std::chrono::steady_clock::now().time_since_epoch();
             int ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
-            bool isAlt = ((ax + ay + (ms / 300)) % 2 == 0);
+            bool isAlt = (((ax / interval) + ay + (rectSelectionConfirmed ? 0 : (ms / 300))) % 2 == 0);
             RGBColor lineCol = isAlt ? RGBColor{255, 255, 255} : RGBColor{60, 60, 60};
             
             if (swap) {
@@ -306,8 +323,8 @@ void YuiEditorScreen::drawCanvas() {
 
         // Top/Bottom edges: using 1/8 blocks
         for (int x = x1; x <= x2; x++) {
-            drawBorderCell(x, y1 - 1, "▁", "▄", false); // Top edge: lower 1/8 block
-            drawBorderCell(x, y2 + 1, "▇", "▀", true);  // Bottom edge: upper 1/8 (7/8 block swap)
+            drawBorderCell(x, y1 - 1, "▁", "▄", false, 2); // Top edge: lower 1/8 block, interval 2
+            drawBorderCell(x, y2 + 1, "▇", "▀", true, 2);  // Bottom edge: upper 1/8 (7/8 block swap), interval 2
         }
         // Left/Right edges: using 1/4 blocks
         for (int y = y1; y <= y2; y++) {
@@ -443,7 +460,16 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     if (!showV) draggingVThumb = false;
 
     if (!ev.pressed && ev.button == 0 && ev.move) {
-        if (dragging && activeMenu == Tool::Hand) {
+        if (movingSelection) {
+            int dx = hoverX - selDragStartAX;
+            int dy = hoverY - selDragStartAY;
+            rectSelStartX += dx;
+            rectSelEndX += dx;
+            rectSelStartY += dy;
+            rectSelEndY += dy;
+            selDragStartAX = hoverX;
+            selDragStartAY = hoverY;
+        } else if (dragging && activeMenu == Tool::Hand) {
             scrollX = dragStartScrollX - (mx - dragStartX);
             scrollY = dragStartScrollY - (my - dragStartY);
             clampScroll();
@@ -481,18 +507,60 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
             int ax = scrollX + localX;
             int ay = scrollY + localY;
             if (activeMenu == Tool::Hand) {
+                if (rectSelectionConfirmed && hasRectSelection) {
+                    int x1 = rectSelStartX, y1 = rectSelStartY, x2 = rectSelEndX, y2 = rectSelEndY;
+                    if (x1 > x2) std::swap(x1, x2);
+                    if (y1 > y2) std::swap(y1, y2);
+                    if (ax >= x1 && ax <= x2 && ay >= y1 && ay <= y2) {
+                        movingSelection = true;
+                        selDragStartAX = ax;
+                        selDragStartAY = ay;
+                        return;
+                    }
+                }
                 dragging = true;
                 dragStartX = mx;
                 dragStartY = my;
                 dragStartScrollX = scrollX;
                 dragStartScrollY = scrollY;
             } else if (activeMenu == Tool::RectSelect) {
+                if (hasRectSelection && !rectSelectionConfirmed && !isRectSelecting) {
+                    int x1 = rectSelStartX, y1 = rectSelStartY, x2 = rectSelEndX, y2 = rectSelEndY;
+                    if (x1 > x2) std::swap(x1, x2);
+                    if (y1 > y2) std::swap(y1, y2);
+                    if (ax >= x1 && ax <= x2 && ay >= y1 && ay <= y2) {
+                        rectSelectionConfirmed = true;
+                        activeMenu = Tool::Hand;
+                        
+                        // Normalize selection range
+                        rectSelStartX = x1;
+                        rectSelStartY = y1;
+                        rectSelEndX = x2;
+                        rectSelEndY = y2;
+
+                        // Fill selectionBuffer once
+                        selectionBufW = x2 - x1 + 1;
+                        selectionBufH = y2 - y1 + 1;
+                        selectionBuffer.clear();
+                        selectionBuffer.reserve(selectionBufW * selectionBufH);
+                        auto& layer = working.activeLayerRef();
+                        for (int ty = rectSelStartY; ty <= rectSelEndY; ++ty) {
+                            for (int tx = rectSelStartX; tx <= rectSelEndX; ++tx) {
+                                selectionBuffer.push_back(layer.getCell(tx, ty));
+                                working.setActiveCell(tx, ty, {" ", {0,0,0}, {0,0,0}, 0, 0});
+                            }
+                        }
+                        return;
+                    }
+                }
                 isRectSelecting = true;
                 rectSelStartX = ax;
                 rectSelStartY = ay;
                 rectSelEndX = ax;
                 rectSelEndY = ay;
                 hasRectSelection = true;
+                rectSelectionConfirmed = false;
+                selectionBuffer.clear();
             } else if (activeMenu == Tool::Property) {
                 if (ax >= 0 && ax < working.getWidth() && ay >= 0 && ay < working.getHeight()) {
                     selX = ax;
@@ -509,6 +577,9 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     }
 
     if (ev.button == 0 && !ev.pressed) {
+        if (movingSelection) {
+            movingSelection = false;
+        }
         dragging = false;
         draggingHThumb = false;
         draggingVThumb = false;
@@ -660,6 +731,31 @@ void YuiEditorScreen::handleKey(const InputEvent& ev, bool& running) {
             pendingOpacity = std::clamp(val / 100.0, 0.0, 1.0);
         } catch (...) {}
         return;
+    }
+
+    if (ev.key == InputKey::Enter) {
+        if (hasRectSelection && rectSelectionConfirmed) {
+            int x1 = rectSelStartX, y1 = rectSelStartY, x2 = rectSelEndX, y2 = rectSelEndY;
+            if (x1 > x2) std::swap(x1, x2);
+            if (y1 > y2) std::swap(y1, y2);
+            
+            for (int by = 0; by < selectionBufH; ++by) {
+                for (int bx = 0; bx < selectionBufW; ++bx) {
+                    working.setActiveCell(x1 + bx, y1 + by, selectionBuffer[by * selectionBufW + bx]);
+                }
+            }
+            hasRectSelection = false;
+            rectSelectionConfirmed = false;
+            movingSelection = false;
+            selectionBuffer.clear();
+            return;
+        } else if (hasRectSelection) {
+            hasRectSelection = false;
+            rectSelectionConfirmed = false;
+            isRectSelecting = false;
+            selectionBuffer.clear();
+            return;
+        }
     }
 
     if (ev.key == InputKey::Character && (ev.ch == 'q' || ev.ch == 'Q')) {

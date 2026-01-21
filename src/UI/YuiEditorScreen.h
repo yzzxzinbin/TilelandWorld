@@ -41,6 +41,14 @@ private:
     int rectSelStartX{0}, rectSelStartY{0};
     int rectSelEndX{0}, rectSelEndY{0};
     bool hasRectSelection{false};
+    bool rectSelectionConfirmed{false};
+
+    // Movement state for confirmed selection
+    bool movingSelection{false};
+    int selDragStartAX{0}, selDragStartAY{0};
+    int confirmedX1{0}, confirmedY1{0}, confirmedX2{0}, confirmedY2{0};
+    std::vector<ImageCell> selectionBuffer;
+    int selectionBufW{0}, selectionBufH{0};
 
     bool dragging{false};
     int dragStartX{0};
