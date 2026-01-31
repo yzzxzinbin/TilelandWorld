@@ -26,8 +26,13 @@ struct MenuDropBoxState {
     int subMenuX = 0;
     int subMenuY = 0;
     int subSelectedIndex = -1;
+    int subSubMenuIndex = -1; // Third-level submenu index inside the active submenu
+    int subSubMenuX = 0;
+    int subSubMenuY = 0;
+    int subSubSelectedIndex = -1;
     int width = 0;
     int subWidth = 0;
+    int subSubWidth = 0;
 };
 
 class MenuDropBox {

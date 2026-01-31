@@ -34,6 +34,13 @@ void MenuDropBox::render(TuiSurface& surface, const std::vector<MenuDropBoxItem>
         const auto& subItems = items[state.subMenuIndex].subItems;
         if (!subItems.empty()) {
             drawMenu(state.subMenuX, state.subMenuY, state.subWidth, subItems, state.subSelectedIndex);
+
+            if (state.subSubMenuIndex >= 0 && state.subSubMenuIndex < (int)subItems.size()) {
+                const auto& thirdItems = subItems[state.subSubMenuIndex].subItems;
+                if (!thirdItems.empty()) {
+                    drawMenu(state.subSubMenuX, state.subSubMenuY, state.subSubWidth, thirdItems, state.subSubSelectedIndex);
+                }
+            }
         }
     }
 }
@@ -55,6 +62,17 @@ int MenuDropBox::handleInput(const InputEvent& ev, const std::vector<MenuDropBox
         inSub = (ev.x >= state.subMenuX && ev.x < state.subMenuX + subW && ev.y >= state.subMenuY && ev.y < state.subMenuY + subH);
     }
 
+    // Bounds for third-level submenu
+    bool inSubSub = false;
+    if (state.subMenuIndex >= 0 && state.subSubMenuIndex >= 0) {
+        const auto& subItems = items[state.subMenuIndex].subItems;
+        if (!subItems.empty() && state.subSubMenuIndex < (int)subItems.size()) {
+            int subSubW = state.subSubWidth;
+            int subSubH = (int)subItems[state.subSubMenuIndex].subItems.size();
+            inSubSub = (ev.x >= state.subSubMenuX && ev.x < state.subSubMenuX + subSubW && ev.y >= state.subSubMenuY && ev.y < state.subSubMenuY + subSubH);
+        }
+    }
+
     if (ev.type == InputEvent::Type::Mouse) {
         if (inMain) {
             int idx = ev.y - state.y;
@@ -65,8 +83,10 @@ int MenuDropBox::handleInput(const InputEvent& ev, const std::vector<MenuDropBox
                 state.subMenuY = state.y + idx;
                 state.subWidth = calculateWidth(items[idx].subItems);
                 state.subSelectedIndex = -1;
+                state.subSubMenuIndex = -1;
             } else {
                 state.subMenuIndex = -1;
+                state.subSubMenuIndex = -1;
             }
 
             if (ev.pressed && ev.button == 0 && !items[idx].hasSubmenu) {
@@ -77,9 +97,30 @@ int MenuDropBox::handleInput(const InputEvent& ev, const std::vector<MenuDropBox
         } else if (inSub) {
             int sidx = ev.y - state.subMenuY;
             state.subSelectedIndex = sidx;
+            const auto& subItems = items[state.subMenuIndex].subItems;
+
+            if (subItems[sidx].hasSubmenu) {
+                state.subSubMenuIndex = sidx;
+                state.subSubMenuX = state.subMenuX + state.subWidth;
+                state.subSubMenuY = state.subMenuY + sidx;
+                state.subSubWidth = calculateWidth(subItems[sidx].subItems);
+                state.subSubSelectedIndex = -1;
+                return -2;
+            } else {
+                state.subSubMenuIndex = -1;
+            }
+
             if (ev.pressed && ev.button == 0) {
                 requestClose = true;
-                return 1000 + sidx;
+                return 1000 * (state.subMenuIndex + 1) + sidx;
+            }
+            return -2;
+        } else if (inSubSub) {
+            int ssidx = ev.y - state.subSubMenuY;
+            state.subSubSelectedIndex = ssidx;
+            if (ev.pressed && ev.button == 0) {
+                requestClose = true;
+                return 100000 * (state.subMenuIndex + 1) + state.subSelectedIndex * 100 + ssidx;
             }
             return -2;
         } else {

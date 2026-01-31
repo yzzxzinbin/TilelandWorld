@@ -3,6 +3,7 @@
 #include "TuiUtils.h"
 #include "DirectoryBrowserScreen.h"
 #include "TextField.h"
+#include "YuiExporter.h"
 #include "../Utils/EnvConfig.h"
 #include <algorithm>
 #include <sstream>
@@ -28,12 +29,17 @@ void YuiEditorScreen::initFileMenu() {
     fileMenuItems.push_back({" 保存 (Save)", false, {}, nullptr});
     fileMenuItems.push_back({" 打开 (Open)", false, {}, nullptr});
     fileMenuItems.push_back({" 另存为 (Save As)", false, {}, nullptr});
-    
+
+    std::vector<MenuDropBoxItem> formatItems;
+    formatItems.push_back({" BMP", false, {}, nullptr});
+    formatItems.push_back({" PNG", false, {}, nullptr});
+    formatItems.push_back({" JPG", false, {}, nullptr});
+
     MenuDropBoxItem exportItem;
     exportItem.label = " 导出 (Export)";
     exportItem.hasSubmenu = true;
-    exportItem.subItems.push_back({" PNG 图像 (Placeholder)", false, {}, nullptr});
-    exportItem.subItems.push_back({" 纯文本 (Placeholder)", false, {}, nullptr});
+    exportItem.subItems.push_back({" 像素化导出 (Block to Pixel)", true, formatItems, nullptr});
+    exportItem.subItems.push_back({" 全真导出 (Block to Block)", true, formatItems, nullptr});
     fileMenuItems.push_back(exportItem);
 
     fileMenuState.width = MenuDropBox::calculateWidth(fileMenuItems);
@@ -409,7 +415,43 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     if (fileMenuState.visible) {
         bool requestClose = false;
         int choice = MenuDropBox::handleInput(ev, fileMenuItems, fileMenuState, requestClose);
-        if (choice >= 0) {
+        constexpr int kExportMenuIndex = 3;
+        if (choice >= 100000) {
+            int mainIdx = choice / 100000 - 1;
+            int rem = choice % 100000;
+            int subIdx = rem / 100;
+            int fmtIdx = rem % 100;
+            if (mainIdx == kExportMenuIndex) {
+                YuiExporter::Mode mode = (subIdx == 0) ? YuiExporter::Mode::BlockToPixel : YuiExporter::Mode::BlockToBlock;
+                YuiExporter::Format fmt = YuiExporter::Format::BMP;
+                std::string ext = ".bmp";
+                if (fmtIdx == 1) {
+                    fmt = YuiExporter::Format::PNG;
+                    ext = ".png";
+                } else if (fmtIdx == 2) {
+                    fmt = YuiExporter::Format::JPG;
+                    ext = ".jpg";
+                }
+                if (fmtIdx >= 0 && fmtIdx <= 2 && (subIdx == 0 || subIdx == 1)) {
+                    std::string suffix = (subIdx == 0) ? "_pixel" : "_full";
+                    std::string path = manager.getRootDir() + "/" + assetName + suffix + ext;
+                    YuiExporter::exportToImage(working, path, mode, fmt);
+                }
+            }
+        } else if (choice >= 1000) {
+            // Fallback for second-level clicks without choosing format: default to BMP
+            int mainIdx = choice / 1000 - 1;
+            int subIdx = choice % 1000;
+            if (mainIdx == kExportMenuIndex) {
+                if (subIdx == 0) {
+                    std::string path = manager.getRootDir() + "/" + assetName + "_pixel.bmp";
+                    YuiExporter::exportToImage(working, path, YuiExporter::Mode::BlockToPixel, YuiExporter::Format::BMP);
+                } else if (subIdx == 1) {
+                    std::string path = manager.getRootDir() + "/" + assetName + "_full.bmp";
+                    YuiExporter::exportToImage(working, path, YuiExporter::Mode::BlockToBlock, YuiExporter::Format::BMP);
+                }
+            }
+        } else if (choice >= 0) {
             if (choice == 0) { // Save
                 manager.saveLayeredAsset(working, assetName, scrollX, scrollY, std::max(0, canvasW - 2), std::max(0, canvasH - 2));
             } else if (choice == 1) { // Open
@@ -448,8 +490,6 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
                     }
                 }
             }
-        } else if (choice >= 1000) {
-            // Submenu export items placeholders
         }
         if (requestClose) fileMenuState.visible = false;
         if (ev.pressed) return;
@@ -573,6 +613,7 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
                 fileMenuState.y = kToolbarY + 1;
                 fileMenuState.selectedIndex = -1;
                 fileMenuState.subMenuIndex = -1;
+                fileMenuState.subSubMenuIndex = -1;
             } else if (mx >= layersStart && mx < layersEnd) {
                 showLayers = !showLayers;
                 dragging = false;
