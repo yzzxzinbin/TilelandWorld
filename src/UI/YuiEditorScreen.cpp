@@ -515,15 +515,33 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     if (handleLayerPanelMouse(ev)) {
         return;
     }
-    if (isInsideCanvas(mx, my)) {
-        int localX = mx - (canvasX + 1);
-        int localY = my - (canvasY + 1);
-        hoverX = scrollX + localX;
-        hoverY = scrollY + localY;
-        hoverValid = true;
-    } else {
-        hoverValid = false;
+
+    // Canvas coordinate mapping
+    int localX = mx - (canvasX + 1);
+    int localY = my - (canvasY + 1);
+    bool insideCanvas = isInsideCanvas(mx, my);
+    hoverValid = insideCanvas;
+
+    // Auto-scroll when dragging outside canvas
+    if (!ev.pressed && ev.button == 0 && ev.move && (isRectSelecting || movingSelection)) {
+        int scrollDx = 0, scrollDy = 0;
+        // Clamp speed to [-3, 3] for control
+        if (mx <= canvasX) scrollDx = std::max(-3, mx - (canvasX + 1));
+        else if (mx >= canvasX + canvasW - 1) scrollDx = std::min(3, mx - (canvasX + canvasW - 2));
+        
+        if (my <= canvasY) scrollDy = std::max(-3, my - (canvasY + 1));
+        else if (my >= canvasY + canvasH - 1) scrollDy = std::min(3, my - (canvasY + canvasH - 2));
+
+        if (scrollDx != 0 || scrollDy != 0) {
+            scrollX += scrollDx;
+            scrollY += scrollDy;
+            clampScroll();
+        }
     }
+
+    // Update hover world coordinates
+    hoverX = scrollX + localX;
+    hoverY = scrollY + localY;
 
     if (ev.wheel != 0) {
         scrollY -= ev.wheel * 3;
@@ -581,9 +599,7 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     }
 
     if (ev.button == 2 && ev.pressed) {
-        if (isInsideCanvas(mx, my)) {
-            int localX = mx - (canvasX + 1);
-            int localY = my - (canvasY + 1);
+        if (insideCanvas) {
             int ax = scrollX + localX;
             int ay = scrollY + localY;
             canvasMenuAX = ax;
@@ -624,9 +640,7 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     }
 
     if (ev.button == 0 && ev.pressed) {
-        if (isInsideCanvas(mx, my)) {
-            int localX = mx - (canvasX + 1);
-            int localY = my - (canvasY + 1);
+        if (insideCanvas) {
             int ax = scrollX + localX;
             int ay = scrollY + localY;
             if (activeMenu == Tool::Hand) {
