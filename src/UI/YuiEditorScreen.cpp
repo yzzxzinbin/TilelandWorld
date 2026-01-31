@@ -21,6 +21,22 @@ YuiEditorScreen::YuiEditorScreen(AssetManager& manager_, std::string assetName_,
     : manager(manager_), assetName(std::move(assetName_)), working(std::move(asset_)), surface(100, 40) {
     pendingOpacity = working.getLayer(working.getActiveLayerIndex()).getOpacity();
     opacityText = std::to_string(static_cast<int>(pendingOpacity * 100));
+    initFileMenu();
+}
+
+void YuiEditorScreen::initFileMenu() {
+    fileMenuItems.push_back({" 保存 (Save)", false, {}, nullptr});
+    fileMenuItems.push_back({" 打开 (Open)", false, {}, nullptr});
+    fileMenuItems.push_back({" 另存为 (Save As)", false, {}, nullptr});
+    
+    MenuDropBoxItem exportItem;
+    exportItem.label = " 导出 (Export)";
+    exportItem.hasSubmenu = true;
+    exportItem.subItems.push_back({" PNG 图像 (Placeholder)", false, {}, nullptr});
+    exportItem.subItems.push_back({" 纯文本 (Placeholder)", false, {}, nullptr});
+    fileMenuItems.push_back(exportItem);
+
+    fileMenuState.width = MenuDropBox::calculateWidth(fileMenuItems);
 }
 
 void YuiEditorScreen::show() {
@@ -200,6 +216,10 @@ void YuiEditorScreen::renderFrame() {
 
     if (canvasMenuState.visible) {
         ContextMenu::render(surface, canvasMenuItems, canvasMenuState);
+    }
+
+    if (fileMenuState.visible) {
+        MenuDropBox::render(surface, fileMenuItems, fileMenuState, theme);
     }
 
     surface.drawCenteredText(0, surface.getHeight() - 2, surface.getWidth(), 
@@ -386,6 +406,56 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
     int mx = ev.x;
     int my = ev.y;
 
+    if (fileMenuState.visible) {
+        bool requestClose = false;
+        int choice = MenuDropBox::handleInput(ev, fileMenuItems, fileMenuState, requestClose);
+        if (choice >= 0) {
+            if (choice == 0) { // Save
+                manager.saveLayeredAsset(working, assetName, scrollX, scrollY, std::max(0, canvasW - 2), std::max(0, canvasH - 2));
+            } else if (choice == 1) { // Open
+                // Stop current input controller to prevent thread contention with nested screen
+                input.stop();
+                DirectoryBrowserScreen browser(manager.getRootDir(), true, ".tlimg");
+                auto res = browser.show();
+                // Restart input controller and re-apply VT/Mouse modes
+                input.start();
+
+                if (!res.empty()) {
+                    try {
+                        YuiLayeredImage next = YuiLayeredImage::load(res[0]);
+                        working = std::move(next);
+                        // Use stem to avoid double extension when saving later
+                        assetName = std::filesystem::path(res[0]).stem().string();
+                        hasSelection = false;
+                        hasStaged = false;
+                        hasRectSelection = false;
+                        rectSelectionConfirmed = false;
+                        isRectSelecting = false;
+                        selectionBuffer.clear();
+                    } catch (...) {}
+                }
+            } else if (choice == 2) { // Save As
+                std::string newName = assetName;
+                if (openRenameDialog(assetName, newName, "Save As (TLIMG)")) {
+                    if (!newName.empty()) {
+                        // If user accidentally type extension, strip it because AssetManager appends it
+                        std::filesystem::path p(newName);
+                        if (p.extension() == ".tlimg") {
+                            newName = p.stem().string();
+                        }
+                        assetName = newName;
+                        manager.saveLayeredAsset(working, assetName, scrollX, scrollY, std::max(0, canvasW - 2), std::max(0, canvasH - 2));
+                    }
+                }
+            }
+        } else if (choice >= 1000) {
+            // Submenu export items placeholders
+        }
+        if (requestClose) fileMenuState.visible = false;
+        if (ev.pressed) return;
+        if (ev.move && fileMenuState.visible) return;
+    }
+
     if (canvasMenuState.visible) {
         bool requestClose = false;
         int choice = ContextMenu::handleInput(ev, canvasMenuItems, canvasMenuState, requestClose);
@@ -498,7 +568,11 @@ void YuiEditorScreen::handleMouse(const InputEvent& ev, bool& running) {
 
         if (ev.button == 0 && ev.pressed) {
             if (mx >= fileStart && mx < fileEnd) {
-                // File menu placeholder
+                fileMenuState.visible = !fileMenuState.visible;
+                fileMenuState.x = fileStart;
+                fileMenuState.y = kToolbarY + 1;
+                fileMenuState.selectedIndex = -1;
+                fileMenuState.subMenuIndex = -1;
             } else if (mx >= layersStart && mx < layersEnd) {
                 showLayers = !showLayers;
                 dragging = false;

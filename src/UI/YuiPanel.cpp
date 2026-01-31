@@ -596,7 +596,7 @@ bool YuiEditorScreen::openGlyphDialog(const std::string& initial, std::string& o
     return accepted;
 }
 
-bool YuiEditorScreen::openRenameDialog(const std::string& initial, std::string& outName) {
+bool YuiEditorScreen::openRenameDialog(const std::string& initial, std::string& outName, const std::string& title) {
     std::string name = initial;
     bool running = true;
     bool accepted = false;
@@ -627,7 +627,7 @@ bool YuiEditorScreen::openRenameDialog(const std::string& initial, std::string& 
         
         surface.drawFrame(dx, dy, boxW, boxH, kFrame, theme.itemFg, theme.panel);
         surface.fillRect(dx + 1, dy + 1, boxW - 2, 1, theme.title, theme.background, " ");
-        surface.drawText(dx + 2, dy + 1, "Rename Layer", theme.title, theme.background);
+        surface.drawText(dx + 2, dy + 1, title, theme.title, theme.background);
         
         surface.drawText(dx + 2, dy + 3, "New Name:", theme.itemFg, theme.panel);
         

@@ -9,6 +9,7 @@
 #include "../ImgAssetsInfrastructure/ImageAsset.h"
 #include "../ImgAssetsInfrastructure/YuiLayer.h"
 #include "ContextMenu.h"
+#include "MenuDropBox.h"
 #include "TextField.h"
 #include <string>
 #include <memory>
@@ -107,6 +108,10 @@ private:
     int layerMenuIdx{-1};
     ContextMenuState layerMenuState{};
 
+    // File menu
+    MenuDropBoxState fileMenuState{};
+    std::vector<MenuDropBoxItem> fileMenuItems;
+
     // Layout cache
     int canvasX{0};
     int canvasY{0};
@@ -126,12 +131,13 @@ private:
     bool handleLayerPanelMouse(const InputEvent& ev);
     void handleMouse(const InputEvent& ev, bool& running);
     void handleKey(const InputEvent& ev, bool& running);
+    void initFileMenu();
     void clampScroll();
     bool isInsideCanvas(int x, int y) const;
     RGBColor getPerspectiveColor(const ImageCell& cell, const std::string& maskGlyph);
     bool openColorPicker(RGBColor initial, uint8_t initialA, RGBColor& outColor, uint8_t& outA);
     bool openGlyphDialog(const std::string& initial, std::string& outGlyph);
-    bool openRenameDialog(const std::string& initial, std::string& outName);
+    bool openRenameDialog(const std::string& initial, std::string& outName, const std::string& title = "Rename Layer");
 };
 
 } // namespace UI
