@@ -1,6 +1,7 @@
 #include "MapSerializer.h"
 #include "../Constants.h" // For CHUNK_VOLUME, etc.
 #include "Checksum.h" // Include Checksum header
+#include "MemoryWriter.h"
 #include "../Utils/Logger.h" // <-- 包含 Logger
 #include <iostream> // For std::cout in success messages
 #include "SaveMetadata.h"
@@ -37,7 +38,7 @@ namespace TilelandWorld {
 
             size_t metaOffset = static_cast<size_t>(header.metadataOffset);
             if (metaOffset == 0 || metaOffset + sizeof(MetadataBlock) > size) return false;
-
+ 
             MetadataBlock block{};
             std::memcpy(&block, data + metaOffset, sizeof(block));
             out.metadata.seed = block.seed;
@@ -126,6 +127,121 @@ namespace TilelandWorld {
             if (!writer.write(header)) return false;
             return writer.writeBytes(reinterpret_cast<const char*>(compressedData.data()), compressedData.size());
         }
+    }
+
+    template <typename Writer>
+    bool MapSerializer::writeHeaderToWriter(Writer& writer, FileHeader& header) {
+        header.endianness = isLittleEndianRuntime() ? ENDIANNESS_LITTLE : ENDIANNESS_BIG;
+        header.checksumType = CHECKSUM_TYPE_CRC32;
+        header.reserved = 0;
+
+        FileHeader tempHeader = header;
+        tempHeader.headerChecksum = 0;
+        header.headerChecksum = calculateCRC32(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t));
+
+        return writer.write(header);
+    }
+
+    template <typename Writer>
+    bool MapSerializer::writeChunkDataToWriter(Writer& writer, const Chunk& chunk, uint32_t& outChecksum) {
+        const void* dataPtr = chunk.tiles.data();
+        size_t dataSize = sizeof(Tile) * CHUNK_VOLUME;
+
+        outChecksum = calculateCRC32(dataPtr, dataSize);
+
+        return writer.writeBytes(static_cast<const char*>(dataPtr), dataSize);
+    }
+
+    template <typename Writer>
+    bool MapSerializer::writeIndexToWriter(Writer& writer, const std::vector<ChunkIndexEntry>& index) {
+        size_t count = index.size();
+        if (!writer.write(count)) return false;
+
+        if (count > 0) {
+            return writer.writeBytes(reinterpret_cast<const char*>(index.data()), count * sizeof(ChunkIndexEntry));
+        }
+        return true;
+    }
+
+    template <typename Writer>
+    bool MapSerializer::serializeMapToWriter(const Map& map, Writer& writer,
+                                             const std::unordered_set<ChunkCoord, ChunkCoordHash>* modifiedChunks,
+                                             size_t* outChunkCount) {
+        FileHeader header = {};
+        header.magicNumber = MAGIC_NUMBER;
+        header.versionMajor = FORMAT_VERSION_MAJOR;
+        header.versionMinor = FORMAT_VERSION_MINOR;
+        header.metadataOffset = 0;
+        if (!writer.seek(0)) return false;
+        if (!writer.write(header)) return false;
+
+        header.metadataOffset = 0;
+        header.dataOffset = writer.tell();
+
+        std::vector<ChunkIndexEntry> index;
+        index.reserve(modifiedChunks ? modifiedChunks->size() : map.getLoadedChunkCount());
+
+        for (auto it = map.begin(); it != map.end(); ++it) {
+            if (modifiedChunks != nullptr && modifiedChunks->find(it->first) == modifiedChunks->end()) {
+                continue;
+            }
+
+            const Chunk& chunk = *it->second;
+            ChunkIndexEntry entry = {};
+            entry.cx = chunk.getChunkX();
+            entry.cy = chunk.getChunkY();
+            entry.cz = chunk.getChunkZ();
+
+            entry.offset = writer.tell();
+            std::streampos startPos = entry.offset;
+            if (!writeChunkDataToWriter(writer, chunk, entry.checksum)) {
+                LOG_ERROR("Failed to save chunk (" + std::to_string(entry.cx) + "," + std::to_string(entry.cy) + "," + std::to_string(entry.cz) + ") data.");
+                return false;
+            }
+            std::streampos endPos = writer.tell();
+            entry.size = static_cast<uint32_t>(static_cast<uint64_t>(endPos) - static_cast<uint64_t>(startPos));
+
+            index.push_back(entry);
+        }
+
+        header.indexOffset = writer.tell();
+        if (!writeIndexToWriter(writer, index)) {
+            LOG_ERROR("Failed to write chunk index.");
+            return false;
+        }
+
+        header.metadataOffset = writer.tell();
+        MetadataBlock metaBlock{};
+        const WorldMetadata& meta = map.getWorldMetadata();
+        metaBlock.seed = meta.seed;
+        metaBlock.frequency = meta.frequency;
+        std::memset(metaBlock.noiseType, 0, sizeof(metaBlock.noiseType));
+        std::memset(metaBlock.fractalType, 0, sizeof(metaBlock.fractalType));
+        std::strncpy(metaBlock.noiseType, meta.noiseType.c_str(), sizeof(metaBlock.noiseType) - 1);
+        std::strncpy(metaBlock.fractalType, meta.fractalType.c_str(), sizeof(metaBlock.fractalType) - 1);
+        metaBlock.octaves = meta.octaves;
+        metaBlock.lacunarity = meta.lacunarity;
+        metaBlock.gain = meta.gain;
+
+        if (!writer.write(metaBlock.seed)) return false;
+        if (!writer.write(metaBlock.frequency)) return false;
+        if (!writer.writeBytes(reinterpret_cast<const char*>(metaBlock.noiseType), sizeof(metaBlock.noiseType))) return false;
+        if (!writer.writeBytes(reinterpret_cast<const char*>(metaBlock.fractalType), sizeof(metaBlock.fractalType))) return false;
+        if (!writer.write(metaBlock.octaves)) return false;
+        if (!writer.write(metaBlock.lacunarity)) return false;
+        if (!writer.write(metaBlock.gain)) return false;
+        if (!writer.writeBytes(reinterpret_cast<const char*>(metaBlock.reserved), sizeof(metaBlock.reserved))) return false;
+
+        if (!writer.seek(0)) return false;
+        if (!writeHeaderToWriter(writer, header)) {
+            LOG_ERROR("Failed to write final file header.");
+            return false;
+        }
+
+        if (outChunkCount) {
+            *outChunkCount = index.size();
+        }
+        return true;
     }
 
     // --- 文件头读写 ---
@@ -269,85 +385,13 @@ namespace TilelandWorld {
     bool MapSerializer::saveMap(const Map& map, const std::string& filepath, const std::unordered_set<ChunkCoord, ChunkCoordHash>* modifiedChunks) {
         try {
             BinaryWriter writer(filepath);
-
-            FileHeader header = {};
-            header.magicNumber = MAGIC_NUMBER;
-            header.versionMajor = FORMAT_VERSION_MAJOR;
-            header.versionMinor = FORMAT_VERSION_MINOR;
-    header.metadataOffset = 0; // 稍后填充
-            if (!writer.seek(0)) return false;
-            writer.write(header);
-
-            header.metadataOffset = 0;
-
-            header.dataOffset = writer.tell();
-            std::vector<ChunkIndexEntry> index;
-            // 预估大小，如果过滤则可能小于 loadedChunks.size()
-            index.reserve(modifiedChunks ? modifiedChunks->size() : map.loadedChunks.size());
-
-            for (const auto& pair : map.loadedChunks) {
-                // 4. "只保存修改区块"逻辑：查找修改表，跳过不需要保存的项目
-                if (modifiedChunks != nullptr) {
-                    if (modifiedChunks->find(pair.first) == modifiedChunks->end()) {
-                        continue; // 该区块未被修改，跳过保存
-                    }
-                }
-
-                const Chunk& chunk = *pair.second;
-                ChunkIndexEntry entry = {};
-                entry.cx = chunk.getChunkX();
-                entry.cy = chunk.getChunkY();
-                entry.cz = chunk.getChunkZ();
-
-                entry.offset = writer.tell();
-                std::streampos startPos = entry.offset;
-                if (!saveChunkData(writer, chunk, entry.checksum)) {
-                    LOG_ERROR("Failed to save chunk (" + std::to_string(entry.cx) + "," + std::to_string(entry.cy) + "," + std::to_string(entry.cz) + ") data.");
-                    return false;
-                }
-                std::streampos endPos = writer.tell();
-                entry.size = static_cast<uint32_t>(static_cast<uint64_t>(endPos) - static_cast<uint64_t>(startPos));
-
-                index.push_back(entry);
-            }
-
-            header.indexOffset = writer.tell();
-            if (!writeIndex(writer, index)) {
-                LOG_ERROR("Failed to write chunk index.");
+            size_t chunkCount = 0;
+            if (!serializeMapToWriter(map, writer, modifiedChunks, &chunkCount)) {
+                LOG_ERROR("Failed to serialize map to file: " + filepath);
                 return false;
             }
 
-            // 写入元数据块
-            header.metadataOffset = writer.tell();
-            MetadataBlock metaBlock{};
-            const WorldMetadata& meta = map.getWorldMetadata();
-            metaBlock.seed = meta.seed;
-            metaBlock.frequency = meta.frequency;
-            std::memset(metaBlock.noiseType, 0, sizeof(metaBlock.noiseType));
-            std::memset(metaBlock.fractalType, 0, sizeof(metaBlock.fractalType));
-            std::strncpy(metaBlock.noiseType, meta.noiseType.c_str(), sizeof(metaBlock.noiseType) - 1);
-            std::strncpy(metaBlock.fractalType, meta.fractalType.c_str(), sizeof(metaBlock.fractalType) - 1);
-            metaBlock.octaves = meta.octaves;
-            metaBlock.lacunarity = meta.lacunarity;
-            metaBlock.gain = meta.gain;
-
-            writer.write(metaBlock.seed);
-            writer.write(metaBlock.frequency);
-            writer.writeBytes(reinterpret_cast<const char*>(metaBlock.noiseType), sizeof(metaBlock.noiseType));
-            writer.writeBytes(reinterpret_cast<const char*>(metaBlock.fractalType), sizeof(metaBlock.fractalType));
-            writer.write(metaBlock.octaves);
-            writer.write(metaBlock.lacunarity);
-            writer.write(metaBlock.gain);
-            writer.writeBytes(reinterpret_cast<const char*>(metaBlock.reserved), sizeof(metaBlock.reserved));
-
-            std::streampos finalPos = writer.tell();
-            if (!writer.seek(0)) return false;
-            if (!writeHeader(writer, header)) {
-                LOG_ERROR("Failed to write final file header.");
-                return false;
-            }
-
-            std::cout << "Map saved successfully. Chunk count: " << index.size() << std::endl;
+            std::cout << "Map saved successfully. Chunk count: " << chunkCount << std::endl;
             return true;
 
         } catch (const std::exception& e) {
@@ -558,39 +602,33 @@ namespace TilelandWorld {
 
         LOG_INFO("Starting save compressed map process for '" + saveName + "'...");
 
-        // 1. Save uncompressed map to .tlwf
-        LOG_INFO("Saving uncompressed map to: " + tlwfPath);
-        if (!saveMap(map, tlwfPath)) {
-            LOG_ERROR("Failed to save uncompressed map to .tlwf file.");
-            return false;
-        }
-        LOG_INFO("Uncompressed map saved successfully.");
-
-        // 2. Read the entire .tlwf file
-        std::vector<Bytef> uncompressedData;
-        try {
-            std::ifstream tlwfFile(tlwfPath, std::ios::binary | std::ios::ate);
-            if (!tlwfFile) {
-                throw std::runtime_error("Failed to open .tlwf file for reading.");
-            }
-            std::streamsize size = tlwfFile.tellg();
-            tlwfFile.seekg(0, std::ios::beg);
-            uncompressedData.resize(static_cast<size_t>(size)); // Resize vector
-            if (!tlwfFile.read(reinterpret_cast<char*>(uncompressedData.data()), size)) {
-                 throw std::runtime_error("Failed to read data from .tlwf file.");
-            }
-            LOG_INFO("Read " + std::to_string(uncompressedData.size()) + " bytes from " + tlwfPath);
-        } catch (const std::exception& e) {
-            LOG_ERROR("Error reading .tlwf file: " + std::string(e.what()));
+        // 1. Serialize map to memory buffer
+        MemoryWriter memoryWriter;
+        if (!serializeMapToWriter(map, memoryWriter, nullptr, nullptr)) {
+            LOG_ERROR("Failed to serialize map to memory for compression.");
             return false;
         }
 
-        if (uncompressedData.empty()) {
-             LOG_WARNING(".tlwf file is empty. Skipping compression.");
-             // Decide if an empty tlwz should be created or not. Let's skip for now.
-             // If deleteTlwfAfterwards is true, the empty tlwf might be deleted later.
-             return true; // Or false depending on desired behavior for empty maps
+        const auto& rawBuffer = memoryWriter.buffer();
+        if (rawBuffer.empty()) {
+            LOG_WARNING("Serialized map buffer is empty. Skipping compression.");
+            if (!deleteTlwfAfterwards) {
+                if (!writeBufferToFile(tlwfPath, rawBuffer)) {
+                    LOG_ERROR("Failed to write empty .tlwf file.");
+                    return false;
+                }
+            }
+            return true;
         }
+
+        if (!deleteTlwfAfterwards) {
+            if (!writeBufferToFile(tlwfPath, rawBuffer)) {
+                LOG_ERROR("Failed to write .tlwf file from memory buffer.");
+                return false;
+            }
+        }
+
+        std::vector<Bytef> uncompressedData(rawBuffer.begin(), rawBuffer.end());
 
         // 3. Calculate uncompressed checksum
         uint32_t uncompressedChecksum = calculateCRC32(uncompressedData.data(), uncompressedData.size());
@@ -648,7 +686,7 @@ namespace TilelandWorld {
 
         // 7. (Optional) Delete .tlwf file
         if (deleteTlwfAfterwards) {
-            LOG_INFO("Deleting temporary .tlwf file: " + tlwfPath);
+            LOG_INFO("Removing .tlwf file: " + tlwfPath);
             try {
                 if (!std::filesystem::remove(tlwfPath)) {
                     LOG_WARNING("Failed to delete .tlwf file (it might not exist or is locked).");

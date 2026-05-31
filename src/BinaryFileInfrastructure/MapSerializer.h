@@ -75,6 +75,20 @@ namespace TilelandWorld {
         static bool writeIndex(BinaryWriter& writer, const std::vector<ChunkIndexEntry>& index);
         static void readIndex(BinaryReader& reader, std::vector<ChunkIndexEntry>& index);
 
+        template <typename Writer>
+        static bool writeHeaderToWriter(Writer& writer, FileHeader& header);
+
+        template <typename Writer>
+        static bool writeChunkDataToWriter(Writer& writer, const Chunk& chunk, uint32_t& outChecksum);
+
+        template <typename Writer>
+        static bool writeIndexToWriter(Writer& writer, const std::vector<ChunkIndexEntry>& index);
+
+        template <typename Writer>
+        static bool serializeMapToWriter(const Map& map, Writer& writer,
+                                          const std::unordered_set<ChunkCoord, ChunkCoordHash>* modifiedChunks,
+                                          size_t* outChunkCount);
+
         // 压缩加载辅助函数
         static std::unique_ptr<Map> loadFromCompressedFile(const std::string& tlwzPath, const std::string& tlwfPath);
     };
