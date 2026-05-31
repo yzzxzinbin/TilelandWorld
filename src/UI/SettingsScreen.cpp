@@ -148,6 +148,15 @@ void SettingsScreen::buildItems() {
     });
 
     items.push_back(Item{
+        "Save as zipfile",
+        ItemType::Toggle,
+        [this](int dir){ (void)dir; working.saveAsZipFile = !working.saveAsZipFile; },
+        [this](){ return working.saveAsZipFile ? "On" : "Off"; },
+        [this](){ return working.saveAsZipFile; },
+        {}, {},0,0,0,false
+    });
+
+    items.push_back(Item{
         "Save directory",
         ItemType::Directory,
         [this](int dir){ (void)dir; },

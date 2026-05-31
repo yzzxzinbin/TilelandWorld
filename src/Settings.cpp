@@ -77,6 +77,7 @@ Settings SettingsManager::load(const std::string& path) {
         maybeSet<bool>(key, value, "enableDiffRendering", cfg.enableDiffRendering);
         maybeSet<bool>(key, value, "useFmtRenderer", cfg.useFmtRenderer);
         maybeSet<bool>(key, value, "autoViewSize", cfg.autoViewSize);
+        maybeSet<bool>(key, value, "saveAsZipFile", cfg.saveAsZipFile);
 
         maybeSet<int>(key, value, "viewWidth", cfg.viewWidth);
         maybeSet<int>(key, value, "viewHeight", cfg.viewHeight);
@@ -114,6 +115,7 @@ bool SettingsManager::save(const Settings& s, const std::string& path) {
     out << "enableDiffRendering=" << (s.enableDiffRendering ? "1" : "0") << "\n";
     out << "useFmtRenderer=" << (s.useFmtRenderer ? "1" : "0") << "\n";
     out << "autoViewSize=" << (s.autoViewSize ? "1" : "0") << "\n";
+    out << "saveAsZipFile=" << (s.saveAsZipFile ? "1" : "0") << "\n";
 
     out << "viewWidth=" << s.viewWidth << "\n";
     out << "viewHeight=" << s.viewHeight << "\n";

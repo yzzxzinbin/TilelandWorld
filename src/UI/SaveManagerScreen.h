@@ -59,7 +59,7 @@ private:
     std::string formatBytes(size_t bytes) const;
     bool editSave(size_t idx, InputController& input);
 
-    void runGame(std::unique_ptr<Map> map);
+    void runGame(std::unique_ptr<Map> map, const std::string& saveName, bool openedCompressed);
     bool deleteSelected();
 };
 

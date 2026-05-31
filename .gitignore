@@ -12,3 +12,4 @@ Doxyfile
 /cmake
 /src/third_party
 ROADMAP.md
+/src/.idea

@@ -36,8 +36,8 @@ namespace {
     }
 }
 
-SaveCreationScreen::SaveCreationScreen(std::string defaultDirectory, WorldMetadata defaults, std::string defaultNameValue, bool lockName, bool lockDirectory)
-    : surface(100, 40), name(defaultNameValue.empty() ? defaultName() : sanitizedName(defaultNameValue)), directory(std::move(defaultDirectory)), meta(defaults) {
+SaveCreationScreen::SaveCreationScreen(std::string defaultDirectory, WorldMetadata defaults, std::string defaultNameValue, bool lockName, bool lockDirectory, bool saveAsZip)
+    : surface(100, 40), name(defaultNameValue.empty() ? defaultName() : sanitizedName(defaultNameValue)), directory(std::move(defaultDirectory)), meta(defaults), saveAsZipFile(saveAsZip) {
     allowNameEdit = !lockName;
     allowDirectoryEdit = !lockDirectory;
     noiseChoices = {"OpenSimplex2", "Perlin", "Value"};
@@ -452,10 +452,11 @@ std::string SaveCreationScreen::sanitizedName(const std::string& raw) const {
 std::string SaveCreationScreen::previewPath() const {
     std::string base = sanitizedName(name);
     std::string dir = directory.empty() ? "." : directory;
+    std::string ext = saveAsZipFile ? ".tlwz" : ".tlwf";
     if (!dir.empty() && (dir.back() == '/' || dir.back() == '\\')) {
-        return dir + base + ".tlwz";
+        return dir + base + ext;
     }
-    return dir + "/" + base + ".tlwz";
+    return dir + "/" + base + ext;
 }
 
 } // namespace UI

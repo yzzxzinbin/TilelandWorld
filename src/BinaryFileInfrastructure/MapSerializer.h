@@ -50,7 +50,7 @@ namespace TilelandWorld {
         static bool saveCompressedMap(const Map& map, const std::string& saveName, const std::string& directory = ".", bool deleteTlwfAfterwards = true);
 
         // 从存档加载地图（自动处理 .tlwf 或 .tlwz）
-        static std::unique_ptr<Map> loadMapFromSave(const std::string& saveName, const std::string& directory = ".");
+        static std::unique_ptr<Map> loadMapFromSave(const std::string& saveName, const std::string& directory = ".", bool* outUsedCompressed = nullptr);
 
         // 仅读取元数据与概要信息，不加载区块
         static bool readSaveSummary(const std::string& saveName, const std::string& directory, SaveSummary& outSummary);

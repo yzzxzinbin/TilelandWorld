@@ -32,6 +32,7 @@ struct Settings {
     bool useFmtRenderer{false};
 
     // Saves
+    bool saveAsZipFile{false};
     std::string saveDirectory{"saves"};
 
     // Assets

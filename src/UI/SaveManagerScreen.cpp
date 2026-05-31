@@ -78,7 +78,7 @@ void SaveManagerScreen::show() {
     input.stop();
 }
 
-void SaveManagerScreen::runGame(std::unique_ptr<Map> map) {
+void SaveManagerScreen::runGame(std::unique_ptr<Map> map, const std::string& saveName, bool openedCompressed) {
     if (!map) return;
 
     // 清屏：进入游戏主循环前做一次 ANSI 清屏
@@ -95,6 +95,26 @@ void SaveManagerScreen::runGame(std::unique_ptr<Map> map) {
         LOG_INFO("SaveManager: Game loop finished. Returning to save manager.");
     } catch (const std::exception& e) {
         LOG_ERROR("SaveManager: Exception during game loop: " + std::string(e.what()));
+    }
+
+    if (!saveName.empty()) {
+        bool saveAsZip = settings.saveAsZipFile || openedCompressed;
+        bool saved = false;
+
+        if (saveAsZip) {
+            saved = MapSerializer::saveCompressedMap(*map, saveName, settings.saveDirectory, true);
+        } else {
+            std::string tlwfPath = MapSerializer::getTlwfPath(saveName, settings.saveDirectory);
+            saved = MapSerializer::saveMap(*map, tlwfPath);
+            if (saved) {
+                std::string tlwzPath = MapSerializer::getTlwzPath(saveName, settings.saveDirectory);
+                try { std::filesystem::remove(tlwzPath); } catch (...) {}
+            }
+        }
+
+        if (!saved) {
+            LOG_ERROR("SaveManager: Failed to save map for '" + saveName + "'.");
+        }
     }
 
     // 重新进入存档管理器后，可能需要再次清屏或由 renderFrame 处理
@@ -227,11 +247,12 @@ void SaveManagerScreen::handleKey(int key, bool& running, Result&, InputControll
         size_t idx = menu.getSelected();
         if (idx < saves.size()) {
             std::string saveName = saves[idx];
-            auto map = MapSerializer::loadMapFromSave(saveName, settings.saveDirectory);
+            bool openedCompressed = false;
+            auto map = MapSerializer::loadMapFromSave(saveName, settings.saveDirectory, &openedCompressed);
             if (map) {
                 LOG_INFO("SaveManager: Loaded save '" + saveName + "'. Starting game.");
                 input.stop();
-                runGame(std::move(map));
+                runGame(std::move(map), saveName, openedCompressed);
                 input.start();
                 refreshList();
             } else {
@@ -239,7 +260,7 @@ void SaveManagerScreen::handleKey(int key, bool& running, Result&, InputControll
             }
         } else if (idx == saves.size()) { // New
             input.stop();
-            SaveCreationScreen creator(settings.saveDirectory);
+            SaveCreationScreen creator(settings.saveDirectory, {}, {}, false, false, settings.saveAsZipFile);
             auto form = creator.show();
             if (form.accepted) {
                 if (!form.saveDirectory.empty()) {
@@ -249,10 +270,24 @@ void SaveManagerScreen::handleKey(int key, bool& running, Result&, InputControll
 
                 auto map = std::make_unique<Map>(createTerrainGeneratorFromMetadata(form.metadata));
                 map->setWorldMetadata(form.metadata);
-                MapSerializer::saveCompressedMap(*map, form.saveName, settings.saveDirectory, false);
+                bool openedCompressed = settings.saveAsZipFile;
+                bool saved = false;
+                if (settings.saveAsZipFile) {
+                    saved = MapSerializer::saveCompressedMap(*map, form.saveName, settings.saveDirectory, true);
+                } else {
+                    std::string tlwfPath = MapSerializer::getTlwfPath(form.saveName, settings.saveDirectory);
+                    saved = MapSerializer::saveMap(*map, tlwfPath);
+                    if (saved) {
+                        std::string tlwzPath = MapSerializer::getTlwzPath(form.saveName, settings.saveDirectory);
+                        try { std::filesystem::remove(tlwzPath); } catch (...) {}
+                    }
+                }
+                if (!saved) {
+                    LOG_ERROR("SaveManager: Failed to create initial save '" + form.saveName + "'.");
+                }
 
                 LOG_INFO("SaveManager: Created new save '" + form.saveName + "'. Starting game.");
-                runGame(std::move(map));
+                runGame(std::move(map), form.saveName, openedCompressed);
                 refreshList();
             }
             input.start();
@@ -325,7 +360,7 @@ bool SaveManagerScreen::editSave(size_t idx, InputController& input) {
     if (infoCache.size() <= idx || !infoCache[idx].ok) return false;
 
     auto meta = infoCache[idx].summary.metadata;
-    SaveCreationScreen editor(settings.saveDirectory, meta, saves[idx], true, true);
+    SaveCreationScreen editor(settings.saveDirectory, meta, saves[idx], true, true, settings.saveAsZipFile);
 
     input.stop();
     auto form = editor.show();

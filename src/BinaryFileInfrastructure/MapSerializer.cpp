@@ -663,7 +663,7 @@ namespace TilelandWorld {
     }
 
     // --- loadMapFromSave Implementation (moved from MapPersistenceManager) ---
-    std::unique_ptr<Map> MapSerializer::loadMapFromSave(const std::string& saveName, const std::string& directory) {
+    std::unique_ptr<Map> MapSerializer::loadMapFromSave(const std::string& saveName, const std::string& directory, bool* outUsedCompressed) {
         std::string tlwfPath = getTlwfPath(saveName, directory);
         std::string tlwzPath = getTlwzPath(saveName, directory);
 
@@ -676,6 +676,7 @@ namespace TilelandWorld {
                 std::unique_ptr<Map> map = loadMap(tlwfPath);
                 if (map) {
                     LOG_INFO("Successfully loaded map directly from .tlwf file.");
+                    if (outUsedCompressed) *outUsedCompressed = false;
                     return map;
                 } else {
                     LOG_WARNING(".tlwf file exists but failed to load (possibly corrupted). Will attempt to load from .tlwz.");
@@ -693,7 +694,9 @@ namespace TilelandWorld {
         if (std::filesystem::exists(tlwzPath)) {
              LOG_INFO("Found .tlwz file: " + tlwzPath + ". Attempting to load and decompress...");
              try {
-                 return loadFromCompressedFile(tlwzPath, tlwfPath);
+                 std::unique_ptr<Map> map = loadFromCompressedFile(tlwzPath, tlwfPath);
+                 if (map && outUsedCompressed) *outUsedCompressed = true;
+                 return map;
              } catch (const std::exception& e) {
                  LOG_ERROR("Failed to load from .tlwz file: " + std::string(e.what()));
                  return nullptr; // Loading from .tlwz failed
