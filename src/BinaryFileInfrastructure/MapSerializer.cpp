@@ -709,7 +709,7 @@ namespace TilelandWorld {
         if (std::filesystem::exists(tlwzPath)) {
              LOG_INFO("Found .tlwz file: " + tlwzPath + ". Attempting to load and decompress...");
              try {
-                 std::unique_ptr<Map> map = loadFromCompressedFile(tlwzPath, tlwfPath);
+                 std::unique_ptr<Map> map = loadFromCompressedFile(tlwzPath);
                  if (map && outUsedCompressed) *outUsedCompressed = true;
                  return map;
              } catch (const std::exception& e) {
@@ -723,11 +723,10 @@ namespace TilelandWorld {
     }
 
     // --- loadFromCompressedFile Helper   ---
-    std::unique_ptr<Map> MapSerializer::loadFromCompressedFile(const std::string& tlwzPath, const std::string& tlwfPath) {
+    std::unique_ptr<Map> MapSerializer::loadFromCompressedFile(const std::string& tlwzPath) {
         std::vector<Bytef> compressedData;
         std::vector<Bytef> decompressedData;
         CompressedFileHeader header = {};
-        (void)tlwfPath;
 
         // 1. Read .tlwz header and compressed data
         try {

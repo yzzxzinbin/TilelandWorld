@@ -91,7 +91,7 @@ namespace TilelandWorld {
                                           size_t* outChunkCount);
 
         // 压缩加载辅助函数
-        static std::unique_ptr<Map> loadFromCompressedFile(const std::string& tlwzPath, const std::string& tlwfPath);
+        static std::unique_ptr<Map> loadFromCompressedFile(const std::string& tlwzPath);
     };
 
 } // namespace TilelandWorld
