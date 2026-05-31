@@ -9,6 +9,7 @@
 #include "../MapGenInfrastructure/TerrainGeneratorFactory.h"
 #include <vector>
 #include <cstring> // For memcpy in checksum calculation
+#include <algorithm> // For std::min
 #include <stdexcept> // For std::runtime_error
 #include <fstream>      // For std::ifstream to read whole file
 #include <filesystem>   // For file operations like exists, remove
@@ -88,18 +89,49 @@ namespace TilelandWorld {
         }
 
         bool readSummaryFromTlwf(const std::string& path, MapSerializer::SaveSummary& out) {
-            std::ifstream file(path, std::ios::binary | std::ios::ate);
+            std::ifstream file(path, std::ios::binary);
             if (!file) return false;
-            std::streamsize size = file.tellg();
-            if (size <= 0) return false;
-            file.seekg(0, std::ios::beg);
-            std::vector<uint8_t> buffer(static_cast<size_t>(size));
-            if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) return false;
 
-            if (!readSummaryFromBuffer(buffer, out)) return false;
+            // 只读取文件头，不需要读完整文件
+            FileHeader header{};
+            if (!file.read(reinterpret_cast<char*>(&header), sizeof(header))) return false;
+            if (header.magicNumber != MAGIC_NUMBER) return false;
+
+            // 获取文件大小
+            file.seekg(0, std::ios::end);
+            std::streamsize fileSize = file.tellg();
+            if (fileSize <= 0) return false;
+
+            // 直接跳转到元数据区读取
+            if (header.metadataOffset == 0 ||
+                static_cast<std::streamoff>(header.metadataOffset) + sizeof(MetadataBlock) > fileSize) return false;
+
+            file.seekg(static_cast<std::streamoff>(header.metadataOffset));
+            MetadataBlock block{};
+            if (!file.read(reinterpret_cast<char*>(&block), sizeof(block))) return false;
+
+            out.metadata.seed = block.seed;
+            out.metadata.frequency = block.frequency;
+            out.metadata.noiseType = trimNullTerminated(block.noiseType, sizeof(block.noiseType));
+            out.metadata.fractalType = trimNullTerminated(block.fractalType, sizeof(block.fractalType));
+            out.metadata.octaves = block.octaves;
+            out.metadata.lacunarity = block.lacunarity;
+            out.metadata.gain = block.gain;
+
+            // 直接跳转到索引区读取区块数量
+            out.chunkCount = 0;
+            if (header.indexOffset != 0 &&
+                static_cast<std::streamoff>(header.indexOffset) + sizeof(size_t) <= fileSize) {
+                file.seekg(static_cast<std::streamoff>(header.indexOffset));
+                size_t count = 0;
+                if (file.read(reinterpret_cast<char*>(&count), sizeof(size_t))) {
+                    out.chunkCount = count;
+                }
+            }
+
             out.path = path;
             out.compressed = false;
-            out.fileSize = static_cast<size_t>(size);
+            out.fileSize = static_cast<size_t>(fileSize);
             return true;
         }
 
@@ -108,8 +140,11 @@ namespace TilelandWorld {
             return writer.writeBytes(reinterpret_cast<const char*>(buffer.data()), buffer.size());
         }
 
-        bool recompressBufferToTlwz(const std::vector<uint8_t>& buffer, const std::string& tlwzPath) {
-            std::vector<Bytef> source(buffer.begin(), buffer.end());
+        bool writeTlwzV2(const std::vector<uint8_t>& rawTlwfBuffer,
+                         const MetadataBlock& metaBlock,
+                         size_t chunkCount,
+                         const std::string& tlwzPath) {
+            std::vector<Bytef> source(rawTlwfBuffer.begin(), rawTlwfBuffer.end());
             std::vector<Bytef> compressedData;
             auto status = SimpZlib::compress(source, compressedData);
             if (status != SimpZlib::Status::OK) return false;
@@ -119,13 +154,18 @@ namespace TilelandWorld {
             header.versionMajor = COMPRESSED_FORMAT_VERSION_MAJOR;
             header.versionMinor = COMPRESSED_FORMAT_VERSION_MINOR;
             header.compressionType = COMPRESSION_TYPE_ZLIB;
-            header.uncompressedSize = buffer.size();
-            header.uncompressedChecksum = calculateCRC32(buffer.data(), buffer.size());
+            header.uncompressedSize = rawTlwfBuffer.size();
+            header.uncompressedChecksum = calculateCRC32(rawTlwfBuffer.data(), rawTlwfBuffer.size());
             header.compressedSize = compressedData.size();
             header.compressedChecksum = calculateCRC32(compressedData.data(), compressedData.size());
+            header.metadataOffset = sizeof(CompressedFileHeader);
+            header.metadataSize = sizeof(MetadataBlock);
+            header.chunkCount = static_cast<uint32_t>(chunkCount);
+            header.compressedDataOffset = sizeof(CompressedFileHeader) + sizeof(MetadataBlock);
 
             BinaryWriter writer(tlwzPath);
             if (!writer.write(header)) return false;
+            if (!writer.writeBytes(reinterpret_cast<const char*>(&metaBlock), sizeof(MetadataBlock))) return false;
             return writer.writeBytes(reinterpret_cast<const char*>(compressedData.data()), compressedData.size());
         }
     }
@@ -494,25 +534,62 @@ namespace TilelandWorld {
 
         try {
             BinaryReader reader(tlwzPath);
-            CompressedFileHeader header{};
-            if (!reader.read(header)) return false;
-            if (header.magicNumber != COMPRESSED_MAGIC_NUMBER) return false;
-            if (header.versionMajor != COMPRESSED_FORMAT_VERSION_MAJOR || header.versionMinor > COMPRESSED_FORMAT_VERSION_MINOR) return false;
-            if (header.compressionType != COMPRESSION_TYPE_ZLIB) return false;
 
-            std::vector<Bytef> compressedData(static_cast<size_t>(header.compressedSize));
+            // 读取公共前缀 (magic + version) 以判断版本
+            CompressedFileHeaderPrefix prefix{};
+            if (!reader.read(prefix)) return false;
+            if (prefix.magicNumber != COMPRESSED_MAGIC_NUMBER) return false;
+
+            bool isV2 = (prefix.versionMajor == COMPRESSED_FORMAT_VERSION_MAJOR);
+            bool isV1 = (prefix.versionMajor == COMPRESSED_FORMAT_VERSION_MAJOR_LEGACY_V1);
+            if (!isV2 && !isV1) return false;
+
+            if (isV2) {
+                // V2: 直接从文件头中读取未压缩的元数据，无需解压整个文件
+                reader.seek(std::streampos(0));
+                CompressedFileHeader header{};
+                if (!reader.read(header)) return false;
+                if (header.compressionType != COMPRESSION_TYPE_ZLIB) return false;
+
+                if (header.metadataOffset == 0 || header.metadataSize < sizeof(MetadataBlock)) return false;
+
+                reader.seek(static_cast<std::streampos>(header.metadataOffset));
+                MetadataBlock block{};
+                if (reader.readBytes(reinterpret_cast<char*>(&block), sizeof(MetadataBlock)) != sizeof(MetadataBlock)) return false;
+
+                outSummary.metadata.seed = block.seed;
+                outSummary.metadata.frequency = block.frequency;
+                outSummary.metadata.noiseType = trimNullTerminated(block.noiseType, sizeof(block.noiseType));
+                outSummary.metadata.fractalType = trimNullTerminated(block.fractalType, sizeof(block.fractalType));
+                outSummary.metadata.octaves = block.octaves;
+                outSummary.metadata.lacunarity = block.lacunarity;
+                outSummary.metadata.gain = block.gain;
+                outSummary.chunkCount = header.chunkCount;
+                outSummary.path = tlwzPath;
+                outSummary.compressed = true;
+                outSummary.fileSize = std::filesystem::file_size(tlwzPath);
+                return true;
+            }
+
+            // V1 兼容路径：需要完整解压以读取元数据
+            reader.seek(std::streampos(0));
+            CompressedFileHeaderV1 headerV1{};
+            if (!reader.read(headerV1)) return false;
+            if (headerV1.compressionType != COMPRESSION_TYPE_ZLIB) return false;
+
+            std::vector<Bytef> compressedData(static_cast<size_t>(headerV1.compressedSize));
             size_t bytesRead = reader.readBytes(reinterpret_cast<char*>(compressedData.data()), compressedData.size());
-            if (bytesRead != header.compressedSize) return false;
+            if (bytesRead != headerV1.compressedSize) return false;
 
             uint32_t compressedChecksum = calculateCRC32(compressedData.data(), compressedData.size());
-            if (compressedChecksum != header.compressedChecksum) return false;
+            if (compressedChecksum != headerV1.compressedChecksum) return false;
 
             std::vector<Bytef> decompressed;
-            auto status = SimpZlib::uncompress(compressedData, decompressed, header.uncompressedSize);
-            if (status != SimpZlib::Status::OK || decompressed.size() != header.uncompressedSize) return false;
+            auto status = SimpZlib::uncompress(compressedData, decompressed, headerV1.uncompressedSize);
+            if (status != SimpZlib::Status::OK || decompressed.size() != headerV1.uncompressedSize) return false;
 
             uint32_t uncompressedChecksum = calculateCRC32(decompressed.data(), decompressed.size());
-            if (uncompressedChecksum != header.uncompressedChecksum) return false;
+            if (uncompressedChecksum != headerV1.uncompressedChecksum) return false;
 
             if (!readSummaryFromBuffer(reinterpret_cast<uint8_t*>(decompressed.data()), decompressed.size(), outSummary)) return false;
             outSummary.path = tlwzPath;
@@ -539,7 +616,20 @@ namespace TilelandWorld {
                     if (applyMetadataToBuffer(buffer, metadata) && writeBufferToFile(tlwfPath, buffer)) {
                         updated = true;
                         if (std::filesystem::exists(tlwzPath)) {
-                            recompressBufferToTlwz(buffer, tlwzPath);
+                            // 提取元数据块和区块数量用于重写 tlwz
+                            MetadataBlock metaBlock{};
+                            FileHeader fileHeader{};
+                            std::memcpy(&fileHeader, buffer.data(), sizeof(fileHeader));
+                            size_t metaOffset = static_cast<size_t>(fileHeader.metadataOffset);
+                            if (metaOffset != 0 && metaOffset + sizeof(MetadataBlock) <= buffer.size()) {
+                                std::memcpy(&metaBlock, buffer.data() + metaOffset, sizeof(MetadataBlock));
+                            }
+                            size_t chunkCount = 0;
+                            size_t indexOffset = static_cast<size_t>(fileHeader.indexOffset);
+                            if (indexOffset != 0 && indexOffset + sizeof(size_t) <= buffer.size()) {
+                                std::memcpy(&chunkCount, buffer.data() + indexOffset, sizeof(size_t));
+                            }
+                            writeTlwzV2(buffer, metaBlock, chunkCount, tlwzPath);
                         }
                     }
                 }
@@ -547,23 +637,76 @@ namespace TilelandWorld {
         } else if (std::filesystem::exists(tlwzPath)) {
             try {
                 BinaryReader reader(tlwzPath);
-                CompressedFileHeader header{};
-                if (!reader.read(header)) return false;
-                if (header.magicNumber != COMPRESSED_MAGIC_NUMBER || header.compressionType != COMPRESSION_TYPE_ZLIB) return false;
 
-                std::vector<Bytef> compressedData(static_cast<size_t>(header.compressedSize));
-                size_t bytesRead = reader.readBytes(reinterpret_cast<char*>(compressedData.data()), compressedData.size());
-                if (bytesRead != header.compressedSize) return false;
-                if (calculateCRC32(compressedData.data(), compressedData.size()) != header.compressedChecksum) return false;
+                // 读取前缀以判断版本
+                CompressedFileHeaderPrefix prefix{};
+                if (!reader.read(prefix)) return false;
+                if (prefix.magicNumber != COMPRESSED_MAGIC_NUMBER) return false;
 
-                std::vector<Bytef> decompressed;
-                auto status = SimpZlib::uncompress(compressedData, decompressed, header.uncompressedSize);
-                if (status != SimpZlib::Status::OK || decompressed.size() != header.uncompressedSize) return false;
-                if (calculateCRC32(decompressed.data(), decompressed.size()) != header.uncompressedChecksum) return false;
+                bool isV2 = (prefix.versionMajor == COMPRESSED_FORMAT_VERSION_MAJOR);
+                bool isV1 = (prefix.versionMajor == COMPRESSED_FORMAT_VERSION_MAJOR_LEGACY_V1);
+                if (!isV2 && !isV1) return false;
 
-                std::vector<uint8_t> buffer(decompressed.begin(), decompressed.end());
+                std::vector<uint8_t> buffer;
+                size_t chunkCount = 0;
+
+                if (isV2) {
+                    // V2: 读取完整头，利用 compressedDataOffset 定位压缩数据
+                    reader.seek(std::streampos(0));
+                    CompressedFileHeader header{};
+                    if (!reader.read(header)) return false;
+
+                    std::vector<Bytef> compressedData(static_cast<size_t>(header.compressedSize));
+                    reader.seek(static_cast<std::streampos>(header.compressedDataOffset));
+                    size_t bytesRead = reader.readBytes(reinterpret_cast<char*>(compressedData.data()), compressedData.size());
+                    if (bytesRead != header.compressedSize) return false;
+                    if (calculateCRC32(compressedData.data(), compressedData.size()) != header.compressedChecksum) return false;
+
+                    std::vector<Bytef> decompressed;
+                    auto status = SimpZlib::uncompress(compressedData, decompressed, header.uncompressedSize);
+                    if (status != SimpZlib::Status::OK || decompressed.size() != header.uncompressedSize) return false;
+                    if (calculateCRC32(decompressed.data(), decompressed.size()) != header.uncompressedChecksum) return false;
+
+                    buffer.assign(decompressed.begin(), decompressed.end());
+                    chunkCount = header.chunkCount;
+                } else {
+                    // V1: 向后兼容
+                    reader.seek(std::streampos(0));
+                    CompressedFileHeaderV1 headerV1{};
+                    if (!reader.read(headerV1)) return false;
+
+                    std::vector<Bytef> compressedData(static_cast<size_t>(headerV1.compressedSize));
+                    size_t bytesRead = reader.readBytes(reinterpret_cast<char*>(compressedData.data()), compressedData.size());
+                    if (bytesRead != headerV1.compressedSize) return false;
+                    if (calculateCRC32(compressedData.data(), compressedData.size()) != headerV1.compressedChecksum) return false;
+
+                    std::vector<Bytef> decompressed;
+                    auto status = SimpZlib::uncompress(compressedData, decompressed, headerV1.uncompressedSize);
+                    if (status != SimpZlib::Status::OK || decompressed.size() != headerV1.uncompressedSize) return false;
+                    if (calculateCRC32(decompressed.data(), decompressed.size()) != headerV1.uncompressedChecksum) return false;
+
+                    buffer.assign(decompressed.begin(), decompressed.end());
+                }
+
                 if (!applyMetadataToBuffer(buffer, metadata)) return false;
-                updated = recompressBufferToTlwz(buffer, tlwzPath);
+
+                // 提取更新后的元数据块
+                MetadataBlock metaBlock{};
+                FileHeader fileHeader{};
+                std::memcpy(&fileHeader, buffer.data(), sizeof(fileHeader));
+                size_t metaOffset = static_cast<size_t>(fileHeader.metadataOffset);
+                if (metaOffset != 0 && metaOffset + sizeof(MetadataBlock) <= buffer.size()) {
+                    std::memcpy(&metaBlock, buffer.data() + metaOffset, sizeof(MetadataBlock));
+                }
+                // 如果 V1 文件，从索引区获取区块数量
+                if (!isV2) {
+                    size_t indexOffset = static_cast<size_t>(fileHeader.indexOffset);
+                    if (indexOffset != 0 && indexOffset + sizeof(size_t) <= buffer.size()) {
+                        std::memcpy(&chunkCount, buffer.data() + indexOffset, sizeof(size_t));
+                    }
+                }
+
+                updated = writeTlwzV2(buffer, metaBlock, chunkCount, tlwzPath);
             } catch (...) {
                 return false;
             }
@@ -605,61 +748,30 @@ namespace TilelandWorld {
             }
         }
 
-        std::vector<Bytef> uncompressedData(rawBuffer.begin(), rawBuffer.end());
-
-        // 3. Calculate uncompressed checksum
-        uint32_t uncompressedChecksum = calculateCRC32(uncompressedData.data(), uncompressedData.size());
-        LOG_INFO("Calculated uncompressed CRC32: 0x" + std::to_string(uncompressedChecksum)); // Consider hex formatting
-
-        // 4. Compress data
-        std::vector<Bytef> compressedData;
-        LOG_INFO("Compressing data using SimpZlib...");
-        SimpZlib::Status compressStatus = SimpZlib::compress(uncompressedData, compressedData); // Use default level
-
-        if (compressStatus != SimpZlib::Status::OK) {
-            LOG_ERROR("Compression failed with status: " + std::to_string(static_cast<int>(compressStatus)));
-            return false;
+        // 从序列化的缓冲区中提取元数据块和区块数量 (用于写入 tlwz V2 头部)
+        MetadataBlock metaBlock{};
+        size_t chunkCount = 0;
+        {
+            FileHeader fileHeader{};
+            std::memcpy(&fileHeader, rawBuffer.data(), std::min(sizeof(FileHeader), rawBuffer.size()));
+            size_t metaOffset = static_cast<size_t>(fileHeader.metadataOffset);
+            if (metaOffset != 0 && metaOffset + sizeof(MetadataBlock) <= rawBuffer.size()) {
+                std::memcpy(&metaBlock, rawBuffer.data() + metaOffset, sizeof(MetadataBlock));
+            }
+            size_t indexOffset = static_cast<size_t>(fileHeader.indexOffset);
+            if (indexOffset != 0 && indexOffset + sizeof(size_t) <= rawBuffer.size()) {
+                std::memcpy(&chunkCount, rawBuffer.data() + indexOffset, sizeof(size_t));
+            }
         }
-        LOG_INFO("Compression successful. Compressed size: " + std::to_string(compressedData.size()) + " bytes.");
 
-        // 5. Calculate compressed checksum (Optional but recommended)
-        uint32_t compressedChecksum = calculateCRC32(compressedData.data(), compressedData.size());
-        LOG_INFO("Calculated compressed CRC32: 0x" + std::to_string(compressedChecksum)); // Consider hex formatting
-
-        // 6. Write .tlwz file
+        // 压缩并使用 V2 格式写入 .tlwz 文件 (元数据以未压缩形式存储在头部之后)
         LOG_INFO("Writing compressed data to: " + tlwzPath);
-        try {
-            BinaryWriter writer(tlwzPath);
-
-            // Prepare header
-            CompressedFileHeader header = {};
-            header.magicNumber = COMPRESSED_MAGIC_NUMBER;
-            header.versionMajor = COMPRESSED_FORMAT_VERSION_MAJOR;
-            header.versionMinor = COMPRESSED_FORMAT_VERSION_MINOR;
-            header.compressionType = COMPRESSION_TYPE_ZLIB;
-            header.uncompressedSize = uncompressedData.size();
-            header.uncompressedChecksum = uncompressedChecksum;
-            header.compressedSize = compressedData.size();
-            header.compressedChecksum = compressedChecksum; // Write the compressed checksum
-
-            // Write header
-            if (!writer.write(header)) {
-                throw std::runtime_error("Failed to write compressed file header.");
-            }
-
-            // Write compressed data
-            if (!writer.writeBytes(reinterpret_cast<const char*>(compressedData.data()), compressedData.size())) {
-                 throw std::runtime_error("Failed to write compressed data.");
-            }
-
-            LOG_INFO("Compressed save file (.tlwz) written successfully.");
-
-        } catch (const std::exception& e) {
-            LOG_ERROR("Error writing .tlwz file: " + std::string(e.what()));
-            // Attempt to clean up potentially incomplete .tlwz file
+        if (!writeTlwzV2(rawBuffer, metaBlock, chunkCount, tlwzPath)) {
+            LOG_ERROR("Failed to write .tlwz file.");
             try { std::filesystem::remove(tlwzPath); } catch(...) {}
             return false;
         }
+        LOG_INFO("Compressed save file (.tlwz) written successfully.");
 
         // 7. (Optional) Delete .tlwf file
         if (deleteTlwfAfterwards) {
@@ -732,20 +844,53 @@ namespace TilelandWorld {
         try {
             BinaryReader reader(tlwzPath);
 
-            // Read and validate header
-            if (!reader.read(header)) {
-                throw std::runtime_error("Failed to read compressed file header.");
+            // 读取前缀以判断版本
+            CompressedFileHeaderPrefix prefix{};
+            if (!reader.read(prefix)) {
+                throw std::runtime_error("Failed to read compressed file prefix.");
             }
-            if (header.magicNumber != COMPRESSED_MAGIC_NUMBER) {
+            if (prefix.magicNumber != COMPRESSED_MAGIC_NUMBER) {
                 throw std::runtime_error("Invalid magic number in compressed file.");
             }
-            if (header.versionMajor != COMPRESSED_FORMAT_VERSION_MAJOR || header.versionMinor > COMPRESSED_FORMAT_VERSION_MINOR) {
-                 throw std::runtime_error("Unsupported compressed file version.");
+
+            bool isV2 = (prefix.versionMajor == COMPRESSED_FORMAT_VERSION_MAJOR);
+            bool isV1 = (prefix.versionMajor == COMPRESSED_FORMAT_VERSION_MAJOR_LEGACY_V1);
+            if (!isV2 && !isV1) {
+                throw std::runtime_error("Unsupported compressed file version: "
+                    + std::to_string(prefix.versionMajor) + "." + std::to_string(prefix.versionMinor));
             }
+
+            if (isV2) {
+                // V2: 读取完整头，利用 compressedDataOffset 定位压缩数据
+                reader.seek(std::streampos(0));
+                if (!reader.read(header)) {
+                    throw std::runtime_error("Failed to read V2 compressed file header.");
+                }
+                reader.seek(static_cast<std::streampos>(header.compressedDataOffset));
+            } else {
+                // V1: 读取 V1 头，压缩数据紧随其后
+                reader.seek(std::streampos(0));
+                CompressedFileHeaderV1 headerV1{};
+                if (!reader.read(headerV1)) {
+                    throw std::runtime_error("Failed to read V1 compressed file header.");
+                }
+                // 将 V1 字段复制到通用 header
+                header.magicNumber = headerV1.magicNumber;
+                header.versionMajor = headerV1.versionMajor;
+                header.versionMinor = headerV1.versionMinor;
+                header.compressionType = headerV1.compressionType;
+                header.uncompressedSize = headerV1.uncompressedSize;
+                header.uncompressedChecksum = headerV1.uncompressedChecksum;
+                header.compressedSize = headerV1.compressedSize;
+                header.compressedChecksum = headerV1.compressedChecksum;
+            }
+
             if (header.compressionType != COMPRESSION_TYPE_ZLIB) {
                  throw std::runtime_error("Unsupported compression type in header.");
             }
-            LOG_INFO("Compressed header validated. Uncompressed size: " + std::to_string(header.uncompressedSize)
+            LOG_INFO("Compressed header validated (V" + std::to_string(header.versionMajor)
+                     + "." + std::to_string(header.versionMinor)
+                     + "). Uncompressed size: " + std::to_string(header.uncompressedSize)
                      + ", Compressed size: " + std::to_string(header.compressedSize));
 
             // Read compressed data
