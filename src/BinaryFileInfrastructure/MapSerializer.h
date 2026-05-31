@@ -64,15 +64,12 @@ namespace TilelandWorld {
 
     private:
         // 内部辅助函数
-        static bool writeHeader(BinaryWriter& writer, FileHeader& header);
         static void readAndValidateHeader(BinaryReader& reader, FileHeader& header);
 
-        // 实现区块数据的序列化和反序列化
-        static bool saveChunkData(BinaryWriter& writer, const Chunk& chunk, uint32_t& outChecksum);
+        // 实现区块数据的反序列化
         static void loadChunkData(BinaryReader& reader, Chunk& chunk, uint32_t expectedSize, uint32_t expectedChecksum);
 
-        // 实现索引的写入和读取
-        static bool writeIndex(BinaryWriter& writer, const std::vector<ChunkIndexEntry>& index);
+        // 实现索引的读取
         static void readIndex(BinaryReader& reader, std::vector<ChunkIndexEntry>& index);
 
         template <typename Writer>

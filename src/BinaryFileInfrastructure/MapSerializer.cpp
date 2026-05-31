@@ -244,19 +244,7 @@ namespace TilelandWorld {
         return true;
     }
 
-    // --- 文件头读写 ---
-    bool MapSerializer::writeHeader(BinaryWriter& writer, FileHeader& header) {
-        header.endianness = isLittleEndianRuntime() ? ENDIANNESS_LITTLE : ENDIANNESS_BIG;
-        header.checksumType = CHECKSUM_TYPE_CRC32;
-        header.reserved = 0;
-
-        FileHeader tempHeader = header;
-        tempHeader.headerChecksum = 0;
-        header.headerChecksum = calculateCRC32(&tempHeader, sizeof(FileHeader) - sizeof(uint32_t));
-
-        return writer.write(header);
-    }
-
+    // --- 文件头读取 ---
     void MapSerializer::readAndValidateHeader(BinaryReader& reader, FileHeader& header) {
         std::streampos startPos = reader.tell();
         if (startPos == -1) {
@@ -318,16 +306,7 @@ namespace TilelandWorld {
         }
     }
 
-    // --- 区块数据序列化/反序列化 ---
-    bool MapSerializer::saveChunkData(BinaryWriter& writer, const Chunk& chunk, uint32_t& outChecksum) {
-        const void* dataPtr = chunk.tiles.data();
-        size_t dataSize = sizeof(Tile) * CHUNK_VOLUME;
-
-        outChecksum = calculateCRC32(dataPtr, dataSize);
-
-        return writer.writeBytes(static_cast<const char*>(dataPtr), dataSize);
-    }
-
+    // --- 区块数据反序列化 ---
     void MapSerializer::loadChunkData(BinaryReader& reader, Chunk& chunk, uint32_t expectedSize, uint32_t expectedChecksum) {
         size_t requiredSize = sizeof(Tile) * CHUNK_VOLUME;
 
@@ -351,17 +330,7 @@ namespace TilelandWorld {
         }
     }
 
-    // --- 索引序列化/反序列化 ---
-    bool MapSerializer::writeIndex(BinaryWriter& writer, const std::vector<ChunkIndexEntry>& index) {
-        size_t count = index.size();
-        if (!writer.write(count)) return false;
-
-        if (count > 0) {
-            return writer.writeBytes(reinterpret_cast<const char*>(index.data()), count * sizeof(ChunkIndexEntry));
-        }
-        return true;
-    }
-
+    // --- 索引反序列化 ---
     void MapSerializer::readIndex(BinaryReader& reader, std::vector<ChunkIndexEntry>& index) {
         index.clear();
         size_t count = 0;
@@ -492,7 +461,7 @@ namespace TilelandWorld {
         }
     }
 
-    // --- Path Helpers (moved from MapPersistenceManager) ---
+    // --- Path Helpers   ---
     std::string MapSerializer::getTlwfPath(const std::string& saveName, const std::string& directory) {
         std::filesystem::path dirPath(directory);
         return (dirPath / (saveName + ".tlwf")).string();
@@ -595,7 +564,7 @@ namespace TilelandWorld {
         return updated;
     }
 
-    // --- saveCompressedMap Implementation (moved from MapPersistenceManager) ---
+    // --- saveCompressedMap Implementation   ---
     bool MapSerializer::saveCompressedMap(const Map& map, const std::string& saveName, const std::string& directory, bool deleteTlwfAfterwards) {
         std::string tlwfPath = getTlwfPath(saveName, directory);
         std::string tlwzPath = getTlwzPath(saveName, directory);
@@ -700,7 +669,7 @@ namespace TilelandWorld {
         return true;
     }
 
-    // --- loadMapFromSave Implementation (moved from MapPersistenceManager) ---
+    // --- loadMapFromSave Implementation   ---
     std::unique_ptr<Map> MapSerializer::loadMapFromSave(const std::string& saveName, const std::string& directory, bool* outUsedCompressed) {
         std::string tlwfPath = getTlwfPath(saveName, directory);
         std::string tlwzPath = getTlwzPath(saveName, directory);
@@ -745,7 +714,7 @@ namespace TilelandWorld {
         }
     }
 
-    // --- loadFromCompressedFile Helper (moved from MapPersistenceManager) ---
+    // --- loadFromCompressedFile Helper   ---
     std::unique_ptr<Map> MapSerializer::loadFromCompressedFile(const std::string& tlwzPath, const std::string& tlwfPath) {
         std::vector<Bytef> compressedData;
         std::vector<Bytef> decompressedData;
