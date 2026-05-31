@@ -1,6 +1,7 @@
 #include "MapSerializer.h"
 #include "../Constants.h" // For CHUNK_VOLUME, etc.
 #include "Checksum.h" // Include Checksum header
+#include "MemoryReader.h"
 #include "MemoryWriter.h"
 #include "../Utils/Logger.h" // <-- 包含 Logger
 #include <iostream> // For std::cout in success messages
@@ -13,7 +14,7 @@
 #include <filesystem>   // For file operations like exists, remove
 #include "../ZipFuncInfrastructure/zlib_wrapper.h" // 包含 zlib 封装
 #include "CompressedFileFormat.h" // For compressed header
-
+ 
 namespace TilelandWorld {
 
     // 辅助函数：检测当前系统的字节序 (运行时)
@@ -244,8 +245,8 @@ namespace TilelandWorld {
         return true;
     }
 
-    // --- 文件头读取 ---
-    void MapSerializer::readAndValidateHeader(BinaryReader& reader, FileHeader& header) {
+    template <typename Reader>
+    void MapSerializer::readAndValidateHeaderFromReader(Reader& reader, FileHeader& header) {
         std::streampos startPos = reader.tell();
         if (startPos == -1) {
             throw std::runtime_error("Failed to get initial stream position for header validation.");
@@ -306,8 +307,8 @@ namespace TilelandWorld {
         }
     }
 
-    // --- 区块数据反序列化 ---
-    void MapSerializer::loadChunkData(BinaryReader& reader, Chunk& chunk, uint32_t expectedSize, uint32_t expectedChecksum) {
+    template <typename Reader>
+    void MapSerializer::loadChunkDataFromReader(Reader& reader, Chunk& chunk, uint32_t expectedSize, uint32_t expectedChecksum) {
         size_t requiredSize = sizeof(Tile) * CHUNK_VOLUME;
 
         if (expectedSize != requiredSize) {
@@ -330,8 +331,8 @@ namespace TilelandWorld {
         }
     }
 
-    // --- 索引反序列化 ---
-    void MapSerializer::readIndex(BinaryReader& reader, std::vector<ChunkIndexEntry>& index) {
+    template <typename Reader>
+    void MapSerializer::readIndexFromReader(Reader& reader, std::vector<ChunkIndexEntry>& index) {
         index.clear();
         size_t count = 0;
         if (!reader.read(count)) {
@@ -348,6 +349,94 @@ namespace TilelandWorld {
                 throw std::runtime_error("Failed to read complete index data. Read " + std::to_string(bytesRead) + "/" + std::to_string(bytesToRead));
             }
         }
+    }
+
+    template <typename Reader>
+    std::unique_ptr<Map> MapSerializer::loadMapFromReader(Reader& reader) {
+        FileHeader header = {};
+        readAndValidateHeaderFromReader(reader, header);
+
+        auto sizePos = reader.fileSize();
+        bool hasSize = (sizePos != std::streampos(-1));
+        uint64_t fileSize = hasSize ? static_cast<uint64_t>(sizePos) : 0;
+
+        std::vector<ChunkIndexEntry> index;
+        if (header.indexOffset == 0 || (hasSize && header.indexOffset >= fileSize)) {
+            throw std::runtime_error("Invalid or missing index offset in file header.");
+        }
+        if (!reader.seek(static_cast<std::streampos>(header.indexOffset))) {
+            throw std::runtime_error("Failed to seek to index offset.");
+        }
+        readIndexFromReader(reader, index);
+
+        WorldMetadata worldMeta{};
+        if (header.metadataOffset != 0 && (!hasSize || header.metadataOffset < fileSize)) {
+            if (!reader.seek(static_cast<std::streampos>(header.metadataOffset))) {
+                throw std::runtime_error("Failed to seek to metadata offset.");
+            }
+
+            MetadataBlock metaBlock{};
+            if (!reader.read(metaBlock.seed)) {
+                throw std::runtime_error("Failed to read metadata seed.");
+            }
+            if (!reader.read(metaBlock.frequency)) {
+                throw std::runtime_error("Failed to read metadata frequency.");
+            }
+
+            size_t noiseRead = reader.readBytes(reinterpret_cast<char*>(metaBlock.noiseType), sizeof(metaBlock.noiseType));
+            if (noiseRead != sizeof(metaBlock.noiseType)) {
+                throw std::runtime_error("Failed to read metadata noiseType.");
+            }
+            size_t fractalRead = reader.readBytes(reinterpret_cast<char*>(metaBlock.fractalType), sizeof(metaBlock.fractalType));
+            if (fractalRead != sizeof(metaBlock.fractalType)) {
+                throw std::runtime_error("Failed to read metadata fractalType.");
+            }
+
+            if (!reader.read(metaBlock.octaves)) {
+                throw std::runtime_error("Failed to read metadata octaves.");
+            }
+            if (!reader.read(metaBlock.lacunarity)) {
+                throw std::runtime_error("Failed to read metadata lacunarity.");
+            }
+            if (!reader.read(metaBlock.gain)) {
+                throw std::runtime_error("Failed to read metadata gain.");
+            }
+            size_t reservedRead = reader.readBytes(reinterpret_cast<char*>(metaBlock.reserved), sizeof(metaBlock.reserved));
+            if (reservedRead != sizeof(metaBlock.reserved)) {
+                throw std::runtime_error("Failed to read metadata reserved padding.");
+            }
+
+            worldMeta.seed = metaBlock.seed;
+            worldMeta.frequency = metaBlock.frequency;
+            worldMeta.noiseType = std::string(metaBlock.noiseType);
+            worldMeta.fractalType = std::string(metaBlock.fractalType);
+            worldMeta.octaves = metaBlock.octaves;
+            worldMeta.lacunarity = metaBlock.lacunarity;
+            worldMeta.gain = metaBlock.gain;
+        }
+
+        auto map = std::make_unique<Map>();
+        map->setWorldMetadata(worldMeta);
+        map->setTerrainGenerator(createTerrainGeneratorFromMetadata(worldMeta));
+
+        for (const auto& entry : index) {
+            if (entry.offset == 0 || (hasSize && (entry.offset >= fileSize || (entry.offset + entry.size) > fileSize))) {
+                throw std::runtime_error("Invalid data offset or size for chunk ("
+                    + std::to_string(entry.cx) + "," + std::to_string(entry.cy) + "," + std::to_string(entry.cz) + ")");
+            }
+            if (!reader.seek(static_cast<std::streampos>(entry.offset))) {
+                throw std::runtime_error("Failed to seek to data offset for chunk ("
+                    + std::to_string(entry.cx) + "," + std::to_string(entry.cy) + "," + std::to_string(entry.cz) + ")");
+            }
+
+            auto newChunk = std::make_unique<Chunk>(entry.cx, entry.cy, entry.cz);
+            loadChunkDataFromReader(reader, *newChunk, entry.size, entry.checksum);
+
+            map->loadedChunks.emplace(ChunkCoord{entry.cx, entry.cy, entry.cz}, std::move(newChunk));
+        }
+
+        std::cout << "Map loaded successfully. Loaded chunk count: " << index.size() << std::endl;
+        return map;
     }
 
     // --- saveMap / loadMap 实现 ---
@@ -372,88 +461,7 @@ namespace TilelandWorld {
     std::unique_ptr<Map> MapSerializer::loadMap(const std::string& filepath) {
         try {
             BinaryReader reader(filepath);
-
-            FileHeader header = {};
-            readAndValidateHeader(reader, header);
-
-            std::vector<ChunkIndexEntry> index;
-            if (header.indexOffset == 0 || header.indexOffset >= reader.fileSize()) {
-                throw std::runtime_error("Invalid or missing index offset in file header.");
-            }
-            if (!reader.seek(header.indexOffset)) {
-                throw std::runtime_error("Failed to seek to index offset.");
-            }
-            readIndex(reader, index);
-
-            // 读取元数据（如果存在）
-            WorldMetadata worldMeta{};
-            if (header.metadataOffset != 0 && header.metadataOffset < reader.fileSize()) {
-                if (!reader.seek(header.metadataOffset)) {
-                    throw std::runtime_error("Failed to seek to metadata offset.");
-                }
-
-                MetadataBlock metaBlock{};
-                if (!reader.read(metaBlock.seed)) {
-                    throw std::runtime_error("Failed to read metadata seed.");
-                }
-                if (!reader.read(metaBlock.frequency)) {
-                    throw std::runtime_error("Failed to read metadata frequency.");
-                }
-
-                size_t noiseRead = reader.readBytes(reinterpret_cast<char*>(metaBlock.noiseType), sizeof(metaBlock.noiseType));
-                if (noiseRead != sizeof(metaBlock.noiseType)) {
-                    throw std::runtime_error("Failed to read metadata noiseType.");
-                }
-                size_t fractalRead = reader.readBytes(reinterpret_cast<char*>(metaBlock.fractalType), sizeof(metaBlock.fractalType));
-                if (fractalRead != sizeof(metaBlock.fractalType)) {
-                    throw std::runtime_error("Failed to read metadata fractalType.");
-                }
-
-                if (!reader.read(metaBlock.octaves)) {
-                    throw std::runtime_error("Failed to read metadata octaves.");
-                }
-                if (!reader.read(metaBlock.lacunarity)) {
-                    throw std::runtime_error("Failed to read metadata lacunarity.");
-                }
-                if (!reader.read(metaBlock.gain)) {
-                    throw std::runtime_error("Failed to read metadata gain.");
-                }
-                size_t reservedRead = reader.readBytes(reinterpret_cast<char*>(metaBlock.reserved), sizeof(metaBlock.reserved));
-                if (reservedRead != sizeof(metaBlock.reserved)) {
-                    throw std::runtime_error("Failed to read metadata reserved padding.");
-                }
-
-                worldMeta.seed = metaBlock.seed;
-                worldMeta.frequency = metaBlock.frequency;
-                worldMeta.noiseType = std::string(metaBlock.noiseType);
-                worldMeta.fractalType = std::string(metaBlock.fractalType);
-                worldMeta.octaves = metaBlock.octaves;
-                worldMeta.lacunarity = metaBlock.lacunarity;
-                worldMeta.gain = metaBlock.gain;
-            }
-
-            auto map = std::make_unique<Map>();
-            map->setWorldMetadata(worldMeta);
-            map->setTerrainGenerator(createTerrainGeneratorFromMetadata(worldMeta));
-
-            for (const auto& entry : index) {
-                if (entry.offset == 0 || entry.offset >= reader.fileSize() || (entry.offset + entry.size) > reader.fileSize()) {
-                    throw std::runtime_error("Invalid data offset or size for chunk ("
-                        + std::to_string(entry.cx) + "," + std::to_string(entry.cy) + "," + std::to_string(entry.cz) + ")");
-                }
-                if (!reader.seek(entry.offset)) {
-                    throw std::runtime_error("Failed to seek to data offset for chunk ("
-                        + std::to_string(entry.cx) + "," + std::to_string(entry.cy) + "," + std::to_string(entry.cz) + ")");
-                }
-
-                auto newChunk = std::make_unique<Chunk>(entry.cx, entry.cy, entry.cz);
-                loadChunkData(reader, *newChunk, entry.size, entry.checksum);
-
-                map->loadedChunks.emplace(ChunkCoord{entry.cx, entry.cy, entry.cz}, std::move(newChunk));
-            }
-
-            std::cout << "Map loaded successfully. Loaded chunk count: " << index.size() << std::endl;
-            return map;
+            return loadMapFromReader(reader);
 
         } catch (const std::exception& e) {
             LOG_ERROR("Exception occurred during map loading: " + std::string(e.what()));
@@ -719,6 +727,7 @@ namespace TilelandWorld {
         std::vector<Bytef> compressedData;
         std::vector<Bytef> decompressedData;
         CompressedFileHeader header = {};
+        (void)tlwfPath;
 
         // 1. Read .tlwz header and compressed data
         try {
@@ -788,32 +797,20 @@ namespace TilelandWorld {
         }
         LOG_INFO("Uncompressed data checksum verified.");
 
-        // 5. Write decompressed data to .tlwf
-        LOG_INFO("Writing decompressed data to .tlwf file: " + tlwfPath);
+        // 5. Load map from the decompressed buffer
+        LOG_INFO("Loading map from decompressed buffer...");
         try {
-            BinaryWriter writer(tlwfPath); // Opens in trunc mode, overwriting if exists
-            if (!writer.writeBytes(reinterpret_cast<const char*>(decompressedData.data()), decompressedData.size())) {
-                 throw std::runtime_error("Failed to write decompressed data to .tlwf file.");
-            }
-            LOG_INFO(".tlwf file created/updated from decompressed data.");
-        } catch (const std::exception& e) {
-            LOG_ERROR("Error writing decompressed data to .tlwf: " + std::string(e.what()));
-            return nullptr;
-        }
-
-        // 6. Load map from the newly created .tlwf
-        LOG_INFO("Attempting to load map from the generated .tlwf file...");
-        try {
-             std::unique_ptr<Map> map = loadMap(tlwfPath);
+             MemoryReader reader(reinterpret_cast<const uint8_t*>(decompressedData.data()), decompressedData.size());
+             std::unique_ptr<Map> map = loadMapFromReader(reader);
              if (map) {
-                 LOG_INFO("Successfully loaded map from decompressed .tlwf file.");
+                 LOG_INFO("Successfully loaded map from decompressed buffer.");
                  return map;
              } else {
-                 LOG_ERROR("Failed to load map from the generated .tlwf file even after successful decompression and write.");
+                 LOG_ERROR("Failed to load map from decompressed buffer.");
                  return nullptr;
              }
         } catch (const std::exception& e) {
-             LOG_ERROR("Exception during final map load from generated .tlwf: " + std::string(e.what()));
+             LOG_ERROR("Exception during final map load from decompressed buffer: " + std::string(e.what()));
              return nullptr;
         }
     }
