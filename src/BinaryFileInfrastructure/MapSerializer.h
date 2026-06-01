@@ -35,6 +35,8 @@ namespace TilelandWorld {
             std::string path;
             size_t fileSize{0};
             size_t chunkCount{0};
+            uint16_t versionMajor{0};
+            uint16_t versionMinor{0};
             WorldMetadata metadata{};
         };
 

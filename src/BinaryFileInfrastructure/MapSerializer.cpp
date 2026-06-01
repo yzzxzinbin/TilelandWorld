@@ -117,6 +117,8 @@ namespace TilelandWorld {
             out.metadata.octaves = block.octaves;
             out.metadata.lacunarity = block.lacunarity;
             out.metadata.gain = block.gain;
+            out.versionMajor = header.versionMajor;
+            out.versionMinor = header.versionMinor;
 
             // 直接跳转到索引区读取区块数量
             out.chunkCount = 0;
@@ -558,6 +560,8 @@ namespace TilelandWorld {
             outSummary.path = tlwzPath;
             outSummary.compressed = true;
             outSummary.fileSize = std::filesystem::file_size(tlwzPath);
+            outSummary.versionMajor = header.versionMajor;
+            outSummary.versionMinor = header.versionMinor;
             return true;
         } catch (...) {
             return false;

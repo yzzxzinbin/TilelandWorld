@@ -204,7 +204,8 @@ void SaveManagerScreen::renderInfoBar() {
 
     const auto& summary = infoCache[idx].summary;
     std::ostringstream line1;
-    line1 << "🌍 " << saves[idx] << " | " << (summary.compressed ? ".tlwz" : ".tlwf")
+        line1 << "🌍 " << saves[idx] << " | " << (summary.compressed ? ".tlwz" : ".tlwf")
+            << " v" << summary.versionMajor << "." << summary.versionMinor
           << " | " << formatBytes(summary.fileSize) << " | chunks: " << summary.chunkCount;
     std::string l1 = line1.str();
     l1 = TuiUtils::trimToUtf8VisualWidth(l1, surface.getWidth() - 4);
