@@ -1,24 +1,74 @@
 #include "BinaryWriter.h"
 #include "../Utils/Logger.h" // <-- 包含 Logger
 #include <stdexcept> // For potential exceptions
+#include <filesystem>
 
 namespace TilelandWorld {
 
-    BinaryWriter::BinaryWriter(const std::string& filepath) : filepath(filepath) {
-        // 启用异常：当 failbit 或 badbit 被设置时，流将抛出 std::ios_base::failure
+    void BinaryWriter::cleanupTemp() noexcept {
+        if (!tempPath.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(tempPath, ec);
+        }
+    }
+
+    bool BinaryWriter::atomicReplace(const std::string& from, const std::string& to) {
+        std::error_code ec;
+#ifdef _WIN32
+        // Windows 下 rename 不能覆盖已存在文件，先删除目标
+        if (std::filesystem::exists(to, ec)) {
+            std::filesystem::remove(to, ec);
+        }
+#endif
+        std::filesystem::rename(from, to, ec);
+        return !ec;
+    }
+
+    BinaryWriter::BinaryWriter(const std::string& filepath, bool atomic)
+        : targetPath(filepath), atomicMode(atomic), committed(false), hasError(false)
+    {
         stream.exceptions(std::ios::failbit | std::ios::badbit);
         try {
-            stream.open(filepath, std::ios::binary | std::ios::trunc); // 二进制模式，覆盖写入
+            if (atomicMode) {
+                tempPath = filepath + ".tmp";
+                cleanupTemp(); // 清理上一次残留
+                stream.open(tempPath, std::ios::binary | std::ios::trunc);
+            } else {
+                stream.open(filepath, std::ios::binary | std::ios::trunc);
+            }
         } catch (const std::ios_base::failure& e) {
-            // 包装底层异常
-            throw std::runtime_error("BinaryWriter: Failed to open file for writing: " + filepath + " - " + e.what());
+            hasError = true;
+            throw std::runtime_error("BinaryWriter: Failed to open file for writing: "
+                + (atomicMode ? tempPath : filepath) + " - " + e.what());
         }
     }
 
     BinaryWriter::~BinaryWriter() {
         if (stream.is_open()) {
-            stream.close();
+            try { stream.close(); } catch (...) {}
         }
+        if (atomicMode && !committed) {
+            cleanupTemp(); // 未提交则回滚
+        }
+    }
+
+    bool BinaryWriter::commit() {
+        if (hasError || !stream.is_open()) return false;
+        try {
+            stream.flush();
+            stream.close();
+        } catch (...) {
+            cleanupTemp();
+            return false;
+        }
+        if (atomicMode) {
+            if (!atomicReplace(tempPath, targetPath)) {
+                cleanupTemp();
+                return false;
+            }
+        }
+        committed = true;
+        return true;
     }
 
     bool BinaryWriter::good() const {
@@ -26,7 +76,7 @@ namespace TilelandWorld {
     }
 
     bool BinaryWriter::writeBytes(const char* data, size_t size) {
-        if (!data || size == 0) return true; // 写入 0 字节总是成功
+        if (!data || size == 0) return true;
         // write 操作现在会在失败时抛出异常
         try {
             stream.write(data, size);

@@ -9,6 +9,7 @@
 #include "../MapGenInfrastructure/TerrainGeneratorFactory.h"
 #include <vector>
 #include <cstring> // For memcpy in checksum calculation
+#include <cassert> // For assert in debug builds
 #include <algorithm> // For std::min
 #include <stdexcept> // For std::runtime_error
 #include <fstream>      // For std::ifstream to read whole file
@@ -137,15 +138,30 @@ namespace TilelandWorld {
             return true;
         }
 
-        bool writeBufferToFile(const std::string& path, const std::vector<uint8_t>& buffer) {
-            BinaryWriter writer(path);
+        bool writeBufferToFile(BinaryWriter& writer, const std::vector<uint8_t>& buffer) {
+            if (buffer.empty()) return true;
             return writer.writeBytes(reinterpret_cast<const char*>(buffer.data()), buffer.size());
         }
 
-        bool writeTlwzV2(const std::vector<uint8_t>& rawTlwfBuffer,
+        bool writeTlwzV2(BinaryWriter& writer,
+                         const std::vector<uint8_t>& rawTlwfBuffer,
                          const MetadataBlock& metaBlock,
-                         size_t chunkCount,
-                         const std::string& tlwzPath) {
+                         size_t chunkCount)
+        {
+#ifdef _DEBUG
+            // 防御性断言：校验传入的 chunkCount 与 rawTlwfBuffer 内部实际一致
+            {
+                FileHeader fh{};
+                std::memcpy(&fh, rawTlwfBuffer.data(), std::min(sizeof(FileHeader), rawTlwfBuffer.size()));
+                size_t actualCount = 0;
+                size_t idxOffset = static_cast<size_t>(fh.indexOffset);
+                if (idxOffset != 0 && idxOffset + sizeof(size_t) <= rawTlwfBuffer.size()) {
+                    std::memcpy(&actualCount, rawTlwfBuffer.data() + idxOffset, sizeof(size_t));
+                }
+                assert(actualCount == chunkCount && "chunkCount mismatch with rawTlwfBuffer internal index");
+            }
+#endif
+
             std::vector<Bytef> source(rawTlwfBuffer.begin(), rawTlwfBuffer.end());
             std::vector<Bytef> compressedData;
             auto status = SimpZlib::compress(source, compressedData);
@@ -165,7 +181,6 @@ namespace TilelandWorld {
             header.chunkCount = static_cast<uint32_t>(chunkCount);
             header.compressedDataOffset = sizeof(CompressedFileHeader) + sizeof(MetadataBlock);
 
-            BinaryWriter writer(tlwzPath);
             if (!writer.write(header)) return false;
             if (!writer.writeBytes(reinterpret_cast<const char*>(&metaBlock), sizeof(MetadataBlock))) return false;
             return writer.writeBytes(reinterpret_cast<const char*>(compressedData.data()), compressedData.size());
@@ -484,10 +499,15 @@ namespace TilelandWorld {
     // --- saveMap / loadMap 实现 ---
     bool MapSerializer::saveMap(const Map& map, const std::string& filepath, const std::unordered_set<ChunkCoord, ChunkCoordHash>* modifiedChunks) {
         try {
-            BinaryWriter writer(filepath);
+            BinaryWriter writer(filepath, true); // 开启原子模式
             size_t chunkCount = 0;
             if (!serializeMapToWriter(map, writer, modifiedChunks, &chunkCount)) {
                 LOG_ERROR("Failed to serialize map to file: " + filepath);
+                return false; // 析构时自动删除 .tmp
+            }
+
+            if (!writer.commit()) {
+                LOG_ERROR("Failed to commit atomic save for: " + filepath);
                 return false;
             }
 
@@ -574,34 +594,60 @@ namespace TilelandWorld {
         bool updated = false;
 
         if (std::filesystem::exists(tlwfPath)) {
+            // 权威文件存在，优先修改 .tlwf
             std::ifstream file(tlwfPath, std::ios::binary | std::ios::ate);
-            if (file) {
-                std::streamsize size = file.tellg();
-                file.seekg(0, std::ios::beg);
-                std::vector<uint8_t> buffer(static_cast<size_t>(size));
-                if (file.read(reinterpret_cast<char*>(buffer.data()), size)) {
-                    if (applyMetadataToBuffer(buffer, metadata) && writeBufferToFile(tlwfPath, buffer)) {
-                        updated = true;
-                        if (std::filesystem::exists(tlwzPath)) {
-                            // 提取元数据块和区块数量用于重写 tlwz
-                            MetadataBlock metaBlock{};
-                            FileHeader fileHeader{};
-                            std::memcpy(&fileHeader, buffer.data(), sizeof(fileHeader));
-                            size_t metaOffset = static_cast<size_t>(fileHeader.metadataOffset);
-                            if (metaOffset != 0 && metaOffset + sizeof(MetadataBlock) <= buffer.size()) {
-                                std::memcpy(&metaBlock, buffer.data() + metaOffset, sizeof(MetadataBlock));
-                            }
-                            size_t chunkCount = 0;
-                            size_t indexOffset = static_cast<size_t>(fileHeader.indexOffset);
-                            if (indexOffset != 0 && indexOffset + sizeof(size_t) <= buffer.size()) {
-                                std::memcpy(&chunkCount, buffer.data() + indexOffset, sizeof(size_t));
-                            }
-                            writeTlwzV2(buffer, metaBlock, chunkCount, tlwzPath);
+            if (!file) return false;
+
+            std::streamsize size = file.tellg();
+            file.seekg(0, std::ios::beg);
+            std::vector<uint8_t> buffer(static_cast<size_t>(size));
+            if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) return false;
+
+            if (!applyMetadataToBuffer(buffer, metadata)) return false;
+
+            // 原子写入 .tlwf（必须成功）
+            try {
+                BinaryWriter writer(tlwfPath, true);
+                if (!writeBufferToFile(writer, buffer)) return false;
+                if (!writer.commit()) return false;
+                updated = true;
+            } catch (...) {
+                return false;
+            }
+
+            // 同步更新 .tlwz（派生文件，尽力而为）
+            if (std::filesystem::exists(tlwzPath)) {
+                MetadataBlock metaBlock{};
+                FileHeader fileHeader{};
+                std::memcpy(&fileHeader, buffer.data(), sizeof(fileHeader));
+                size_t metaOffset = static_cast<size_t>(fileHeader.metadataOffset);
+                if (metaOffset != 0 && metaOffset + sizeof(MetadataBlock) <= buffer.size()) {
+                    std::memcpy(&metaBlock, buffer.data() + metaOffset, sizeof(MetadataBlock));
+                }
+                size_t chunkCount = 0;
+                size_t indexOffset = static_cast<size_t>(fileHeader.indexOffset);
+                if (indexOffset != 0 && indexOffset + sizeof(size_t) <= buffer.size()) {
+                    std::memcpy(&chunkCount, buffer.data() + indexOffset, sizeof(size_t));
+                }
+
+                try {
+                    BinaryWriter writer(tlwzPath, true);
+                    if (writeTlwzV2(writer, buffer, metaBlock, chunkCount)) {
+                        if (writer.commit()) {
+                            LOG_INFO("Updated .tlwz metadata successfully.");
+                        } else {
+                            LOG_WARNING("Failed to commit .tlwz metadata update. "
+                                        "Temporary file cleaned up by destructor.");
                         }
+                    } else {
+                        LOG_WARNING("Failed to write .tlwz metadata, but .tlwf is updated.");
                     }
+                } catch (const std::exception& e) {
+                    LOG_WARNING("Exception updating .tlwz metadata: " + std::string(e.what()));
                 }
             }
         } else if (std::filesystem::exists(tlwzPath)) {
+            // 无 .tlwf，.tlwz 升格为权威，必须原子成功
             try {
                 BinaryReader reader(tlwzPath);
 
@@ -623,11 +669,8 @@ namespace TilelandWorld {
                 if (calculateCRC32(decompressed.data(), decompressed.size()) != header.uncompressedChecksum) return false;
 
                 std::vector<uint8_t> buffer(decompressed.begin(), decompressed.end());
-                size_t chunkCount = header.chunkCount;
-
                 if (!applyMetadataToBuffer(buffer, metadata)) return false;
 
-                // 提取更新后的元数据块
                 MetadataBlock metaBlock{};
                 FileHeader fileHeader{};
                 std::memcpy(&fileHeader, buffer.data(), sizeof(fileHeader));
@@ -635,8 +678,12 @@ namespace TilelandWorld {
                 if (metaOffset != 0 && metaOffset + sizeof(MetadataBlock) <= buffer.size()) {
                     std::memcpy(&metaBlock, buffer.data() + metaOffset, sizeof(MetadataBlock));
                 }
+                size_t chunkCount = header.chunkCount;
 
-                updated = writeTlwzV2(buffer, metaBlock, chunkCount, tlwzPath);
+                BinaryWriter writer(tlwzPath, true);
+                if (!writeTlwzV2(writer, buffer, metaBlock, chunkCount)) return false;
+                if (!writer.commit()) return false;
+                updated = true;
             } catch (...) {
                 return false;
             }
@@ -652,7 +699,7 @@ namespace TilelandWorld {
 
         LOG_INFO("Starting save compressed map process for '" + saveName + "'...");
 
-        // 1. Serialize map to memory buffer
+        // 1. 统一序列化到内存（天然原子）
         MemoryWriter memoryWriter;
         if (!serializeMapToWriter(map, memoryWriter, nullptr, nullptr)) {
             LOG_ERROR("Failed to serialize map to memory for compression.");
@@ -660,25 +707,8 @@ namespace TilelandWorld {
         }
 
         const auto& rawBuffer = memoryWriter.buffer();
-        if (rawBuffer.empty()) {
-            LOG_WARNING("Serialized map buffer is empty. Skipping compression.");
-            if (!deleteTlwfAfterwards) {
-                if (!writeBufferToFile(tlwfPath, rawBuffer)) {
-                    LOG_ERROR("Failed to write empty .tlwf file.");
-                    return false;
-                }
-            }
-            return true;
-        }
 
-        if (!deleteTlwfAfterwards) {
-            if (!writeBufferToFile(tlwfPath, rawBuffer)) {
-                LOG_ERROR("Failed to write .tlwf file from memory buffer.");
-                return false;
-            }
-        }
-
-        // 从序列化的缓冲区中提取元数据块和区块数量 (用于写入 tlwz V2 头部)
+        // 从序列化缓冲区提取元数据块和区块数量
         MetadataBlock metaBlock{};
         size_t chunkCount = 0;
         {
@@ -694,29 +724,70 @@ namespace TilelandWorld {
             }
         }
 
-        // 压缩并使用 V2 格式写入 .tlwz 文件 (元数据以未压缩形式存储在头部之后)
-        LOG_INFO("Writing compressed data to: " + tlwzPath);
-        if (!writeTlwzV2(rawBuffer, metaBlock, chunkCount, tlwzPath)) {
-            LOG_ERROR("Failed to write .tlwz file.");
-            try { std::filesystem::remove(tlwzPath); } catch(...) {}
-            return false;
-        }
-        LOG_INFO("Compressed save file (.tlwz) written successfully.");
-
-        // 7. (Optional) Delete .tlwf file
-        if (deleteTlwfAfterwards) {
-            LOG_INFO("Removing .tlwf file: " + tlwfPath);
+        // 2. 写 .tlwf（权威文件，原子化，必须成功）
+        if (!deleteTlwfAfterwards) {
             try {
-                if (!std::filesystem::remove(tlwfPath)) {
-                    LOG_WARNING("Failed to delete .tlwf file (it might not exist or is locked).");
+                BinaryWriter writer(tlwfPath, true);
+                if (!writeBufferToFile(writer, rawBuffer)) {
+                    LOG_ERROR("Failed to write .tlwf file from memory buffer.");
+                    return false;
+                }
+                if (!writer.commit()) {
+                    LOG_ERROR("Failed to commit atomic .tlwf save.");
+                    return false;
                 }
             } catch (const std::exception& e) {
-                LOG_WARNING("Exception while deleting .tlwf file: " + std::string(e.what()));
+                LOG_ERROR("Exception writing .tlwf: " + std::string(e.what()));
+                return false;
             }
         }
 
-        LOG_INFO("Save compressed map process for '" + saveName + "' completed successfully.");
-        return true;
+        // 3. 写 .tlwz（派生文件，原子化）
+        bool tlwzSuccess = false;
+        try {
+            BinaryWriter writer(tlwzPath, true);
+            if (writeTlwzV2(writer, rawBuffer, metaBlock, chunkCount)) {
+                if (writer.commit()) {
+                    tlwzSuccess = true;
+                    LOG_INFO("Compressed save file (.tlwz) written successfully.");
+                } else {
+                    LOG_ERROR("Failed to commit atomic .tlwz save.");
+                }
+            } else {
+                LOG_ERROR("Failed to assemble .tlwz data.");
+            }
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception writing .tlwz: " + std::string(e.what()));
+        }
+
+        // 4. 删除操作严格受 tlwzSuccess 守卫
+        if (tlwzSuccess) {
+            if (deleteTlwfAfterwards) {
+                LOG_INFO("Removing .tlwf file: " + tlwfPath);
+                try {
+                    if (std::filesystem::exists(tlwfPath)) {
+                        std::filesystem::remove(tlwfPath);
+                    }
+                } catch (const std::exception& e) {
+                    LOG_WARNING("Exception while deleting .tlwf file: " + std::string(e.what()));
+                }
+            }
+            LOG_INFO("Save compressed map process for '" + saveName + "' completed successfully.");
+            return true;
+        } else {
+            if (deleteTlwfAfterwards) {
+                if (std::filesystem::exists(tlwfPath)) {
+                    LOG_ERROR(".tlwz save failed. Old .tlwf remains as fallback. Save considered failed.");
+                    return false;
+                } else {
+                    LOG_ERROR(".tlwz save failed and no .tlwf fallback exists.");
+                    return false;
+                }
+            } else {
+                LOG_WARNING(".tlwz save failed, but .tlwf is safe.");
+                return true;
+            }
+        }
     }
 
     // --- loadMapFromSave Implementation   ---

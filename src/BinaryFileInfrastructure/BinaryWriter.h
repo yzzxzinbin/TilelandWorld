@@ -5,6 +5,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <filesystem>
 #include <type_traits> // For std::is_trivially_copyable
 #include <stdexcept> // For std::runtime_error
 #include "../Utils/Logger.h" // <-- 包含 Logger
@@ -15,13 +16,20 @@ namespace TilelandWorld {
     public:
         // 构造函数：打开指定文件用于二进制写入。
         // 如果文件已存在，默认会覆盖。
-        explicit BinaryWriter(const std::string& filepath);
+        // atomic = false: 直接打开目标文件（默认，向后兼容）
+        // atomic = true:  写入临时文件 .tmp，调用 commit() 后原子替换为目标文件
+        explicit BinaryWriter(const std::string& filepath, bool atomic = false);
 
         // 析构函数：关闭文件流。
         ~BinaryWriter();
 
         // 检查流是否处于良好状态。
         bool good() const;
+
+        // 原子模式：flush -> close -> 原子替换临时文件为目标文件。
+        // 非原子模式：flush + close。
+        // 返回 true 表示提交成功；失败时自动清理临时文件。
+        bool commit();
 
         // 写入一个 POD (Plain Old Data) 类型的数据。
         // 使用 SFINAE 约束 T 必须是 trivially copyable。
@@ -53,7 +61,17 @@ namespace TilelandWorld {
 
     private:
         std::ofstream stream;
-        std::string filepath;
+        std::string targetPath;   // 最终目标路径
+        std::string tempPath;     // 临时文件路径（仅 atomic 模式）
+        bool atomicMode;
+        bool committed;
+        bool hasError;
+
+        // 清理残留的临时文件
+        void cleanupTemp() noexcept;
+
+        // 跨平台原子替换：from -> to
+        static bool atomicReplace(const std::string& from, const std::string& to);
 
         // 禁用拷贝构造和赋值
         BinaryWriter(const BinaryWriter&) = delete;
