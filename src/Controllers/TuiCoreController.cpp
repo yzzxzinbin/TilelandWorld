@@ -10,7 +10,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <conio.h>
-#pragma comment(lib, "winmm.lib") // 确保链接 winmm
+#pragma comment(lib, "winmm.lib") 
 #endif
 
 namespace TilelandWorld {

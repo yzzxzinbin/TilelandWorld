@@ -3,7 +3,7 @@
 #include "Checksum.h" // Include Checksum header
 #include "MemoryReader.h"
 #include "MemoryWriter.h"
-#include "../Utils/Logger.h" // <-- 包含 Logger
+#include "../Utils/Logger.h"
 #include <iostream> // For std::cout in success messages
 #include "SaveMetadata.h"
 #include "../MapGenInfrastructure/TerrainGeneratorFactory.h"
@@ -14,7 +14,7 @@
 #include <stdexcept> // For std::runtime_error
 #include <fstream>      // For std::ifstream to read whole file
 #include <filesystem>   // For file operations like exists, remove
-#include "../ZipFuncInfrastructure/zlib_wrapper.h" // 包含 zlib 封装
+#include "../ZipFuncInfrastructure/zlib_wrapper.h" //  zlib 封装
 #include "CompressedFileFormat.h" // For compressed header
  
 namespace TilelandWorld {

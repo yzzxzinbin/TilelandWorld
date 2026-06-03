@@ -2,7 +2,7 @@
 #include "../src/BinaryFileInfrastructure/BinaryReader.h"
 #include "../src/BinaryFileInfrastructure/FileFormat.h" // For FileHeader struct
 #include "../src/BinaryFileInfrastructure/Checksum.h"   // For checksum functions
-#include "../Utils/Logger.h" // <-- 包含 Logger
+#include "../Utils/Logger.h"
 #include <iostream>
 #include <vector>
 #include <string>

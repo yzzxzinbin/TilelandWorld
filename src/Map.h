@@ -8,7 +8,7 @@
 #include "SaveMetadata.h"
 #include "MapGenInfrastructure/TerrainGenerator.h" // 包含生成器基类
 #include <unordered_map>
-#include <memory> // For std::unique_ptr
+#include <memory>
 
 namespace TilelandWorld {
 

@@ -1,9 +1,9 @@
 #include "Map.h"
 #include "Constants.h"
 #include "MapGenInfrastructure/FlatTerrainGenerator.h"
-#include "Utils/Logger.h" // <-- 包含 Logger
-#include <stdexcept>      // For exceptions
-#include <utility>        // For std::move
+#include "Utils/Logger.h"
+#include <stdexcept>      // exceptions
+#include <utility>        // std::move
 
 #ifdef _WIN32
 #include <windows.h> // For QueryPerformanceCounter
@@ -63,7 +63,7 @@ namespace TilelandWorld
         }
     }
 
-    // 新增：独立生成区块 (不加锁，不修改 Map 状态)
+    // 独立生成区块 (不加锁，不修改 Map 状态)
     std::unique_ptr<Chunk> Map::createChunkIsolated(int cx, int cy, int cz) const
     {
         auto newChunk = std::make_unique<Chunk>(cx, cy, cz);
@@ -91,7 +91,7 @@ namespace TilelandWorld
         return newChunk;
     }
 
-    // 新增：将区块加入地图
+    // 将区块加入地图
     void Map::addChunk(std::unique_ptr<Chunk> chunk)
     {
         if (!chunk) return;

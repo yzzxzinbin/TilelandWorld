@@ -1,9 +1,9 @@
 #include "../Map.h"
 #include "../Tile.h"
 #include "../Constants.h"
-#include "../TerrainTypes.h" // 需要包含 TerrainTypes 以使用 getTerrainProperties
-#include "../MapGenInfrastructure/FlatTerrainGenerator.h" // 虽然 Map 默认创建，但包含可能有助于理解
-#include "../Utils/Logger.h" // <-- 包含 Logger
+#include "../TerrainTypes.h" // 包含 TerrainTypes 以使用 getTerrainProperties
+#include "../MapGenInfrastructure/FlatTerrainGenerator.h" 
+#include "../Utils/Logger.h"
 #include <iostream>
 #include <string>
 #include <vector>

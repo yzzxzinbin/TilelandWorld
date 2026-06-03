@@ -4,8 +4,8 @@
 
 #include "TerrainTypes.h" // 引入地形类型定义
 #include "Constants.h"    // 引入常量定义 (例如 MAX_LIGHT_LEVEL)
-#include <cstdint>       // For uint8_t
-#include <string>        // For std::string
+#include <cstdint>       // uint8_t
+#include <string>        // std::string
 
 namespace TilelandWorld {
 

@@ -25,7 +25,7 @@ namespace TilelandWorld {
         int width;
         int height;
         size_t modifiedChunkCount; // 用于UI显示
-        double tps; // 新增：实时 TPS 值
+        double tps; // 实时 TPS 值
     };
 
     class TuiRenderer {

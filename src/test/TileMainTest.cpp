@@ -1,7 +1,7 @@
 #include "Tile.h"
-#include "Constants.h" // <--- 包含 Constants.h 以获取 MAX_LIGHT_LEVEL
-#include "TerrainTypes.h" // 需要包含 TerrainTypes 以使用 getTerrainProperties
-#include "../Utils/Logger.h" // <-- 包含 Logger
+#include "Constants.h"      // 包含 Constants.h 以获取 MAX_LIGHT_LEVEL
+#include "TerrainTypes.h"   // 包含 TerrainTypes 以使用 getTerrainProperties
+#include "../Utils/Logger.h" 
 #include <iostream>
 #include <string>
 #include <vector>

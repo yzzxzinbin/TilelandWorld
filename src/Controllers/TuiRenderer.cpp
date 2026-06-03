@@ -73,7 +73,7 @@ namespace TilelandWorld
         : map(mapRef), mapMutex(mutexRef), running(false), baseStatsAlpha(statsAlpha), enableStatsOverlay(enableStats), enableDiffOutput(enableDiff), targetFpsCap(fpsLimit)
     {
         // 初始化默认视图状态
-        currentViewState = {0, 0, 0, 64, 48, 0, 0.0}; // 新增 tps 初始化为 0.0
+        currentViewState = {0, 0, 0, 64, 48, 0, 0.0}; // tps 初始化为 0.0
         std::ios::sync_with_stdio(false); // 关闭同步以提高性能
 
         // 预留一定的缓存空间，避免频繁 resize
@@ -134,7 +134,7 @@ namespace TilelandWorld
         currentViewState.width = w;
         currentViewState.height = h;
         currentViewState.modifiedChunkCount = modifiedCount;
-        currentViewState.tps = tps; // 新增：设置 TPS
+        currentViewState.tps = tps; // 设置 TPS
     }
 
     void TuiRenderer::applyRuntimeSettings(double statsAlpha, bool enableStats, bool enableDiff, double fpsCap)
